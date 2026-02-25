@@ -140,7 +140,7 @@ describe('createCrudHooks', () => {
           token: null,
           organizationId: 'org-1',
           params: { status: 'active' },
-          options: expect.objectContaining({ signal: expect.any(AbortSignal) }),
+          options: {},
         });
       });
     });
@@ -679,12 +679,11 @@ describe('createCrudHooks', () => {
       await waitFor(() => {
         expect(mockApi.getAll).toHaveBeenCalledWith(
           expect.objectContaining({
-            options: expect.objectContaining({
+            options: {
               cache: 'force-cache',
               tags: ['items'],
               headerOptions: { 'X-Test': '1' },
-              signal: expect.any(AbortSignal),
-            }),
+            },
           })
         );
       });
@@ -710,10 +709,9 @@ describe('createCrudHooks', () => {
       await waitFor(() => {
         expect(mockApi.getById).toHaveBeenCalledWith(
           expect.objectContaining({
-            options: expect.objectContaining({
+            options: {
               revalidate: 60,
-              signal: expect.any(AbortSignal),
-            }),
+            },
           })
         );
       });
@@ -723,7 +721,7 @@ describe('createCrudHooks', () => {
   });
 
   describe('signal passthrough', () => {
-    it('useList passes AbortSignal from React Query to api.getAll', async () => {
+    it('useList does NOT forward AbortSignal to api.getAll (prevents Strict Mode cancellation)', async () => {
       const wrapper = createWrapper(queryClient);
 
       renderHook(
@@ -732,17 +730,13 @@ describe('createCrudHooks', () => {
       );
 
       await waitFor(() => {
-        expect(mockApi.getAll).toHaveBeenCalledWith(
-          expect.objectContaining({
-            options: expect.objectContaining({
-              signal: expect.any(AbortSignal),
-            }),
-          })
-        );
+        expect(mockApi.getAll).toHaveBeenCalled();
+        const callOptions = mockApi.getAll.mock.calls[0]![0].options;
+        expect(callOptions.signal).toBeUndefined();
       });
     });
 
-    it('useDetail passes AbortSignal from React Query to api.getById', async () => {
+    it('useDetail does NOT forward AbortSignal to api.getById (prevents Strict Mode cancellation)', async () => {
       const wrapper = createWrapper(queryClient);
 
       renderHook(
@@ -751,13 +745,9 @@ describe('createCrudHooks', () => {
       );
 
       await waitFor(() => {
-        expect(mockApi.getById).toHaveBeenCalledWith(
-          expect.objectContaining({
-            options: expect.objectContaining({
-              signal: expect.any(AbortSignal),
-            }),
-          })
-        );
+        expect(mockApi.getById).toHaveBeenCalled();
+        const callOptions = mockApi.getById.mock.calls[0]![0].options;
+        expect(callOptions.signal).toBeUndefined();
       });
     });
   });

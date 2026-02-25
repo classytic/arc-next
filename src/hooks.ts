@@ -262,7 +262,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     return createListQuery<T>({
       queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
-      queryFn: ({ signal }) => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
+      queryFn: () => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { ...requestOpts } }),
       enabled: createEnabledRule(token, queryOpts),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
@@ -304,7 +304,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     return createDetailQuery<T>({
       queryKey: KEYS.detail(id || ""),
-      queryFn: ({ signal }) => api.getById({ id: id!, token, organizationId, options: { signal, ...requestOpts } }),
+      queryFn: () => api.getById({ id: id!, token, organizationId, options: { ...requestOpts } }),
       enabled: !!id && createEnabledRule(token, restOptions),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
@@ -471,7 +471,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     return createInfiniteListQuery<T>({
       queryKey: [...KEYS.scopedList(scope, { organizationId, ...restParams }), 'infinite'],
-      queryFn: ({ signal, pageParam }) => {
+      queryFn: ({ pageParam }) => {
         const paginationParams = typeof pageParam === 'string'
           ? { after: pageParam }
           : { page: pageParam };
@@ -480,7 +480,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           token,
           organizationId: organizationId as string | null,
           params: { ...restParams, ...paginationParams },
-          options: { signal, ...requestOpts },
+          options: { ...requestOpts },
         });
       },
       enabled: createEnabledRule(token, queryOpts),

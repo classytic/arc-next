@@ -106,7 +106,7 @@ export const DEFAULT_QUERY_CONFIG = {
   staleTime: 5 * 60 * 1000,
   gcTime: 30 * 60 * 1000,
   refetchOnWindowFocus: false,
-  retry: 1,
+  retry: 0,
 } as const;
 
 // ============================================================================
@@ -219,7 +219,7 @@ export function createCacheUtils<T>(KEYS: QueryKeys): CacheUtils<T> {
 
 export interface CreateListQueryConfig {
   queryKey: QueryKey;
-  queryFn: (context: { signal: AbortSignal }) => Promise<unknown>;
+  queryFn: (context: { signal?: AbortSignal }) => Promise<unknown>;
   enabled?: boolean;
   options?: Record<string, unknown>;
   prefillDetailCache?: boolean;
@@ -238,7 +238,7 @@ export function createListQuery<T>({
 
   const query = useQuery({
     queryKey,
-    queryFn: ({ signal }) => queryFn({ signal }),
+    queryFn: () => queryFn({}),
     enabled,
     ...DEFAULT_QUERY_CONFIG,
     ...options,
@@ -277,7 +277,7 @@ export function createListQuery<T>({
 
 export interface CreateDetailQueryConfig {
   queryKey: QueryKey;
-  queryFn: (context: { signal: AbortSignal }) => Promise<unknown>;
+  queryFn: (context: { signal?: AbortSignal }) => Promise<unknown>;
   enabled?: boolean;
   options?: Record<string, unknown>;
 }
@@ -290,7 +290,7 @@ export function createDetailQuery<T>({
 }: CreateDetailQueryConfig): DetailQueryResult<T> {
   const query = useQuery({
     queryKey,
-    queryFn: ({ signal }) => queryFn({ signal }),
+    queryFn: () => queryFn({}),
     enabled,
     ...DEFAULT_QUERY_CONFIG,
     ...options,
@@ -345,7 +345,7 @@ export interface InfiniteListQueryResult<T> {
 
 export interface CreateInfiniteListQueryConfig {
   queryKey: QueryKey;
-  queryFn: (context: { signal: AbortSignal; pageParam: unknown }) => Promise<unknown>;
+  queryFn: (context: { signal?: AbortSignal; pageParam: unknown }) => Promise<unknown>;
   enabled?: boolean;
   options?: Record<string, unknown>;
   initialPageParam?: unknown;
@@ -364,7 +364,7 @@ export function createInfiniteListQuery<T>({
 }: CreateInfiniteListQueryConfig): InfiniteListQueryResult<T> {
   const query = useInfiniteQuery({
     queryKey,
-    queryFn: ({ signal, pageParam }) => queryFn({ signal, pageParam }),
+    queryFn: ({ pageParam }) => queryFn({ pageParam }),
     enabled,
     initialPageParam,
     getNextPageParam,

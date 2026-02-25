@@ -168,6 +168,6 @@ describe('DEFAULT_QUERY_CONFIG', () => {
     expect(DEFAULT_QUERY_CONFIG.staleTime).toBe(300_000);
     expect(DEFAULT_QUERY_CONFIG.gcTime).toBe(1_800_000);
     expect(DEFAULT_QUERY_CONFIG.refetchOnWindowFocus).toBe(false);
-    expect(DEFAULT_QUERY_CONFIG.retry).toBe(1);
+    expect(DEFAULT_QUERY_CONFIG.retry).toBe(0);
   });
 });
