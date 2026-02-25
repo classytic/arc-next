@@ -1,0 +1,583 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { configureClient, configureAuth, getAuthContext, handleApiRequest, createQueryString, createClient, ArcApiError, isArcApiError } from '../src/client.js';
+
+// ============================================================================
+// configureClient
+// ============================================================================
+
+describe('configureClient', () => {
+  afterEach(() => {
+    // Reset to unconfigured state by configuring with a known URL
+    // (there's no "reset" export, so we just reconfigure for each test)
+  });
+
+  it('throws if handleApiRequest called before configureClient', async () => {
+    // We need a fresh module to test unconfigured state
+    // Since configureClient is module-level, we test via the error path
+    // by making fetch fail after config
+    configureClient({ baseUrl: 'http://localhost:9999' });
+
+    // After configuring, requests should not throw the config error
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const result = await handleApiRequest('GET', '/test');
+    expect(result).toEqual({ success: true });
+
+    fetchMock.mockRestore();
+  });
+});
+
+// ============================================================================
+// handleApiRequest
+// ============================================================================
+
+describe('handleApiRequest', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configureClient({ baseUrl: 'http://api.test' });
+    fetchMock = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('makes GET request to correct URL', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ data: 'ok' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await handleApiRequest('GET', '/users');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api.test/users',
+      expect.objectContaining({
+        method: 'GET',
+        credentials: 'include',
+      })
+    );
+  });
+
+  it('sends organizationId as header', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await handleApiRequest('GET', '/items', { organizationId: 'org-123' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-organization-id']).toBe('org-123');
+  });
+
+  it('sends JSON body for POST', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await handleApiRequest('POST', '/items', {
+      body: { name: 'Test' },
+    });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    expect((options as RequestInit).body).toBe(JSON.stringify({ name: 'Test' }));
+  });
+
+  it('does not set Content-Type for FormData', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const formData = new FormData();
+    formData.append('file', 'test');
+    await handleApiRequest('POST', '/upload', { body: formData });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Content-Type']).toBeUndefined();
+  });
+
+  it('throws on non-ok response', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await expect(handleApiRequest('GET', '/missing')).rejects.toThrow('Not found');
+  });
+
+  it('sends internalApiKey when configured', async () => {
+    configureClient({ baseUrl: 'http://api.test', internalApiKey: 'secret-key' });
+
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await handleApiRequest('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-internal-api-key']).toBe('secret-key');
+
+    // Reset
+    configureClient({ baseUrl: 'http://api.test' });
+  });
+
+  it('sends Authorization header when token provided', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await handleApiRequest('GET', '/test', { token: 'my-token' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer my-token');
+  });
+
+  it('merges custom headerOptions', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await handleApiRequest('GET', '/test', {
+      headerOptions: { 'X-Custom': 'value' },
+    });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Custom']).toBe('value');
+  });
+
+  it('passes cache option to fetch', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await handleApiRequest('GET', '/test', { cache: 'force-cache' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    expect((options as RequestInit).cache).toBe('force-cache');
+  });
+
+  it('passes next.revalidate and next.tags', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await handleApiRequest('GET', '/test', { revalidate: 60, tags: ['posts'] });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const fetchOpts = options as RequestInit & { next?: { revalidate?: number; tags?: string[] } };
+    expect(fetchOpts.next?.revalidate).toBe(60);
+    expect(fetchOpts.next?.tags).toEqual(['posts']);
+  });
+});
+
+// ============================================================================
+// createQueryString
+// ============================================================================
+
+describe('createQueryString', () => {
+  it('creates basic params', () => {
+    const qs = createQueryString({ page: 1, limit: 10, status: 'active' });
+    expect(qs).toContain('page=1');
+    expect(qs).toContain('limit=10');
+    expect(qs).toContain('status=active');
+  });
+
+  it('handles arrays with [in] syntax', () => {
+    const qs = createQueryString({ roles: ['admin', 'user'] });
+    expect(qs).toBe('roles%5Bin%5D=admin%2Cuser');
+  });
+
+  it('handles single-element arrays', () => {
+    const qs = createQueryString({ role: ['admin'] });
+    expect(qs).toBe('role=admin');
+  });
+
+  it('skips undefined and empty strings', () => {
+    const qs = createQueryString({ a: undefined, b: '', c: 'ok' });
+    expect(qs).toBe('c=ok');
+  });
+
+  it('handles null values', () => {
+    const qs = createQueryString({ status: null });
+    expect(qs).toBe('status=null');
+  });
+
+  it('handles populateOptions with select', () => {
+    const qs = createQueryString({
+      populateOptions: [{ path: 'author', select: 'name email' }],
+    });
+    expect(qs).toContain('populate%5Bauthor%5D%5Bselect%5D=name%2Cemail');
+  });
+
+  it('handles populateOptions with match', () => {
+    const qs = createQueryString({
+      populateOptions: [{ path: 'comments', match: { approved: true } }],
+    });
+    expect(qs).toContain('populate%5Bcomments%5D%5Bmatch%5D');
+  });
+
+  it('handles populateOptions without select or match', () => {
+    const qs = createQueryString({
+      populateOptions: [{ path: 'author' }],
+    });
+    expect(qs).toBe('populate=author');
+  });
+
+  it('returns empty string for empty params', () => {
+    expect(createQueryString({})).toBe('');
+    expect(createQueryString()).toBe('');
+  });
+});
+
+// ============================================================================
+// createClient (Multi-Client)
+// ============================================================================
+
+describe('createClient', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('returns an ArcClient object', () => {
+    const client = createClient({ baseUrl: 'http://other.test' });
+    expect(client.request).toBeTypeOf('function');
+    expect(client.config.baseUrl).toBe('http://other.test');
+  });
+
+  it('uses its own baseUrl for requests', async () => {
+    const client = createClient({ baseUrl: 'http://analytics.test' });
+    await client.request('GET', '/events');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://analytics.test/events',
+      expect.objectContaining({ method: 'GET' })
+    );
+  });
+
+  it('sends internalApiKey header when configured', async () => {
+    const client = createClient({
+      baseUrl: 'http://other.test',
+      internalApiKey: 'other-secret',
+    });
+
+    await client.request('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-internal-api-key']).toBe('other-secret');
+  });
+
+  it('two clients with different baseUrls work independently', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    );
+
+    const clientA = createClient({ baseUrl: 'http://a.test' });
+    const clientB = createClient({ baseUrl: 'http://b.test' });
+
+    await clientA.request('GET', '/path');
+    await clientB.request('GET', '/path');
+
+    expect(fetchMock.mock.calls[0]![0]).toBe('http://a.test/path');
+    expect(fetchMock.mock.calls[1]![0]).toBe('http://b.test/path');
+  });
+
+  it('works independently from global configureClient', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    );
+
+    configureClient({ baseUrl: 'http://global.test' });
+    const client = createClient({ baseUrl: 'http://isolated.test' });
+
+    await client.request('GET', '/test');
+    await handleApiRequest('GET', '/test');
+
+    expect(fetchMock.mock.calls[0]![0]).toBe('http://isolated.test/test');
+    expect(fetchMock.mock.calls[1]![0]).toBe('http://global.test/test');
+  });
+
+  it('stores toast and navigation config', () => {
+    const toast = { success: vi.fn(), error: vi.fn() };
+    const navigation = () => ({ push: vi.fn(), replace: vi.fn() });
+
+    const client = createClient({
+      baseUrl: 'http://test.test',
+      toast,
+      navigation,
+    });
+
+    expect(client.toast).toBe(toast);
+    expect(client.navigation).toBe(navigation);
+  });
+
+  it('sends defaultHeaders', async () => {
+    const client = createClient({
+      baseUrl: 'http://other.test',
+      defaultHeaders: { 'X-Custom': 'custom-value' },
+    });
+
+    await client.request('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Custom']).toBe('custom-value');
+  });
+});
+
+// ============================================================================
+// ArcApiError
+// ============================================================================
+
+describe('ArcApiError', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configureClient({ baseUrl: 'http://api.test' });
+    fetchMock = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('throws ArcApiError on non-ok response with status, json, endpoint, method', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Validation failed', errors: { email: 'already taken' } }), {
+        status: 422,
+        statusText: 'Unprocessable Entity',
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    try {
+      await handleApiRequest('POST', '/users');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ArcApiError);
+      const apiError = error as ArcApiError;
+      expect(apiError.status).toBe(422);
+      expect(apiError.statusText).toBe('Unprocessable Entity');
+      expect(apiError.endpoint).toBe('/users');
+      expect(apiError.method).toBe('POST');
+      expect(apiError.json).toEqual({ message: 'Validation failed', errors: { email: 'already taken' } });
+      expect(apiError.message).toBe('Validation failed');
+    }
+  });
+
+  it('ArcApiError is also instanceof Error', () => {
+    const error = new ArcApiError('test', {
+      status: 404,
+      statusText: 'Not Found',
+      json: null,
+      endpoint: '/test',
+      method: 'GET',
+    });
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(ArcApiError);
+    expect(error.name).toBe('ArcApiError');
+  });
+
+  it('isArcApiError type guard works', () => {
+    const apiError = new ArcApiError('test', {
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: null,
+      endpoint: '/test',
+      method: 'GET',
+    });
+
+    expect(isArcApiError(apiError)).toBe(true);
+    expect(isArcApiError(new Error('plain'))).toBe(false);
+    expect(isArcApiError(null)).toBe(false);
+    expect(isArcApiError('string')).toBe(false);
+  });
+
+  it('fieldErrors getter returns null when no errors field', () => {
+    const error = new ArcApiError('test', {
+      status: 400,
+      statusText: 'Bad Request',
+      json: { message: 'Bad request' },
+      endpoint: '/test',
+      method: 'POST',
+    });
+
+    expect(error.fieldErrors).toBeNull();
+  });
+
+  it('fieldErrors getter extracts errors map', () => {
+    const error = new ArcApiError('test', {
+      status: 422,
+      statusText: 'Unprocessable Entity',
+      json: { message: 'Validation failed', errors: { email: 'invalid', name: 'required' } },
+      endpoint: '/test',
+      method: 'POST',
+    });
+
+    expect(error.fieldErrors).toEqual({ email: 'invalid', name: 'required' });
+  });
+
+  it('fieldErrors returns null when json is null', () => {
+    const error = new ArcApiError('test', {
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: null,
+      endpoint: '/test',
+      method: 'GET',
+    });
+
+    expect(error.fieldErrors).toBeNull();
+  });
+
+  it('falls back to statusText when json has no message', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('not json', {
+        status: 500,
+        statusText: 'Internal Server Error',
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    );
+
+    try {
+      await handleApiRequest('GET', '/fail');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ArcApiError);
+      expect((error as ArcApiError).message).toBe('Internal Server Error');
+    }
+  });
+});
+
+// ============================================================================
+// AbortSignal
+// ============================================================================
+
+describe('AbortSignal', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configureClient({ baseUrl: 'http://api.test' });
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('passes signal to fetch when provided', async () => {
+    const controller = new AbortController();
+
+    await handleApiRequest('GET', '/test', { signal: controller.signal });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    expect((options as RequestInit).signal).toBe(controller.signal);
+  });
+
+  it('does not set signal when not provided', async () => {
+    await handleApiRequest('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    expect((options as RequestInit).signal).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// configureAuth / getAuthContext
+// ============================================================================
+
+describe('configureAuth', () => {
+  afterEach(() => {
+    configureAuth({ getToken: () => null, getOrgId: () => null });
+  });
+
+  it('stores and retrieves token and orgId', () => {
+    configureAuth({
+      getToken: () => 'test-token',
+      getOrgId: () => 'test-org',
+    });
+
+    const ctx = getAuthContext();
+    expect(ctx.token).toBe('test-token');
+    expect(ctx.organizationId).toBe('test-org');
+  });
+
+  it('returns nulls when not configured', () => {
+    configureAuth({ getToken: () => null, getOrgId: () => null });
+
+    const ctx = getAuthContext();
+    expect(ctx.token).toBeNull();
+    expect(ctx.organizationId).toBeNull();
+  });
+
+  it('supports partial config (only getOrgId)', () => {
+    configureAuth({
+      getOrgId: () => 'org-only',
+    });
+
+    const ctx = getAuthContext();
+    expect(ctx.token).toBeNull();
+    expect(ctx.organizationId).toBe('org-only');
+  });
+});

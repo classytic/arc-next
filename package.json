@@ -1,0 +1,91 @@
+{
+  "name": "@classytic/arc-next",
+  "version": "0.1.0",
+  "description": "React + TanStack Query SDK for Arc resources",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "author": "Classytic",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/classytic/arc-next"
+  },
+  "keywords": [
+    "react",
+    "tanstack-query",
+    "react-query",
+    "crud",
+    "api-client",
+    "hooks",
+    "optimistic-updates",
+    "pagination",
+    "multi-tenant",
+    "arc",
+    "mongokit"
+  ],
+  "exports": {
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "default": "./dist/api.js"
+    },
+    "./query": {
+      "types": "./dist/query.d.ts",
+      "default": "./dist/query.js"
+    },
+    "./mutation": {
+      "types": "./dist/mutation.d.ts",
+      "default": "./dist/mutation.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks.d.ts",
+      "default": "./dist/hooks.js"
+    },
+    "./query-client": {
+      "types": "./dist/query-client.d.ts",
+      "default": "./dist/query-client.js"
+    },
+    "./prefetch": {
+      "types": "./dist/prefetch.d.ts",
+      "default": "./dist/prefetch.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.0.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.2.3",
+    "jsdom": "^28.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.2.4",
+    "tsdown": "^0.20.3",
+    "typescript": "^5.7.2",
+    "vitest": "^4.0.18"
+  }
+}

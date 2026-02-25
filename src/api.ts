@@ -1,0 +1,495 @@
+import { handleApiRequest, createQueryString } from './client.js';
+import type { ApiRequestOptions, ArcClient } from './client.js';
+
+// ============================================================================
+// Populate Types
+// ============================================================================
+
+export interface PopulateOption {
+  path: string;
+  select?: string;
+  match?: Record<string, unknown>;
+}
+
+// ============================================================================
+// Response Types
+// ============================================================================
+
+export interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  message?: string;
+}
+
+export interface OffsetPaginationResponse<T = unknown> {
+  success: boolean;
+  method: 'offset';
+  docs: T[];
+  page: number;
+  limit: number;
+  total: number;
+  pages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+  warning?: string;
+}
+
+export interface KeysetPaginationResponse<T = unknown> {
+  success: boolean;
+  method: 'keyset';
+  docs: T[];
+  limit: number;
+  hasMore: boolean;
+  next: string | null;
+}
+
+export interface AggregatePaginationResponse<T = unknown> {
+  success: boolean;
+  method: 'aggregate';
+  docs: T[];
+  page: number;
+  limit: number;
+  total: number;
+  pages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+  warning?: string;
+}
+
+export type PaginatedResponse<T = unknown> =
+  | OffsetPaginationResponse<T>
+  | KeysetPaginationResponse<T>
+  | AggregatePaginationResponse<T>;
+
+export interface DeleteResponse {
+  success: boolean;
+  deleted: boolean;
+  id?: string;
+  soft?: boolean;
+  message?: string;
+  count?: number;
+}
+
+// ============================================================================
+// Request Types
+// ============================================================================
+
+export type SortDirection = 1 | -1 | 'asc' | 'desc';
+export type SortSpec = Record<string, SortDirection> | string;
+
+export type FilterOperator =
+  | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
+  | 'in' | 'nin'
+  | 'contains' | 'startsWith' | 'endsWith' | 'regex';
+
+export interface QueryParams {
+  page?: number;
+  limit?: number;
+  after?: string;
+  cursor?: string;
+  sort?: string;
+  select?: string;
+  populate?: string | string[];
+  populateOptions?: PopulateOption[];
+  lean?: boolean | 'true' | 'false';
+  [key: string]: unknown;
+}
+
+export interface RequestOptions {
+  token?: string | null;
+  organizationId?: string | null;
+  cache?: RequestCache;
+  revalidate?: number;
+  tags?: string[];
+  headerOptions?: Record<string, string>;
+  responseType?: 'json' | 'blob' | 'text';
+  signal?: AbortSignal;
+}
+
+export interface BaseApiConfig {
+  basePath?: string;
+  defaultParams?: {
+    limit?: number;
+    page?: number;
+    [key: string]: unknown;
+  };
+  cache?: RequestCache;
+  headers?: Record<string, string>;
+  client?: ArcClient;
+}
+
+// ============================================================================
+// Request Function Type
+// ============================================================================
+
+type RequestFn = <T = unknown>(
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  endpoint: string,
+  options?: ApiRequestOptions,
+) => Promise<T>;
+
+// ============================================================================
+// Base API Class
+// ============================================================================
+
+export class BaseApi<
+  TDoc = Record<string, unknown>,
+  TCreate = Partial<TDoc>,
+  TUpdate = Partial<TDoc>
+> {
+  readonly entity: string;
+  readonly config: Required<Omit<BaseApiConfig, 'client'>>;
+  readonly baseUrl: string;
+  private readonly requestFn: RequestFn;
+
+  constructor(entity: string, config: BaseApiConfig = {}) {
+    this.entity = entity;
+    this.requestFn = config.client?.request ?? handleApiRequest;
+    this.config = {
+      basePath: config.basePath ?? '/api/v1',
+      defaultParams: {
+        limit: 10,
+        page: 1,
+        ...(config.defaultParams || {}),
+      },
+      cache: config.cache ?? 'no-store',
+      headers: {
+        ...(config.headers || {}),
+      },
+    };
+
+    this.baseUrl = `${this.config.basePath}/${this.entity}`;
+  }
+
+  createQueryString(params: Record<string, unknown> = {}): string {
+    return createQueryString(params);
+  }
+
+  prepareParams(params: QueryParams = {}): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    const CRITICAL_FILTERS = ['organizationId', 'ownerId'];
+
+    Object.entries(params).forEach(([key, value]) => {
+      if (CRITICAL_FILTERS.includes(key)) {
+        result[key] = value || null;
+        return;
+      }
+
+      if (key === 'populateOptions') {
+        if (Array.isArray(value) && value.length > 0) {
+          result[key] = value;
+        }
+        return;
+      }
+
+      if (value !== undefined && value !== '') {
+        if (['page', 'limit'].includes(key)) {
+          result[key] = parseInt(String(value)) || (key === 'page' ? 1 : 10);
+        } else if (Array.isArray(value)) {
+          if (value.length > 1) {
+            result[`${key}[in]`] = value.join(',');
+          } else if (value.length === 1) {
+            result[key] = value[0];
+          }
+        } else {
+          result[key] = value;
+        }
+      }
+    });
+
+    return result;
+  }
+
+  async getAll({
+    token = null,
+    organizationId = null,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  } = {}): Promise<PaginatedResponse<TDoc>> {
+    const processedParams = this.prepareParams(params);
+    const queryString = this.createQueryString(processedParams);
+
+    const requestOptions: ApiRequestOptions = {
+      cache: this.config.cache,
+      ...options,
+    };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, requestOptions);
+  }
+
+  async getById({
+    token = null,
+    organizationId = null,
+    id,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    id: string;
+    params?: { select?: string; populate?: string | string[] };
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<ApiResponse<TDoc>> {
+    if (!id) throw new Error('ID is required');
+
+    const queryString = this.createQueryString(params);
+    const url = queryString ? `${this.baseUrl}/${id}?${queryString}` : `${this.baseUrl}/${id}`;
+
+    const requestOptions: ApiRequestOptions = {
+      cache: this.config.cache,
+      ...options,
+    };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('GET', url, requestOptions);
+  }
+
+  async create({
+    token,
+    organizationId = null,
+    data,
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    data: TCreate;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<ApiResponse<TDoc>> {
+    const requestOptions: ApiRequestOptions = {
+      body: data,
+      ...options,
+    };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('POST', this.baseUrl, requestOptions);
+  }
+
+  async update({
+    token,
+    organizationId = null,
+    id,
+    data,
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    id: string;
+    data: TUpdate;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<ApiResponse<TDoc>> {
+    if (!id) throw new Error('ID is required');
+
+    const requestOptions: ApiRequestOptions = {
+      body: data,
+      ...options,
+    };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('PATCH', `${this.baseUrl}/${id}`, requestOptions);
+  }
+
+  async delete({
+    token,
+    organizationId = null,
+    id,
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    id: string;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<DeleteResponse> {
+    if (!id) throw new Error('ID is required');
+
+    const requestOptions: ApiRequestOptions = { ...options };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('DELETE', `${this.baseUrl}/${id}`, requestOptions);
+  }
+
+  async upload({
+    token,
+    organizationId = null,
+    data,
+    path,
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    data: FormData;
+    path?: string;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<ApiResponse<TDoc>> {
+    const url = path ? `${this.baseUrl}/${path}` : this.baseUrl;
+
+    const requestOptions: ApiRequestOptions = {
+      body: data,
+      ...options,
+    };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('POST', url, requestOptions);
+  }
+
+  async search({
+    token = null,
+    organizationId = null,
+    searchParams = {},
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    searchParams?: Record<string, unknown>;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  } = {}): Promise<PaginatedResponse<TDoc>> {
+    const queryParams = { ...params, ...searchParams };
+    const processedParams = this.prepareParams(queryParams);
+    const queryString = this.createQueryString(processedParams);
+
+    const requestOptions: ApiRequestOptions = {
+      cache: this.config.cache,
+      ...options,
+    };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, requestOptions);
+  }
+
+  async findBy({
+    token = null,
+    organizationId = null,
+    field,
+    value,
+    operator,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    field: string;
+    value: unknown;
+    operator?: FilterOperator;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<PaginatedResponse<TDoc>> {
+    if (!field || value === undefined) {
+      throw new Error('Field and value are required');
+    }
+
+    const queryParams: QueryParams = { ...params };
+
+    if (operator) {
+      queryParams[`${field}[${operator}]`] = Array.isArray(value) ? value.join(',') : value;
+    } else {
+      queryParams[field] = value;
+    }
+
+    const processedParams = this.prepareParams(queryParams);
+    const queryString = this.createQueryString(processedParams);
+
+    const requestOptions: ApiRequestOptions = {
+      cache: this.config.cache,
+      ...options,
+    };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, requestOptions);
+  }
+
+  async request<TResponse = unknown>(
+    method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+    endpoint: string,
+    {
+      token,
+      organizationId = null,
+      data,
+      params,
+      options = {},
+    }: {
+      token?: string;
+      organizationId?: string | null;
+      data?: unknown;
+      params?: QueryParams;
+      options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    } = {}
+  ): Promise<TResponse> {
+    let url = endpoint;
+
+    if (params) {
+      const processedParams = this.prepareParams(params);
+      const queryString = this.createQueryString(processedParams);
+      url = `${endpoint}?${queryString}`;
+    }
+
+    const requestOptions: ApiRequestOptions = {
+      body: data,
+      cache: this.config.cache,
+      ...options,
+    };
+
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn(method, url, requestOptions);
+  }
+}
+
+// ============================================================================
+// Factory
+// ============================================================================
+
+export function createCrudApi<
+  TDoc = Record<string, unknown>,
+  TCreate = Partial<TDoc>,
+  TUpdate = Partial<TDoc>
+>(entity: string, config: BaseApiConfig = {}): BaseApi<TDoc, TCreate, TUpdate> {
+  return new BaseApi<TDoc, TCreate, TUpdate>(entity, config);
+}
+
+// ============================================================================
+// Type Helpers
+// ============================================================================
+
+export type ExtractDoc<T> = T extends PaginatedResponse<infer D> ? D : never;
+
+export function isOffsetPagination<T>(
+  response: PaginatedResponse<T>
+): response is OffsetPaginationResponse<T> {
+  return response.method === 'offset';
+}
+
+export function isKeysetPagination<T>(
+  response: PaginatedResponse<T>
+): response is KeysetPaginationResponse<T> {
+  return response.method === 'keyset';
+}
+
+export function isAggregatePagination<T>(
+  response: PaginatedResponse<T>
+): response is AggregatePaginationResponse<T> {
+  return response.method === 'aggregate';
+}
