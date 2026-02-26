@@ -51,6 +51,7 @@ export interface CrudApi<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
     id: string;
     token?: string | null;
     organizationId?: string | null;
+    params?: { select?: string; populate?: string | string[] };
     options?: { signal?: AbortSignal; [key: string]: unknown };
   }) => Promise<unknown>;
 
@@ -300,11 +301,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       }
     }
 
-    const { organizationId, request: requestOpts, ...restOptions } = options;
+    const { organizationId, params: queryParams, request: requestOpts, ...restOptions } = options;
 
     return createDetailQuery<T>({
-      queryKey: KEYS.detail(id || ""),
-      queryFn: () => api.getById({ id: id!, token, organizationId, options: { ...requestOpts } }),
+      queryKey: queryParams ? [...KEYS.detail(id || ""), queryParams] : KEYS.detail(id || ""),
+      queryFn: () => api.getById({ id: id!, token, organizationId, params: queryParams, options: { ...requestOpts } }),
       enabled: !!id && createEnabledRule(token, restOptions),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,

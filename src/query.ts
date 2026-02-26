@@ -50,6 +50,8 @@ export interface DetailQueryOptions {
   structuralSharing?: boolean;
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
+  /** Query params passed to getById (e.g. select, populate) */
+  params?: { select?: string; populate?: string | string[] };
   /** Pass-through options for the underlying fetch request (cache, revalidate, tags, headers) */
   request?: RequestPassthrough;
 }
