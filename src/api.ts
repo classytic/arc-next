@@ -161,6 +161,16 @@ export class BaseApi<
     this.baseUrl = `${this.config.basePath}/${this.entity}`;
   }
 
+  /** Merge per-instance headers into request options */
+  private withHeaders(options: ApiRequestOptions): ApiRequestOptions {
+    const instanceHeaders = this.config.headers;
+    if (!instanceHeaders || Object.keys(instanceHeaders).length === 0) return options;
+    return {
+      ...options,
+      headerOptions: { ...instanceHeaders, ...(options.headerOptions ?? {}) },
+    };
+  }
+
   createQueryString(params: Record<string, unknown> = {}): string {
     return createQueryString(params);
   }
@@ -222,7 +232,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, requestOptions);
+    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
   }
 
   async getById({
@@ -251,7 +261,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('GET', url, requestOptions);
+    return this.requestFn('GET', url, this.withHeaders(requestOptions));
   }
 
   async create({
@@ -273,7 +283,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('POST', this.baseUrl, requestOptions);
+    return this.requestFn('POST', this.baseUrl, this.withHeaders(requestOptions));
   }
 
   async update({
@@ -299,7 +309,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('PATCH', `${this.baseUrl}/${id}`, requestOptions);
+    return this.requestFn('PATCH', `${this.baseUrl}/${id}`, this.withHeaders(requestOptions));
   }
 
   async delete({
@@ -320,7 +330,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('DELETE', `${this.baseUrl}/${id}`, requestOptions);
+    return this.requestFn('DELETE', `${this.baseUrl}/${id}`, this.withHeaders(requestOptions));
   }
 
   async upload({
@@ -346,7 +356,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('POST', url, requestOptions);
+    return this.requestFn('POST', url, this.withHeaders(requestOptions));
   }
 
   async search({
@@ -374,7 +384,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, requestOptions);
+    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
   }
 
   async findBy({
@@ -417,7 +427,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, requestOptions);
+    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
   }
 
   async request<TResponse = unknown>(
@@ -454,7 +464,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn(method, url, requestOptions);
+    return this.requestFn(method, url, this.withHeaders(requestOptions));
   }
 }
 

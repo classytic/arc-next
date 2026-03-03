@@ -212,6 +212,103 @@ describe('BaseApi', () => {
       expect(headers['x-organization-id']).toBe('org-abc');
     });
   });
+
+  describe('config.headers', () => {
+    it('sends instance headers on getAll', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        headers: { 'x-arc-scope': 'platform', 'x-custom': 'test' },
+      });
+      await api.getAll();
+
+      const [, options] = fetchMock.mock.calls[0]!;
+      const headers = (options as RequestInit).headers as Record<string, string>;
+      expect(headers['x-arc-scope']).toBe('platform');
+      expect(headers['x-custom']).toBe('test');
+    });
+
+    it('sends instance headers on getById', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        headers: { 'x-arc-scope': 'platform' },
+      });
+      await api.getById({ id: '1' });
+
+      const [, options] = fetchMock.mock.calls[0]!;
+      const headers = (options as RequestInit).headers as Record<string, string>;
+      expect(headers['x-arc-scope']).toBe('platform');
+    });
+
+    it('sends instance headers on create', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        headers: { 'x-arc-scope': 'platform' },
+      });
+      await api.create({ data: { name: 'test' } });
+
+      const [, options] = fetchMock.mock.calls[0]!;
+      const headers = (options as RequestInit).headers as Record<string, string>;
+      expect(headers['x-arc-scope']).toBe('platform');
+    });
+
+    it('sends instance headers on update', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        headers: { 'x-arc-scope': 'platform' },
+      });
+      await api.update({ id: '1', data: { name: 'updated' } });
+
+      const [, options] = fetchMock.mock.calls[0]!;
+      const headers = (options as RequestInit).headers as Record<string, string>;
+      expect(headers['x-arc-scope']).toBe('platform');
+    });
+
+    it('sends instance headers on delete', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        headers: { 'x-arc-scope': 'platform' },
+      });
+      await api.delete({ id: '1' });
+
+      const [, options] = fetchMock.mock.calls[0]!;
+      const headers = (options as RequestInit).headers as Record<string, string>;
+      expect(headers['x-arc-scope']).toBe('platform');
+    });
+
+    it('sends instance headers on request()', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        headers: { 'x-arc-scope': 'platform' },
+      });
+      await api.request('POST', '/api/items/1/publish', { data: {} });
+
+      const [, options] = fetchMock.mock.calls[0]!;
+      const headers = (options as RequestInit).headers as Record<string, string>;
+      expect(headers['x-arc-scope']).toBe('platform');
+    });
+
+    it('per-call headerOptions override instance headers', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        headers: { 'x-arc-scope': 'platform', 'x-keep': 'yes' },
+      });
+      await api.getAll({ options: { headerOptions: { 'x-arc-scope': 'member' } } });
+
+      const [, options] = fetchMock.mock.calls[0]!;
+      const headers = (options as RequestInit).headers as Record<string, string>;
+      expect(headers['x-arc-scope']).toBe('member');
+      expect(headers['x-keep']).toBe('yes');
+    });
+
+    it('does not send headers when config.headers is empty', async () => {
+      const api = createCrudApi('items', { basePath: '/api' });
+      await api.getAll();
+
+      const [, options] = fetchMock.mock.calls[0]!;
+      const headers = (options as RequestInit).headers as Record<string, string>;
+      expect(headers['x-arc-scope']).toBeUndefined();
+    });
+  });
 });
 
 // ============================================================================

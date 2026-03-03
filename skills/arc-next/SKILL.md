@@ -30,16 +30,23 @@ npm install react@^19 @tanstack/react-query@^5
 ## Setup (call once at app init)
 
 ```ts
-import { configureClient } from "@classytic/arc-next/client";
+import { configureClient, configureAuth } from "@classytic/arc-next/client";
 import { configureToast } from "@classytic/arc-next/mutation";
 import { configureNavigation } from "@classytic/arc-next/hooks";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
-// Required — sets the API base URL
+// Required — sets the API base URL and auth mode
 configureClient({
   baseUrl: process.env.NEXT_PUBLIC_API_URL!,
+  authMode: 'cookie', // 'cookie' for Better Auth, 'bearer' for token auth (default)
   internalApiKey: process.env.NEXT_PUBLIC_INTERNAL_API_KEY, // optional
+});
+
+// Optional — auto-inject org context into queries/mutations
+configureAuth({
+  getOrgId: () => activeOrgId, // return current org ID
+  getToken: () => null,        // null for cookie auth (token only for bearer)
 });
 
 // Optional — pluggable toast (defaults to console)
@@ -59,6 +66,7 @@ configureNavigation(useRouter);
 | `@classytic/arc-next/mutation` | `configureToast`, `useMutationWithTransition`, `createOptimisticMutation` | Yes |
 | `@classytic/arc-next/hooks` | `createCrudHooks`, `configureNavigation` | Yes |
 | `@classytic/arc-next/query-client` | `getQueryClient` (SSR-safe singleton) | No |
+| `@classytic/arc-next/prefetch` | `createCrudPrefetcher`, `dehydrate` (SSR prefetch) | No |
 
 No barrel index — every file is its own entry point. Tree-shakeable (`sideEffects: false`).
 
@@ -155,6 +163,17 @@ configureClient({
 
 Must be called before any API requests. Throws if not configured.
 
+### `configureAuth(config)`
+
+```ts
+configureAuth({
+  getToken?: () => string | null;   // For bearer auth — return access token
+  getOrgId?: () => string | null;   // Return active organization ID
+});
+```
+
+Auto-injects `token` and `organizationId` into queries/mutations. Hooks use the new signature (no explicit token param) — legacy signature still works.
+
 ### `handleApiRequest<T>(method, endpoint, options?)`
 
 Universal fetch wrapper. Handles JSON, PDF, image, CSV, and text responses.
@@ -186,6 +205,9 @@ const api = createCrudApi<Product, CreateProduct>("products", {
   basePath: "/api",       // default: "/api/v1"
   defaultParams: { limit: 20 },
   cache: "no-store",      // default
+  headers: {              // optional — sent with every request from this instance
+    "x-arc-scope": "platform",  // e.g. for superadmin elevation
+  },
 });
 ```
 
@@ -327,6 +349,39 @@ function Providers({ children }) {
 ```
 
 Defaults: `staleTime: 5min`, `gcTime: 30min`, `retry: 0`, `refetchOnWindowFocus: false`.
+
+## SSR Prefetch (Server Components)
+
+Pre-populate the query cache on the server to avoid loading spinners:
+
+```ts
+// products-prefetch.ts
+import { createCrudPrefetcher } from "@classytic/arc-next/prefetch";
+import { productsApi } from "@/api/products-api";
+
+export const productsPrefetcher = createCrudPrefetcher(productsApi, "products");
+```
+
+```tsx
+// app/products/page.tsx (server component)
+import { getQueryClient } from "@classytic/arc-next/query-client";
+import { dehydrate } from "@classytic/arc-next/prefetch";
+import { HydrationBoundary } from "@tanstack/react-query";
+import { productsPrefetcher } from "@/prefetch/products-prefetch";
+
+export default async function ProductsPage() {
+  const queryClient = getQueryClient();
+  await productsPrefetcher.prefetchList(queryClient, { limit: 20 });
+
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <ProductsList />
+    </HydrationBoundary>
+  );
+}
+```
+
+**Methods:** `prefetchList(queryClient, params?, options?)`, `prefetchDetail(queryClient, id, options?)`
 
 ## Custom Mutations
 

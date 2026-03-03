@@ -161,24 +161,33 @@ function extractItem<T>(data: unknown): T | null {
 export function updateListCache<T>(listData: unknown, updater: (items: T[]) => T[]): unknown {
   if (!listData) return listData;
 
-  if (typeof listData === "object" && "docs" in (listData as object)) {
-    const d = listData as Record<string, unknown>;
-    const updatedDocs = updater(d.docs as T[]);
-    return { ...d, docs: updatedDocs, total: updatedDocs.length, totalDocs: updatedDocs.length };
-  }
-
   if (Array.isArray(listData)) {
     return updater(listData as T[]);
   }
 
-  if (typeof listData === "object" && "data" in (listData as object)) {
-    const d = listData as Record<string, unknown>;
-    if (Array.isArray(d.data)) {
-      return { ...d, data: updater(d.data as T[]) };
-    }
+  if (typeof listData !== "object") return listData;
+  const d = listData as Record<string, unknown>;
+
+  // Detect the items array field: docs > data > items > results (same order as extractItems)
+  const arrayField = "docs" in d ? "docs"
+    : (Array.isArray(d.data) ? "data"
+    : ("items" in d && Array.isArray(d.items) ? "items"
+    : ("results" in d && Array.isArray(d.results) ? "results" : null)));
+
+  if (!arrayField) return listData;
+
+  const updated = updater(d[arrayField] as T[]);
+  const original = d[arrayField] as T[];
+  const delta = updated.length - original.length;
+
+  // Update total/totalDocs when item count changes (optimistic add/delete)
+  const result: Record<string, unknown> = { ...d, [arrayField]: updated };
+  if (delta !== 0) {
+    if (d.total != null) result.total = Math.max(0, Number(d.total) + delta);
+    if (d.totalDocs != null) result.totalDocs = Math.max(0, Number(d.totalDocs) + delta);
   }
 
-  return listData;
+  return result;
 }
 
 // ============================================================================

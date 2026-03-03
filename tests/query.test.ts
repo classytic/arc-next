@@ -44,7 +44,7 @@ describe('updateListCache', () => {
   it('handles docs format', () => {
     const data = { docs: [{ _id: '1' }, { _id: '2' }], total: 2 };
     const result = updateListCache(data, (items: unknown[]) => items.filter((i: any) => i._id !== '1'));
-    expect(result).toEqual({ docs: [{ _id: '2' }], total: 1, totalDocs: 1 });
+    expect(result).toEqual({ docs: [{ _id: '2' }], total: 1 });
   });
 
   it('handles array format', () => {
@@ -57,6 +57,31 @@ describe('updateListCache', () => {
     const data = { data: [{ id: '1' }], success: true };
     const result = updateListCache(data, (items: unknown[]) => []);
     expect(result).toEqual({ data: [], success: true });
+  });
+
+  it('handles items format', () => {
+    const data = { items: [{ _id: '1' }, { _id: '2' }], total: 2 };
+    const result = updateListCache(data, (items: unknown[]) => items.filter((i: any) => i._id !== '1'));
+    expect(result).toEqual({ items: [{ _id: '2' }], total: 1 });
+  });
+
+  it('handles results format', () => {
+    const data = { results: [{ _id: '1' }], total: 1 };
+    const result = updateListCache(data, (items: unknown[]) => [...items, { _id: '2' }]);
+    expect(result).toEqual({ results: [{ _id: '1' }, { _id: '2' }], total: 2 });
+  });
+
+  it('updates totalDocs when present', () => {
+    const data = { docs: [{ _id: '1' }, { _id: '2' }], total: 2, totalDocs: 2 };
+    const result = updateListCache(data, (items: unknown[]) => items.filter((i: any) => i._id !== '1'));
+    expect(result).toEqual({ docs: [{ _id: '2' }], total: 1, totalDocs: 1 });
+  });
+
+  it('does not add totalDocs when not originally present', () => {
+    const data = { docs: [{ _id: '1' }], total: 1 };
+    const result = updateListCache(data, (items: unknown[]) => [...items, { _id: '2' }]);
+    expect(result).toEqual({ docs: [{ _id: '1' }, { _id: '2' }], total: 2 });
+    expect(result).not.toHaveProperty('totalDocs');
   });
 
   it('returns unchanged for null/undefined', () => {
@@ -156,6 +181,173 @@ describe('createCacheUtils', () => {
     const spy = vi.spyOn(client, 'invalidateQueries');
     await cache.invalidateDetail(client, '42');
     expect(spy).toHaveBeenCalledWith({ queryKey: ['items', 'detail', '42'] });
+  });
+});
+
+// ============================================================================
+// updateListCache — edge cases
+// ============================================================================
+
+describe('updateListCache edge cases', () => {
+  it('returns primitive values unchanged', () => {
+    expect(updateListCache(42, () => [])).toBe(42);
+    expect(updateListCache('string', () => [])).toBe('string');
+    expect(updateListCache(true, () => [])).toBe(true);
+  });
+
+  it('handles empty docs array', () => {
+    const data = { docs: [] as unknown[], total: 0 };
+    const result = updateListCache(data, (items: unknown[]) => [...items, { _id: '1' }]);
+    expect(result).toEqual({ docs: [{ _id: '1' }], total: 1 });
+  });
+
+  it('handles data field with non-array value (skips)', () => {
+    const data = { data: 'not-an-array', success: true };
+    expect(updateListCache(data, () => [])).toEqual(data);
+  });
+
+  it('preserves extra properties on wrapper objects', () => {
+    const data = { docs: [{ _id: '1' }], total: 1, page: 1, limit: 10, hasNext: false };
+    const result = updateListCache(data, (items: unknown[]) => items) as Record<string, unknown>;
+    expect(result.page).toBe(1);
+    expect(result.limit).toBe(10);
+    expect(result.hasNext).toBe(false);
+  });
+
+  it('total does not go below zero', () => {
+    const data = { docs: [{ _id: '1' }], total: 0 };
+    const result = updateListCache(data, () => []) as Record<string, unknown>;
+    expect(result.total).toBe(0);
+  });
+
+  it('handles delta when adding multiple items', () => {
+    const data = { docs: [{ _id: '1' }], total: 1 };
+    const result = updateListCache(data, (items: unknown[]) => [
+      ...items, { _id: '2' }, { _id: '3' }, { _id: '4' },
+    ]) as Record<string, unknown>;
+    expect(result.total).toBe(4);
+  });
+
+  it('handles empty array input', () => {
+    const data: unknown[] = [];
+    const result = updateListCache(data, (items: unknown[]) => [...items, { id: '1' }]);
+    expect(result).toEqual([{ id: '1' }]);
+  });
+
+  it('does not modify total when item count is unchanged (replace)', () => {
+    const data = { docs: [{ _id: '1' }, { _id: '2' }], total: 2 };
+    const result = updateListCache(data, (items: unknown[]) =>
+      items.map((i: any) => ({ ...i, updated: true }))
+    ) as Record<string, unknown>;
+    expect(result.total).toBe(2);
+  });
+});
+
+// ============================================================================
+// createQueryKeys — edge cases
+// ============================================================================
+
+describe('createQueryKeys edge cases', () => {
+  const KEYS = createQueryKeys('posts');
+
+  it('list without params includes undefined', () => {
+    const key = KEYS.list();
+    expect(key).toEqual(['posts', 'list', undefined]);
+  });
+
+  it('list with empty params', () => {
+    const key = KEYS.list({});
+    expect(key).toEqual(['posts', 'list', {}]);
+  });
+
+  it('detail with numeric-like string id', () => {
+    expect(KEYS.detail('123')).toEqual(['posts', 'detail', '123']);
+  });
+
+  it('custom with no extra args', () => {
+    expect(KEYS.custom('stats')).toEqual(['posts', 'stats']);
+  });
+
+  it('custom with multiple args', () => {
+    expect(KEYS.custom('analytics', 'monthly', '2024')).toEqual(['posts', 'analytics', 'monthly', '2024']);
+  });
+
+  it('scopedList with empty params', () => {
+    expect(KEYS.scopedList('super-admin')).toEqual([
+      'posts', 'list', { _scope: 'super-admin' },
+    ]);
+  });
+
+  it('scopedList with multiple params', () => {
+    expect(KEYS.scopedList('tenant', { organizationId: 'org-1', status: 'active', page: 1 })).toEqual([
+      'posts', 'list', { _scope: 'tenant', organizationId: 'org-1', status: 'active', page: 1 },
+    ]);
+  });
+});
+
+// ============================================================================
+// createCacheUtils — edge cases
+// ============================================================================
+
+describe('createCacheUtils edge cases', () => {
+  const KEYS = createQueryKeys('items');
+  const cache = createCacheUtils<{ _id: string; name: string }>(KEYS);
+
+  it('setDetail wraps data in { data } envelope', () => {
+    const client = new QueryClient();
+    cache.setDetail(client, '1', { _id: '1', name: 'Item' });
+    const raw = client.getQueryData(KEYS.detail('1')) as Record<string, unknown>;
+    expect(raw).toEqual({ data: { _id: '1', name: 'Item' } });
+  });
+
+  it('getDetail unwraps { data } envelope', () => {
+    const client = new QueryClient();
+    client.setQueryData(KEYS.detail('1'), { data: { _id: '1', name: 'Wrapped' } });
+    expect(cache.getDetail(client, '1')).toEqual({ _id: '1', name: 'Wrapped' });
+  });
+
+  it('setDetail then getDetail roundtrips correctly', () => {
+    const client = new QueryClient();
+    const item = { _id: 'abc', name: 'Test' };
+    cache.setDetail(client, 'abc', item);
+    expect(cache.getDetail(client, 'abc')).toEqual(item);
+  });
+
+  it('removeDetail then getDetail returns undefined', () => {
+    const client = new QueryClient();
+    cache.setDetail(client, '1', { _id: '1', name: 'Item' });
+    cache.removeDetail(client, '1');
+    expect(cache.getDetail(client, '1')).toBeUndefined();
+  });
+
+  it('invalidateAll uses the broadest key', async () => {
+    const client = new QueryClient();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    await cache.invalidateAll(client);
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['items'] });
+  });
+});
+
+// ============================================================================
+// getItemId — edge cases
+// ============================================================================
+
+describe('getItemId edge cases', () => {
+  it('handles zero id (falsy — returns null)', () => {
+    // 0 is falsy, so getItemId returns null (by design — MongoDB _ids are never 0)
+    expect(getItemId({ _id: 0 })).toBeNull();
+  });
+
+  it('handles boolean id (falsy path)', () => {
+    expect(getItemId({ _id: false })).toBeNull();
+  });
+
+  it('handles nested objects (does not traverse)', () => {
+    expect(getItemId({ nested: { _id: 'deep' } })).toBeNull();
+  });
+
+  it('handles array as input', () => {
+    expect(getItemId([1, 2, 3])).toBeNull();
   });
 });
 

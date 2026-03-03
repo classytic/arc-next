@@ -98,4 +98,74 @@ describe('createCrudPrefetcher', () => {
   it('re-exports dehydrate', () => {
     expect(typeof dehydrate).toBe('function');
   });
+
+  it('prefetchList does not send token by default', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+
+    await prefetcher.prefetchList(queryClient, {});
+
+    expect(mockApi.getAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: null,
+      })
+    );
+    // token should not be provided (server-side = no auth header)
+    const callArgs = mockApi.getAll.mock.calls[0]![0];
+    expect(callArgs.token).toBeUndefined();
+  });
+
+  it('prefetchDetail does not send organizationId', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+
+    await prefetcher.prefetchDetail(queryClient, 'prod-1');
+
+    const callArgs = mockApi.getById.mock.calls[0]![0];
+    expect(callArgs.id).toBe('prod-1');
+    // No organizationId or token passed
+    expect(callArgs.organizationId).toBeUndefined();
+    expect(callArgs.token).toBeUndefined();
+  });
+
+  it('prefetchList with multiple params', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+
+    await prefetcher.prefetchList(queryClient, {
+      organizationId: 'org-1',
+      status: 'active',
+      limit: 50,
+    });
+
+    expect(mockApi.getAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: { status: 'active', limit: 50 },
+        organizationId: 'org-1',
+      })
+    );
+  });
+
+  it('prefetchList and client-side query share cache via same key', async () => {
+    const { createQueryKeys } = await import('../src/query.js');
+    const KEYS = createQueryKeys('products');
+
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+
+    // Prefetch on server
+    await prefetcher.prefetchList(queryClient, { limit: 20 });
+
+    // Should be available under the same scoped key the client useList would use
+    const superAdminKey = KEYS.scopedList('super-admin', { limit: 20 });
+    const cached = queryClient.getQueryData(superAdminKey);
+    expect(cached).toBeDefined();
+    expect((cached as { docs: unknown[] }).docs).toHaveLength(1);
+  });
+
+  it('dehydrate produces serializable state', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+    await prefetcher.prefetchList(queryClient, {});
+
+    const dehydratedState = dehydrate(queryClient);
+    expect(dehydratedState).toBeDefined();
+    expect(dehydratedState.queries).toBeInstanceOf(Array);
+    expect(dehydratedState.queries.length).toBeGreaterThan(0);
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { configureClient, configureAuth, getAuthContext, handleApiRequest, createQueryString, createClient, ArcApiError, isArcApiError } from '../src/client.js';
+import { configureClient, configureAuth, getAuthContext, getAuthMode, handleApiRequest, createQueryString, createClient, ArcApiError, isArcApiError } from '../src/client.js';
 
 // ============================================================================
 // configureClient
@@ -502,6 +502,256 @@ describe('ArcApiError', () => {
       expect(error).toBeInstanceOf(ArcApiError);
       expect((error as ArcApiError).message).toBe('Internal Server Error');
     }
+  });
+});
+
+// ============================================================================
+// Response Type Handling
+// ============================================================================
+
+describe('response type handling', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configureClient({ baseUrl: 'http://api.test' });
+    fetchMock = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('handles PDF response with data and response properties', async () => {
+    // Use ArrayBuffer instead of Blob (Node.js Response compat)
+    const buffer = new TextEncoder().encode('pdf-content');
+    fetchMock.mockResolvedValue(
+      new Response(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      })
+    );
+
+    const result = await handleApiRequest<{ data: Blob; response: Response }>('GET', '/report.pdf');
+    expect(result).toHaveProperty('data');
+    expect(result).toHaveProperty('response');
+  });
+
+  it('handles image response with data and response properties', async () => {
+    const buffer = new TextEncoder().encode('img-data');
+    fetchMock.mockResolvedValue(
+      new Response(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      })
+    );
+
+    const result = await handleApiRequest<{ data: Blob; response: Response }>('GET', '/image.png');
+    expect(result).toHaveProperty('data');
+    expect(result).toHaveProperty('response');
+  });
+
+  it('handles CSV response with data and response properties', async () => {
+    const csvContent = 'name,email\nJohn,john@test.com';
+    fetchMock.mockResolvedValue(
+      new Response(csvContent, {
+        status: 200,
+        headers: { 'Content-Type': 'text/csv' },
+      })
+    );
+
+    const result = await handleApiRequest<{ data: Blob; response: Response }>('GET', '/export.csv');
+    expect(result).toHaveProperty('data');
+    expect(result).toHaveProperty('response');
+  });
+
+  it('handles text/plain response', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('plain text content', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    );
+
+    const result = await handleApiRequest<{ data: string; response: Response }>('GET', '/text');
+    expect(result.data).toBe('plain text content');
+  });
+
+  it('handles text/html response', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('<h1>Hello</h1>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' },
+      })
+    );
+
+    const result = await handleApiRequest<{ data: string; response: Response }>('GET', '/page');
+    expect(result.data).toBe('<h1>Hello</h1>');
+  });
+});
+
+// ============================================================================
+// Error Handling Edge Cases
+// ============================================================================
+
+describe('error handling edge cases', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configureClient({ baseUrl: 'http://api.test' });
+    fetchMock = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('wraps network errors as plain Error', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    try {
+      await handleApiRequest('GET', '/test');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Failed to fetch');
+    }
+  });
+
+  it('wraps non-Error throws as generic message', async () => {
+    fetchMock.mockRejectedValue('string error');
+
+    try {
+      await handleApiRequest('GET', '/test');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('An error occurred while fetching data.');
+    }
+  });
+
+  it('preserves ArcApiError on HTTP error', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Forbidden' }), {
+        status: 403,
+        statusText: 'Forbidden',
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    try {
+      await handleApiRequest('DELETE', '/admin/resource');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(isArcApiError(error)).toBe(true);
+      expect((error as ArcApiError).status).toBe(403);
+      expect((error as ArcApiError).method).toBe('DELETE');
+    }
+  });
+
+  it('handles 401 unauthorized', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Unauthorized' }), {
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    try {
+      await handleApiRequest('GET', '/protected');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(isArcApiError(error)).toBe(true);
+      expect((error as ArcApiError).status).toBe(401);
+    }
+  });
+
+  it('handles non-JSON error body gracefully', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('Bad Gateway', {
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { 'Content-Type': 'text/html' },
+      })
+    );
+
+    try {
+      await handleApiRequest('GET', '/test');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(isArcApiError(error)).toBe(true);
+      expect((error as ArcApiError).status).toBe(502);
+      expect((error as ArcApiError).message).toBe('Bad Gateway');
+    }
+  });
+});
+
+// ============================================================================
+// getAuthMode
+// ============================================================================
+
+describe('getAuthMode', () => {
+  it('returns bearer by default', () => {
+    configureClient({ baseUrl: 'http://api.test' });
+    expect(getAuthMode()).toBe('bearer');
+  });
+
+  it('returns cookie when configured', () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'cookie' });
+    expect(getAuthMode()).toBe('cookie');
+    // Reset
+    configureClient({ baseUrl: 'http://api.test' });
+  });
+});
+
+// ============================================================================
+// defaultHeaders
+// ============================================================================
+
+describe('defaultHeaders', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    configureClient({ baseUrl: 'http://api.test' });
+  });
+
+  it('sends defaultHeaders on every request', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      defaultHeaders: { 'X-App-Version': '1.0.0', 'X-Client': 'web' },
+    });
+
+    await handleApiRequest('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['X-App-Version']).toBe('1.0.0');
+    expect(headers['X-Client']).toBe('web');
+  });
+
+  it('headerOptions override defaultHeaders', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      defaultHeaders: { 'X-Mode': 'default' },
+    });
+
+    await handleApiRequest('GET', '/test', {
+      headerOptions: { 'X-Mode': 'override' },
+    });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Mode']).toBe('override');
   });
 });
 
