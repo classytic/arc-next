@@ -366,6 +366,65 @@ describe('useMutationWithTransition', () => {
 
     expect(toastHandler.success).not.toHaveBeenCalled();
   });
+
+  it('suppresses success toast when shouldToast returns false', async () => {
+    const mutationFn = vi.fn().mockResolvedValue({});
+
+    const { result } = renderHook(
+      () => useMutationWithTransition({
+        mutationFn,
+        messages: { success: 'Done' },
+        shouldToast: () => false,
+      }),
+      { wrapper: createWrapper(queryClient) }
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync({});
+    });
+
+    expect(toastHandler.success).not.toHaveBeenCalled();
+  });
+
+  it('suppresses error toast when shouldToast returns false', async () => {
+    const mutationFn = vi.fn().mockRejectedValue(new Error('fail'));
+
+    const { result } = renderHook(
+      () => useMutationWithTransition({
+        mutationFn,
+        messages: { error: 'Oops' },
+        shouldToast: () => false,
+      }),
+      { wrapper: createWrapper(queryClient) }
+    );
+
+    await act(async () => {
+      try {
+        await result.current.mutateAsync({});
+      } catch {}
+    });
+
+    expect(toastHandler.error).not.toHaveBeenCalled();
+  });
+
+  it('shows toast when shouldToast returns true', async () => {
+    const mutationFn = vi.fn().mockResolvedValue({});
+
+    const { result } = renderHook(
+      () => useMutationWithTransition({
+        mutationFn,
+        messages: { success: 'Yes!' },
+        shouldToast: () => true,
+      }),
+      { wrapper: createWrapper(queryClient) }
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync({});
+    });
+
+    expect(toastHandler.success).toHaveBeenCalledWith('Yes!');
+  });
 });
 
 // ============================================================================

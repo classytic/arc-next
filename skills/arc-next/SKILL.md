@@ -60,7 +60,7 @@ configureNavigation(useRouter);
 
 | Import | Purpose | `"use client"` |
 |---|---|:-:|
-| `@classytic/arc-next/client` | `configureClient`, `createClient`, `handleApiRequest`, `createQueryString` | No |
+| `@classytic/arc-next/client` | `configureClient`, `configureAuth`, `createClient`, `handleApiRequest`, `createQueryString`, `ArcApiError`, `isArcApiError`, `getAuthMode`, `getAuthContext` | No |
 | `@classytic/arc-next/api` | `BaseApi`, `createCrudApi`, response types, type guards | No |
 | `@classytic/arc-next/query` | `createQueryKeys`, `createCacheUtils`, `createListQuery`, `createDetailQuery` | Yes |
 | `@classytic/arc-next/mutation` | `configureToast`, `useMutationWithTransition`, `createOptimisticMutation` | Yes |
@@ -155,11 +155,15 @@ export function ProductsPage() {
 
 ```ts
 configureClient({
-  baseUrl: string;              // Required — API base URL
-  internalApiKey?: string;      // Optional — sent as x-internal-api-key header
+  baseUrl: string;                          // Required — API base URL
+  authMode?: 'cookie' | 'bearer';          // Default: 'bearer'
+  internalApiKey?: string;                  // Optional — sent as x-internal-api-key header
   defaultHeaders?: Record<string, string>; // Optional — merged into every request
 });
 ```
+
+- `authMode: 'bearer'` (default) — requires a token for authenticated requests; queries are disabled until a token is provided
+- `authMode: 'cookie'` — auth via HTTP-only cookies (e.g. Better Auth); queries are always enabled, no token needed
 
 Must be called before any API requests. Throws if not configured.
 
@@ -187,6 +191,8 @@ const list = await handleApiRequest<PaginatedResponse<Product>>("GET", "/api/pro
 - `body` — request body (auto-serializes JSON, passes FormData as-is)
 - `token` — Bearer token
 - `organizationId` — sent as `x-organization-id` header
+- `headerOptions` — additional headers merged into request
+- `signal` — AbortSignal for request cancellation
 - `revalidate` / `tags` / `cache` — Next.js fetch extensions
 
 ### `createQueryString(params)`
@@ -219,6 +225,7 @@ const api = createCrudApi<Product, CreateProduct>("products", {
 | `create` | `({ data, token?, organizationId? }) → ApiResponse<T>` |
 | `update` | `({ id, data, token?, organizationId? }) → ApiResponse<T>` |
 | `delete` | `({ id, token?, organizationId? }) → DeleteResponse` |
+| `upload` | `({ data: FormData, id?, path?, token?, organizationId? }) → ApiResponse<T>` |
 | `search` | `({ searchParams?, params?, token?, organizationId? }) → PaginatedResponse<T>` |
 | `findBy` | `({ field, value, operator?, token?, organizationId? }) → PaginatedResponse<T>` |
 | `request` | `(method, endpoint, { data?, params?, token? }) → T` |
@@ -230,8 +237,12 @@ const api = createCrudApi<Product, CreateProduct>("products", {
 Factory that returns everything you need:
 
 ```ts
-const { KEYS, cache, useList, useDetail, useActions, useNavigation } =
-  createCrudHooks<Product, CreateProduct>({
+const {
+  KEYS, cache,
+  useList, useDetail, useInfiniteList,
+  useActions, useUpload, useSearch, useCustomMutation,
+  useNavigation,
+} = createCrudHooks<Product, CreateProduct>({
     api: productsApi,       // from createCrudApi()
     entityKey: "products",  // TanStack Query key prefix
     singular: "Product",    // for toast messages
@@ -240,7 +251,10 @@ const { KEYS, cache, useList, useDetail, useActions, useNavigation } =
       messages: { createSuccess: "Product added!" },
     },
     callbacks: {            // optional
-      onCreate: { onSuccess: (data) => console.log("Created:", data) },
+      onCreate: {
+        onSuccess: (data) => console.log("Created:", data),
+        onSettled: (data, error) => console.log("Done"),
+      },
     },
   });
 ```
@@ -262,6 +276,17 @@ const { items, pagination, isLoading, isFetching, refetch } = useList(
 - Prefills detail cache from list results (skips re-fetch on navigate)
 - `options.public: true` — enables query without token
 
+**`select` transform** — transform raw API data before it reaches your component:
+
+```ts
+const { items } = useList(token, { organizationId }, {
+  select: (data) => ({
+    ...data,
+    docs: data.docs.map((p) => ({ ...p, displayName: `${p.name} ($${p.price})` })),
+  }),
+});
+```
+
 #### `useDetail(id, token, options?)`
 
 ```ts
@@ -272,6 +297,14 @@ const { item, isLoading } = useDetail(productId, token, {
 
 - Disabled when `id` is null (conditional fetching)
 - Extracts item from `{ data: T }` wrapper
+
+**`select` transform:**
+
+```ts
+const { item } = useDetail(productId, token, {
+  select: (data) => ({ ...data.data, fullName: `${data.data.firstName} ${data.data.lastName}` }),
+});
+```
 
 #### `useActions()`
 
@@ -306,6 +339,64 @@ navigate(`/products/${id}`, product, { replace: true }); // replace
 
 Sets detail cache before navigation (instant page load, no loading spinner).
 Requires `configureNavigation(useRouter)` — without it, only sets cache (no routing).
+
+#### `useInfiniteList(token, params?, options?)`
+
+Cursor-based infinite scrolling with automatic page aggregation:
+
+```ts
+const { items, hasNextPage, fetchNextPage, isFetchingNextPage, isLoading } =
+  useInfiniteList(token, { organizationId: "org-123", limit: 20 });
+```
+
+- Supports both keyset (`hasMore`/`next`) and offset (`hasNext`/`page`) pagination
+- Returns flattened `items` across all pages
+- Auto-scopes query keys like `useList`
+
+#### `useUpload(options?)`
+
+Upload FormData with cache invalidation:
+
+```ts
+const { mutateAsync: upload, isPending } = useUpload({
+  messages: { success: "Uploaded!", error: "Upload failed" },
+  onSuccess: (data) => console.log("Uploaded:", data),
+});
+
+// Post to base collection URL
+await upload({ data: formData });
+// Post to /products/{id}/upload
+await upload({ data: formData, id: "doc-123" });
+// Post to /products/bulk-import (custom path takes precedence over id)
+await upload({ data: formData, path: "bulk-import" });
+```
+
+Requires `api.upload` to be defined. Throws if not available.
+
+#### `useSearch(query, params?, options?)`
+
+Search with automatic query key scoping:
+
+```ts
+const { items, pagination, isLoading } = useSearch("widget", {
+  organizationId: "org-123",
+});
+```
+
+- Disabled when `query` is empty
+- Requires `api.search` to be defined
+
+#### `useCustomMutation<TData, TVariables>(config)`
+
+Build custom mutations that share the entity's toast and invalidation patterns:
+
+```ts
+const { mutateAsync: publish, isPending } = useCustomMutation({
+  mutationFn: (id: string) => api.request("POST", `${api.baseUrl}/${id}/publish`),
+  invalidateQueries: [productKeys.lists()],
+  messages: { success: "Published!", error: "Failed to publish" },
+});
+```
 
 ### Query Keys (`KEYS`)
 
@@ -450,7 +541,8 @@ useProducts(token, {}, { ...QUERY_CONFIGS.realtime });
 
 ### `updateListCache(listData, updater)`
 
-Transforms list cache regardless of format (`docs[]`, `data[]`, or raw array):
+Transforms list cache regardless of format (`docs[]`, `data[]`, `items[]`, `results[]`, or raw array).
+Automatically adjusts `total`/`totalDocs` counts when items are added or removed (optimistic add/delete):
 
 ```ts
 import { updateListCache } from "@classytic/arc-next/query";
@@ -473,7 +565,7 @@ import type {
   OffsetPaginationResponse,// { docs[], page, limit, total, pages, hasNext, hasPrev }
   KeysetPaginationResponse,// { docs[], limit, hasMore, next }
   AggregatePaginationResponse, // same shape as offset
-  DeleteResponse,          // { success, deleted, id?, soft?, message? }
+  DeleteResponse,          // { success, data?: { message?, id?, soft? } }
 } from "@classytic/arc-next/api";
 
 // Type guards
@@ -509,6 +601,7 @@ await create(
   {
     onSuccess: (product) => router.push(`/products/${product._id}`),
     onError: (err) => setFieldErrors(err),
+    onSettled: (data, error) => setSubmitting(false), // fires after success or error
   }
 );
 ```
@@ -519,6 +612,35 @@ await create(
 const navigate = useProductNavigation();
 // Prefills detail cache → no loading spinner on detail page
 navigate(`/products/${product._id}`, product);
+```
+
+## Error Handling
+
+All API errors throw `ArcApiError`:
+
+```ts
+import { ArcApiError, isArcApiError } from "@classytic/arc-next/client";
+
+try {
+  await productsApi.create({ data: { name: "" } });
+} catch (err) {
+  if (isArcApiError(err)) {
+    console.log(err.status);      // HTTP status code
+    console.log(err.message);     // Error message from server
+    console.log(err.fieldErrors); // { field: "message" } or null
+    console.log(err.endpoint);    // Request endpoint
+    console.log(err.method);      // HTTP method
+  }
+}
+```
+
+## Per-Instance Headers
+
+```ts
+// All requests from this API include x-arc-scope header
+const adminApi = createCrudApi("users", {
+  headers: { "x-arc-scope": "platform" },
+});
 ```
 
 ## Multi-Client (Multiple APIs)

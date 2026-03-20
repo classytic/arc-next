@@ -63,11 +63,11 @@ export type PaginatedResponse<T = unknown> =
 
 export interface DeleteResponse {
   success: boolean;
-  deleted: boolean;
-  id?: string;
-  soft?: boolean;
-  message?: string;
-  count?: number;
+  data?: {
+    message?: string;
+    id?: string;
+    soft?: boolean;
+  };
 }
 
 // ============================================================================
@@ -337,16 +337,21 @@ export class BaseApi<
     token,
     organizationId = null,
     data,
+    id,
     path,
     options = {},
   }: {
     token?: string | null;
     organizationId?: string | null;
     data: FormData;
+    /** Resource ID — shorthand for path, appended as `baseUrl/{id}/upload` */
+    id?: string;
+    /** Custom sub-path appended as `baseUrl/{path}`. Takes precedence over `id`. */
     path?: string;
     options?: Omit<RequestOptions, 'token' | 'organizationId'>;
   }): Promise<ApiResponse<TDoc>> {
-    const url = path ? `${this.baseUrl}/${path}` : this.baseUrl;
+    const suffix = path ?? (id ? `${id}/upload` : undefined);
+    const url = suffix ? `${this.baseUrl}/${suffix}` : this.baseUrl;
 
     const requestOptions: ApiRequestOptions = {
       body: data,

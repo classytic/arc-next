@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient, type QueryKey, type UseMutateFunction, type UseMutateAsyncFunction } from "@tanstack/react-query";
 import { useTransition } from "react";
 import { isArcApiError } from "./client.js";
 import type { ToastHandler } from "./client.js";
@@ -22,6 +22,17 @@ export interface MutationCallbacks<TData, TVariables, TContext = unknown> {
   onSuccess?: (data: TData, variables: TVariables, context: TContext) => void | Promise<void>;
   onError?: (error: Error, variables: TVariables, context: TContext) => void | Promise<void>;
   onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables, context: TContext) => void | Promise<void>;
+}
+
+export interface TransitionMutationReturn<TData, TVariables> {
+  mutate: UseMutateFunction<TData, Error, TVariables>;
+  mutateAsync: UseMutateAsyncFunction<TData, Error, TVariables>;
+  isPending: boolean;
+  isSuccess: boolean;
+  isError: boolean;
+  error: Error | null;
+  data: TData | undefined;
+  reset: () => void;
 }
 
 // ============================================================================
@@ -90,6 +101,8 @@ export interface TransitionMutationConfig<TData, TVariables> {
   messages?: MutationMessages;
   useTransition?: boolean;
   showToast?: boolean;
+  /** Per-call toast guard — return false to suppress toast for this invocation */
+  shouldToast?: () => boolean;
   toastHandler?: ToastHandler;
 }
 
@@ -123,12 +136,14 @@ export function useMutationWithTransition<TData, TVariables>(config: TransitionM
         invalidate();
       }
 
-      if (toast) showToast("success", messages, data, variables, undefined, instanceToast);
+      const doToast = toast && (config.shouldToast?.() ?? true);
+      if (doToast) showToast("success", messages, data, variables, undefined, instanceToast);
       onSuccess?.(data, variables);
     },
 
     onError: (error, variables) => {
-      if (toast) showToast("error", messages, null, variables, error as Error, instanceToast);
+      const doToast = toast && (config.shouldToast?.() ?? true);
+      if (doToast) showToast("error", messages, null, variables, error as Error, instanceToast);
       onError?.(error as Error, variables);
     },
 
@@ -242,20 +257,25 @@ export interface CreateOptimisticMutationConfig<TData, TVariables> {
   optimisticUpdate?: (oldData: unknown, variables: TVariables) => unknown;
   onSuccess?: (data: TData, variables: TVariables) => void;
   onError?: (error: Error, variables: TVariables) => void;
+  onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
   messages?: MutationMessages;
+  /** Per-call toast guard — return false to suppress toast for this invocation */
+  shouldToast?: () => boolean;
   toastHandler?: ToastHandler;
 }
 
-export function createOptimisticMutation<TData, TVariables>({
-  mutationFn,
-  queryClient,
-  queryKeys,
-  optimisticUpdate,
-  onSuccess,
-  onError,
-  messages,
-  toastHandler: instanceToast,
-}: CreateOptimisticMutationConfig<TData, TVariables>) {
+export function createOptimisticMutation<TData, TVariables>(config: CreateOptimisticMutationConfig<TData, TVariables>) {
+  const {
+    mutationFn,
+    queryClient,
+    queryKeys,
+    optimisticUpdate,
+    onSuccess,
+    onError,
+    onSettled,
+    messages,
+    toastHandler: instanceToast,
+  } = config;
   return useMutation({
     mutationFn,
 
@@ -279,7 +299,8 @@ export function createOptimisticMutation<TData, TVariables>({
     },
 
     onSuccess: (data, variables) => {
-      if (messages?.success) showToast("success", messages, data, variables, undefined, instanceToast);
+      const doToast = config.shouldToast?.() ?? true;
+      if (doToast && messages?.success) showToast("success", messages, data, variables, undefined, instanceToast);
       queryKeys.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
       onSuccess?.(data, variables);
     },
@@ -290,8 +311,13 @@ export function createOptimisticMutation<TData, TVariables>({
         data.forEach(([qKey, qData]) => queryClient.setQueryData(qKey, qData));
       });
 
-      showToast("error", messages, null, variables, error as Error, instanceToast);
+      const doToast = config.shouldToast?.() ?? true;
+      if (doToast) showToast("error", messages, null, variables, error as Error, instanceToast);
       onError?.(error as Error, variables);
+    },
+
+    onSettled: (data, error, variables) => {
+      onSettled?.(data, error as Error | null, variables);
     },
   });
 }

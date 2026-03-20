@@ -373,6 +373,45 @@ describe('BaseApi upload', () => {
     const headers = (options as RequestInit).headers as Record<string, string>;
     expect(headers['x-organization-id']).toBe('org-123');
   });
+
+  it('upload with id posts to baseUrl/{id}/upload', async () => {
+    const api = createCrudApi('items', { basePath: '/api' });
+    const formData = new FormData();
+    formData.append('file', 'test-content');
+
+    await api.upload({ data: formData, id: 'doc-123' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api.test/api/items/doc-123/upload',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('upload path takes precedence over id', async () => {
+    const api = createCrudApi('items', { basePath: '/api' });
+    const formData = new FormData();
+    formData.append('file', 'test-content');
+
+    await api.upload({ data: formData, id: 'doc-123', path: 'bulk-import' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api.test/api/items/bulk-import',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('upload without id or path posts to base collection URL', async () => {
+    const api = createCrudApi('items', { basePath: '/api' });
+    const formData = new FormData();
+    formData.append('file', 'test-content');
+
+    await api.upload({ data: formData });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api.test/api/items',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
 });
 
 // ============================================================================

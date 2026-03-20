@@ -26,7 +26,7 @@ export interface RequestPassthrough {
   signal?: AbortSignal;
 }
 
-export interface ListQueryOptions {
+export interface ListQueryOptions<TData = unknown> {
   public?: boolean;
   enabled?: boolean;
   staleTime?: number;
@@ -37,11 +37,13 @@ export interface ListQueryOptions {
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
   _scope?: string;
+  /** Transform raw API response before returning. Runs on each render, receives raw data. */
+  select?: (data: unknown) => TData;
   /** Pass-through options for the underlying fetch request (cache, revalidate, tags, headers) */
   request?: RequestPassthrough;
 }
 
-export interface DetailQueryOptions {
+export interface DetailQueryOptions<TData = unknown> {
   public?: boolean;
   organizationId?: string | null;
   enabled?: boolean;
@@ -52,6 +54,8 @@ export interface DetailQueryOptions {
   refetchIntervalInBackground?: boolean;
   /** Query params passed to getById (e.g. select, populate) */
   params?: { select?: string; populate?: string | string[] };
+  /** Transform raw API response before returning. Runs on each render, receives raw data. */
+  select?: (data: unknown) => TData;
   /** Pass-through options for the underlying fetch request (cache, revalidate, tags, headers) */
   request?: RequestPassthrough;
 }
@@ -235,6 +239,7 @@ export interface CreateListQueryConfig {
   options?: Record<string, unknown>;
   prefillDetailCache?: boolean;
   detailKeyBuilder?: (id: string) => QueryKey;
+  select?: (data: unknown) => unknown;
 }
 
 export function createListQuery<T>({
@@ -244,15 +249,17 @@ export function createListQuery<T>({
   options = {},
   prefillDetailCache = true,
   detailKeyBuilder,
+  select,
 }: CreateListQueryConfig): ListQueryResult<T> {
   const queryClient = useQueryClient();
 
   const query = useQuery({
     queryKey,
-    queryFn: () => queryFn({}),
+    queryFn: ({ signal }) => queryFn({ signal }),
     enabled,
     ...DEFAULT_QUERY_CONFIG,
     ...options,
+    ...(select ? { select } : {}),
     placeholderData: keepPreviousData,
   });
 
@@ -291,6 +298,7 @@ export interface CreateDetailQueryConfig {
   queryFn: (context: { signal?: AbortSignal }) => Promise<unknown>;
   enabled?: boolean;
   options?: Record<string, unknown>;
+  select?: (data: unknown) => unknown;
 }
 
 export function createDetailQuery<T>({
@@ -298,13 +306,15 @@ export function createDetailQuery<T>({
   queryFn,
   enabled = true,
   options = {},
+  select,
 }: CreateDetailQueryConfig): DetailQueryResult<T> {
   const query = useQuery({
     queryKey,
-    queryFn: () => queryFn({}),
+    queryFn: ({ signal }) => queryFn({ signal }),
     enabled,
     ...DEFAULT_QUERY_CONFIG,
     ...options,
+    ...(select ? { select } : {}),
   });
 
   const item = extractItem<T>(query.data);
@@ -375,7 +385,7 @@ export function createInfiniteListQuery<T>({
 }: CreateInfiniteListQueryConfig): InfiniteListQueryResult<T> {
   const query = useInfiniteQuery({
     queryKey,
-    queryFn: ({ pageParam }) => queryFn({ pageParam }),
+    queryFn: ({ pageParam, signal }) => queryFn({ pageParam, signal }),
     enabled,
     initialPageParam,
     getNextPageParam,

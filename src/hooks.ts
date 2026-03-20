@@ -1,8 +1,9 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
-import { createOptimisticMutation } from "./mutation.js";
+import { useQueryClient, useMutation, type QueryKey } from "@tanstack/react-query";
+import { useCallback, useRef } from "react";
+import { createOptimisticMutation, useMutationWithTransition } from "./mutation.js";
+import type { MutationMessages } from "./mutation.js";
 import {
   createListQuery,
   createDetailQuery,
@@ -28,7 +29,7 @@ import {
   isKeysetPagination,
 } from "./api.js";
 import type { PaginatedResponse } from "./api.js";
-import type { MutationCallbacks } from "./mutation.js";
+import type { MutationCallbacks, TransitionMutationReturn } from "./mutation.js";
 import { getAuthMode, getAuthContext } from "./client.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
 
@@ -72,6 +73,21 @@ export interface CrudApi<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
     token?: string | null;
     organizationId?: string | null;
     id: string;
+  }) => Promise<unknown>;
+
+  upload?: (options: {
+    token?: string | null;
+    organizationId?: string | null;
+    data: FormData;
+    id?: string;
+    path?: string;
+  }) => Promise<unknown>;
+
+  search?: (options: {
+    token?: string | null;
+    organizationId?: string | null;
+    params?: Record<string, unknown>;
+    options?: { signal?: AbortSignal; [key: string]: unknown };
   }) => Promise<unknown>;
 }
 
@@ -121,6 +137,7 @@ export interface DeleteParams {
 export interface CallOptions<TData = unknown> {
   onSuccess?: (data: TData) => void;
   onError?: (error: Error) => void;
+  onSettled?: (data: TData | undefined, error: Error | null) => void;
   silent?: boolean;
 }
 
@@ -146,15 +163,15 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
   cache: CacheUtils<T>;
   useList: {
     /** New signature — auto-injects token/orgId from configureAuth() context */
-    (params?: Record<string, unknown>, options?: ListQueryOptions): ListQueryResult<T>;
+    (params?: Record<string, unknown>, options?: ListQueryOptions<T>): ListQueryResult<T>;
     /** Legacy signature — explicit token */
-    (token: string | null, params?: Record<string, unknown>, options?: ListQueryOptions): ListQueryResult<T>;
+    (token: string | null, params?: Record<string, unknown>, options?: ListQueryOptions<T>): ListQueryResult<T>;
   };
   useDetail: {
     /** New signature — auto-injects token from configureAuth() context */
-    (id: string | null, options?: DetailQueryOptions): DetailQueryResult<T>;
+    (id: string | null, options?: DetailQueryOptions<T>): DetailQueryResult<T>;
     /** Legacy signature — explicit token */
-    (id: string | null, token: string | null, options?: DetailQueryOptions): DetailQueryResult<T>;
+    (id: string | null, token: string | null, options?: DetailQueryOptions<T>): DetailQueryResult<T>;
   };
   useInfiniteList: {
     /** New signature — auto-injects token/orgId from configureAuth() context */
@@ -163,6 +180,22 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     (token: string | null, params?: Record<string, unknown>, options?: InfiniteListQueryOptions): InfiniteListQueryResult<T>;
   };
   useActions: () => CrudActions<T, TCreate, TUpdate>;
+  useUpload: (options?: {
+    invalidateQueries?: QueryKey[];
+    messages?: MutationMessages;
+    onSuccess?: (data: unknown) => void;
+    onError?: (error: Error) => void;
+    onSettled?: (data: unknown | undefined, error: Error | null) => void;
+  }) => TransitionMutationReturn<unknown, { data: FormData; id?: string; path?: string }>;
+  useSearch: (query: string, params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
+  useCustomMutation: <TData = unknown, TVariables = unknown>(config: {
+    mutationFn: (variables: TVariables) => Promise<TData>;
+    invalidateQueries?: QueryKey[];
+    messages?: MutationMessages;
+    onSuccess?: (data: TData, variables: TVariables) => void;
+    onError?: (error: Error, variables: TVariables) => void;
+    onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
+  }) => TransitionMutationReturn<TData, TVariables>;
   useNavigation: () => NavigateFn<T>;
 }
 
@@ -263,7 +296,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     return createListQuery<T>({
       queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
-      queryFn: () => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { ...requestOpts } }),
+      queryFn: ({ signal }) => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
       enabled: createEnabledRule(token, queryOpts),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
@@ -275,6 +308,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       },
       prefillDetailCache: queryOpts.prefillDetailCache ?? true,
       detailKeyBuilder: (id) => KEYS.detail(id),
+      select: queryOpts.select,
     });
   }
 
@@ -305,7 +339,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     return createDetailQuery<T>({
       queryKey: queryParams ? [...KEYS.detail(id || ""), queryParams] : KEYS.detail(id || ""),
-      queryFn: () => api.getById({ id: id!, token, organizationId, params: queryParams, options: { ...requestOpts } }),
+      queryFn: ({ signal }) => api.getById({ id: id!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
       enabled: !!id && createEnabledRule(token, restOptions),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
@@ -314,6 +348,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         refetchInterval: restOptions.refetchInterval,
         refetchIntervalInBackground: restOptions.refetchIntervalInBackground,
       },
+      select: restOptions.select,
     });
   }
 
@@ -321,12 +356,15 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
   function useActions(): CrudActions<T, TCreate, TUpdate> {
     const queryClient = useQueryClient();
+    const silentRef = useRef(false);
+    const shouldToast = useCallback(() => !silentRef.current, []);
 
     const createMutation = createOptimisticMutation({
       mutationFn: ({ token, organizationId, data }: MutationParams<TCreate>) =>
         api.create({ token, organizationId, data }),
       queryClient,
       queryKeys: [KEYS.lists()],
+      shouldToast,
       optimisticUpdate: (oldData, { data }) => {
         const optimisticItem = {
           ...(data as object),
@@ -341,6 +379,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       onError: (error, variables) => {
         callbacks.onCreate?.onError?.(error, { data: variables.data }, undefined);
       },
+      onSettled: (data, error, variables) => {
+        callbacks.onCreate?.onSettled?.(data as T | undefined, error, { data: variables.data }, undefined);
+      },
       messages: { success: config.messages.createSuccess, error: config.messages.createError },
       toastHandler: instanceToast,
     });
@@ -350,6 +391,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         api.update({ token, organizationId, id, data }),
       queryClient,
       queryKeys: [KEYS.lists()],
+      shouldToast,
       optimisticUpdate: (oldData, { id, data }) => {
         const updated = updateListCache(oldData, (arr: unknown[]) =>
           (arr || []).map((item) => (getItemId(item) === id ? { ...(item as object), ...(data as object) } : item))
@@ -359,12 +401,15 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         );
         return updated;
       },
-      onSuccess: (data, { id }) => {
+      onSuccess: (data, { id, data: updateData }) => {
         queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
-        callbacks.onUpdate?.onSuccess?.(data as T, { id, data: {} as TUpdate }, undefined);
+        callbacks.onUpdate?.onSuccess?.(data as T, { id, data: updateData }, undefined);
       },
       onError: (error, { id, data }) => {
         callbacks.onUpdate?.onError?.(error, { id, data }, undefined);
+      },
+      onSettled: (data, error, { id, data: updateData }) => {
+        callbacks.onUpdate?.onSettled?.(data as T | undefined, error, { id, data: updateData }, undefined);
       },
       messages: { success: config.messages.updateSuccess, error: config.messages.updateError },
       toastHandler: instanceToast,
@@ -374,6 +419,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       mutationFn: ({ token, organizationId, id }: DeleteParams) => api.delete({ token, organizationId, id }),
       queryClient,
       queryKeys: [KEYS.lists()],
+      shouldToast,
       optimisticUpdate: (oldData, { id }) => {
         queryClient.removeQueries({ queryKey: KEYS.detail(id) });
         return updateListCache(oldData, (arr: unknown[]) => (arr || []).filter((item) => getItemId(item) !== id));
@@ -383,6 +429,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       },
       onError: (error, { id }) => {
         callbacks.onDelete?.onError?.(error, { id }, undefined);
+      },
+      onSettled: (data, error, { id }) => {
+        callbacks.onDelete?.onSettled?.(data, error, { id }, undefined);
       },
       messages: { success: config.messages.deleteSuccess, error: config.messages.deleteError },
       toastHandler: instanceToast,
@@ -398,35 +447,50 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     };
 
     const create = async (params: MutationParams<TCreate>, options?: CallOptions<T>): Promise<T> => {
+      silentRef.current = options?.silent ?? false;
       try {
         const result = await createMutation.mutateAsync(resolveAuth(params));
         options?.onSuccess?.(result as T);
+        options?.onSettled?.(result as T, null);
         return result as T;
       } catch (error) {
         options?.onError?.(error as Error);
+        options?.onSettled?.(undefined, error as Error);
         throw error;
+      } finally {
+        silentRef.current = false;
       }
     };
 
     const update = async (params: UpdateParams<TUpdate>, options?: CallOptions<T>): Promise<T> => {
+      silentRef.current = options?.silent ?? false;
       try {
         const result = await updateMutation.mutateAsync(resolveAuth(params));
         options?.onSuccess?.(result as T);
+        options?.onSettled?.(result as T, null);
         return result as T;
       } catch (error) {
         options?.onError?.(error as Error);
+        options?.onSettled?.(undefined, error as Error);
         throw error;
+      } finally {
+        silentRef.current = false;
       }
     };
 
     const remove = async (params: DeleteParams, options?: CallOptions): Promise<unknown> => {
+      silentRef.current = options?.silent ?? false;
       try {
         const result = await deleteMutation.mutateAsync(resolveAuth(params));
         options?.onSuccess?.(result);
+        options?.onSettled?.(result, null);
         return result;
       } catch (error) {
         options?.onError?.(error as Error);
+        options?.onSettled?.(undefined, error as Error);
         throw error;
+      } finally {
+        silentRef.current = false;
       }
     };
 
@@ -472,7 +536,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     return createInfiniteListQuery<T>({
       queryKey: [...KEYS.scopedList(scope, { organizationId, ...restParams }), 'infinite'],
-      queryFn: ({ pageParam }) => {
+      queryFn: ({ pageParam, signal }) => {
         const paginationParams = typeof pageParam === 'string'
           ? { after: pageParam }
           : { page: pageParam };
@@ -481,7 +545,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           token,
           organizationId: organizationId as string | null,
           params: { ...restParams, ...paginationParams },
-          options: { ...requestOpts },
+          options: { signal, ...requestOpts },
         });
       },
       enabled: createEnabledRule(token, queryOpts),
@@ -507,6 +571,100 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         refetchOnWindowFocus: queryOpts.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
         structuralSharing: queryOpts.structuralSharing ?? config.structuralSharing,
       },
+    });
+  }
+
+  // ========== useUpload ==========
+
+  function useUpload(options?: {
+    invalidateQueries?: QueryKey[];
+    messages?: MutationMessages;
+    onSuccess?: (data: unknown) => void;
+    onError?: (error: Error) => void;
+    onSettled?: (data: unknown | undefined, error: Error | null) => void;
+  }) {
+    if (!api.upload) {
+      throw new Error(`[arc-next] "${entityKey}" api does not define an upload method`);
+    }
+
+    const uploadApi = api.upload;
+
+    return useMutationWithTransition<unknown, { data: FormData; id?: string; path?: string }>({
+      mutationFn: ({ data, id, path }) => {
+        const auth = getAuthContext();
+        return uploadApi({ token: auth.token, organizationId: auth.organizationId, data, id, path });
+      },
+      invalidateQueries: options?.invalidateQueries ?? [KEYS.lists()],
+      onSuccess: (data) => options?.onSuccess?.(data),
+      onError: (error) => options?.onError?.(error),
+      onSettled: (data, error) => options?.onSettled?.(data, error),
+      messages: options?.messages ?? {
+        success: `${singular} uploaded successfully`,
+        error: `Failed to upload ${singular.toLowerCase()}`,
+      },
+      toastHandler: instanceToast,
+    });
+  }
+
+  // ========== useSearch ==========
+
+  function useSearch(
+    query: string,
+    params?: Record<string, unknown>,
+    options?: ListQueryOptions<T>,
+  ): ListQueryResult<T> {
+    if (!api.search) {
+      throw new Error(`[arc-next] "${entityKey}" api does not define a search method`);
+    }
+
+    const searchApi = api.search;
+    const auth = getAuthContext();
+    const token = auth.token;
+    const organizationId = params?.organizationId as string | null ?? auth.organizationId;
+    const { organizationId: _, ...restParams } = params ?? {};
+    const searchParams = { q: query, ...restParams };
+    const { request: requestOpts, ...queryOpts } = options ?? {};
+
+    // Include organizationId in query key when present to isolate per-tenant search cache
+    const searchKeyParams = organizationId
+      ? { organizationId, ...searchParams }
+      : searchParams;
+
+    return createListQuery<T>({
+      queryKey: [...KEYS.lists(), 'search', searchKeyParams],
+      queryFn: ({ signal }) => searchApi({
+        token,
+        organizationId,
+        params: searchParams,
+        options: { signal, ...requestOpts },
+      }),
+      enabled: query.length > 0 && createEnabledRule(token, queryOpts),
+      options: {
+        staleTime: queryOpts.staleTime ?? config.staleTime,
+        gcTime: queryOpts.gcTime ?? config.gcTime,
+      },
+      select: queryOpts.select,
+    });
+  }
+
+  // ========== useCustomMutation ==========
+
+  function useCustomMutation<TData = unknown, TVariables = unknown>(mutationConfig: {
+    mutationFn: (variables: TVariables) => Promise<TData>;
+    invalidateQueries?: QueryKey[];
+    messages?: MutationMessages;
+    onSuccess?: (data: TData, variables: TVariables) => void;
+    onError?: (error: Error, variables: TVariables) => void;
+    onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
+  }) {
+    return useMutationWithTransition<TData, TVariables>({
+      mutationFn: mutationConfig.mutationFn,
+      invalidateQueries: mutationConfig.invalidateQueries ?? [KEYS.lists()],
+      onSuccess: mutationConfig.onSuccess,
+      onError: mutationConfig.onError,
+      onSettled: mutationConfig.onSettled,
+      messages: mutationConfig.messages,
+      toastHandler: instanceToast,
     });
   }
 
@@ -544,6 +702,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     useDetail,
     useInfiniteList,
     useActions,
+    useUpload,
+    useSearch,
+    useCustomMutation,
     useNavigation,
   };
 }
