@@ -106,6 +106,18 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Arc scope for multi-tenant APIs.
+ *
+ * - `'tenant'` (default) — Org-scoped. Hooks auto-inject `organizationId` from auth context.
+ * - `'platform'` — Platform admin scope. Skips org injection, sets `x-arc-scope: platform`
+ *   header so Arc's elevation plugin grants cross-org access for superadmins.
+ */
+export type ArcScope = 'tenant' | 'platform';
+
+/** Header name used by Arc's elevation plugin */
+export const ARC_SCOPE_HEADER = 'x-arc-scope';
+
 export interface BaseApiConfig {
   basePath?: string;
   defaultParams?: {
@@ -115,6 +127,24 @@ export interface BaseApiConfig {
   };
   cache?: RequestCache;
   headers?: Record<string, string>;
+  /**
+   * API scope — controls org context injection and Arc scope headers.
+   *
+   * @default 'tenant'
+   *
+   * @example
+   * ```ts
+   * // Org-scoped API (default) — auto-injects organizationId
+   * const postsApi = createCrudApi('posts', { basePath: '/api' });
+   *
+   * // Platform admin API — skips org injection, adds x-arc-scope header
+   * const adminApi = createCrudApi('subscriptions', {
+   *   basePath: '/api',
+   *   scope: 'platform',
+   * });
+   * ```
+   */
+  scope?: ArcScope;
   client?: ArcClient;
 }
 
@@ -138,13 +168,21 @@ export class BaseApi<
   TUpdate = Partial<TDoc>
 > {
   readonly entity: string;
-  readonly config: Required<Omit<BaseApiConfig, 'client'>>;
+  readonly config: Required<Omit<BaseApiConfig, 'client' | 'scope'>>;
   readonly baseUrl: string;
   private readonly requestFn: RequestFn;
 
+  readonly scope: ArcScope;
+
   constructor(entity: string, config: BaseApiConfig = {}) {
     this.entity = entity;
+    this.scope = config.scope ?? 'tenant';
     this.requestFn = config.client?.request ?? handleApiRequest;
+
+    // Build headers: merge user headers + scope header
+    const scopeHeaders: Record<string, string> =
+      this.scope === 'platform' ? { [ARC_SCOPE_HEADER]: 'platform' } : {};
+
     this.config = {
       basePath: config.basePath ?? '/api/v1',
       defaultParams: {
@@ -154,6 +192,7 @@ export class BaseApi<
       },
       cache: config.cache ?? 'no-store',
       headers: {
+        ...scopeHeaders,
         ...(config.headers || {}),
       },
     };

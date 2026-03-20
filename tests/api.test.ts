@@ -36,6 +36,42 @@ describe('BaseApi', () => {
       expect(api.config.defaultParams.limit).toBe(20);
       expect(api.config.defaultParams.page).toBe(1);
     });
+
+    it('defaults scope to tenant', () => {
+      const api = new BaseApi('products');
+      expect(api.scope).toBe('tenant');
+      expect(api.config.headers).toEqual({});
+    });
+
+    it('sets x-arc-scope header when scope is platform', () => {
+      const api = new BaseApi('subscriptions', { scope: 'platform' });
+      expect(api.scope).toBe('platform');
+      expect(api.config.headers['x-arc-scope']).toBe('platform');
+    });
+
+    it('does not set x-arc-scope header when scope is tenant', () => {
+      const api = new BaseApi('products', { scope: 'tenant' });
+      expect(api.scope).toBe('tenant');
+      expect(api.config.headers['x-arc-scope']).toBeUndefined();
+    });
+
+    it('preserves custom headers alongside scope header', () => {
+      const api = new BaseApi('admin/orgs', {
+        scope: 'platform',
+        headers: { 'x-custom': 'value' },
+      });
+      expect(api.config.headers['x-arc-scope']).toBe('platform');
+      expect(api.config.headers['x-custom']).toBe('value');
+    });
+
+    it('custom headers can override scope header', () => {
+      const api = new BaseApi('test', {
+        scope: 'platform',
+        headers: { 'x-arc-scope': 'custom' },
+      });
+      // User headers take precedence (spread after scopeHeaders)
+      expect(api.config.headers['x-arc-scope']).toBe('custom');
+    });
   });
 
   describe('prepareParams', () => {

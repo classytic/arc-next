@@ -41,6 +41,9 @@ export type { UseRouterHook } from "./client.js";
 // ============================================================================
 
 export interface CrudApi<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
+  /** Scope from BaseApi — used to auto-detect platformScoped */
+  scope?: 'tenant' | 'platform';
+
   getAll: (options: {
     token?: string | null;
     organizationId?: string | null;
@@ -96,6 +99,18 @@ export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> 
   entityKey: string;
   singular: string;
   plural?: string;
+  /**
+   * Platform-scoped hooks skip automatic organizationId injection.
+   *
+   * Use this for admin/superadmin hooks that query across all orgs
+   * (e.g., APIs configured with `x-arc-scope: platform`).
+   *
+   * When true, the hooks will NOT auto-inject the user's active
+   * organizationId into requests — the API's own headers control scoping.
+   *
+   * @default false
+   */
+  platformScoped?: boolean;
   defaults?: {
     staleTime?: number;
     gcTime?: number;
@@ -237,10 +252,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   api,
   entityKey,
   singular,
+  platformScoped,
   defaults = {},
   callbacks = {},
   client,
 }: CrudHooksConfig<T, TCreate, TUpdate>): CrudHooksReturn<T, TCreate, TUpdate> {
+  // Auto-detect from api.scope when platformScoped is not explicitly set
+  const isPlatform = platformScoped ?? (api.scope === 'platform');
   const KEYS = createQueryKeys(entityKey);
   const cache = createCacheUtils<T>(KEYS);
 
@@ -285,13 +303,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       token = auth.token;
       params = (tokenOrParams as Record<string, unknown>) ?? {};
       options = (paramsOrOptions as ListQueryOptions) ?? {};
-      if (auth.organizationId && !params.organizationId) {
+      if (!isPlatform && auth.organizationId && !params.organizationId) {
         params = { ...params, organizationId: auth.organizationId };
       }
     }
 
     const { organizationId, ...restParams } = params;
-    const scope = options._scope || (organizationId ? "tenant" : "super-admin");
+    const scope = options._scope || (isPlatform ? "platform" : organizationId ? "tenant" : "super-admin");
     const { request: requestOpts, ...queryOpts } = options;
 
     return createListQuery<T>({
@@ -330,7 +348,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       const auth = getAuthContext();
       token = auth.token;
       options = (tokenOrOptions as DetailQueryOptions) ?? {};
-      if (auth.organizationId && !options.organizationId) {
+      if (!isPlatform && auth.organizationId && !options.organizationId) {
         options = { ...options, organizationId: auth.organizationId };
       }
     }
@@ -442,7 +460,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       return {
         ...params,
         token: params.token ?? auth.token,
-        organizationId: params.organizationId ?? auth.organizationId,
+        organizationId: isPlatform ? (params.organizationId ?? null) : (params.organizationId ?? auth.organizationId),
       };
     };
 
@@ -525,7 +543,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       token = auth.token;
       params = (tokenOrParams as Record<string, unknown>) ?? {};
       options = (paramsOrOptions as InfiniteListQueryOptions) ?? {};
-      if (auth.organizationId && !params.organizationId) {
+      if (!isPlatform && auth.organizationId && !params.organizationId) {
         params = { ...params, organizationId: auth.organizationId };
       }
     }
@@ -592,7 +610,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useMutationWithTransition<unknown, { data: FormData; id?: string; path?: string }>({
       mutationFn: ({ data, id, path }) => {
         const auth = getAuthContext();
-        return uploadApi({ token: auth.token, organizationId: auth.organizationId, data, id, path });
+        return uploadApi({ token: auth.token, organizationId: isPlatform ? null : auth.organizationId, data, id, path });
       },
       invalidateQueries: options?.invalidateQueries ?? [KEYS.lists()],
       onSuccess: (data) => options?.onSuccess?.(data),
@@ -620,7 +638,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const searchApi = api.search;
     const auth = getAuthContext();
     const token = auth.token;
-    const organizationId = params?.organizationId as string | null ?? auth.organizationId;
+    const organizationId = platformScoped ? null : (params?.organizationId as string | null ?? auth.organizationId);
     const { organizationId: _, ...restParams } = params ?? {};
     const searchParams = { q: query, ...restParams };
     const { request: requestOpts, ...queryOpts } = options ?? {};

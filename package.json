@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
