@@ -1,13 +1,13 @@
 "use client";
 
 import { useQueryClient, useMutation, type QueryKey } from "@tanstack/react-query";
-import { useCallback, useRef } from "react";
-import { createOptimisticMutation, useMutationWithTransition } from "./mutation.js";
+import { useCallback, useRef, useMemo } from "react";
+import { useOptimisticMutation, useMutationWithTransition } from "./mutation.js";
 import type { MutationMessages } from "./mutation.js";
 import {
-  createListQuery,
-  createDetailQuery,
-  createInfiniteListQuery,
+  useListQuery,
+  useDetailQuery,
+  useInfiniteListQuery,
   updateListCache,
   getItemId,
   createQueryKeys,
@@ -33,65 +33,24 @@ import type { MutationCallbacks, TransitionMutationReturn } from "./mutation.js"
 import { getAuthMode, getAuthContext } from "./client.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
 
-// Re-export UseRouterHook for backward compatibility
-export type { UseRouterHook } from "./client.js";
-
 // ============================================================================
 // Types
 // ============================================================================
 
-export interface CrudApi<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
-  /** Scope from BaseApi — used to auto-detect platformScoped */
-  scope?: 'tenant' | 'platform';
-
-  getAll: (options: {
-    token?: string | null;
-    organizationId?: string | null;
-    params?: Record<string, unknown>;
-    options?: { signal?: AbortSignal; [key: string]: unknown };
-  }) => Promise<unknown>;
-
-  getById: (options: {
-    id: string;
-    token?: string | null;
-    organizationId?: string | null;
-    params?: { select?: string; populate?: string | string[] };
-    options?: { signal?: AbortSignal; [key: string]: unknown };
-  }) => Promise<unknown>;
-
-  create: (options: {
-    token?: string | null;
-    organizationId?: string | null;
-    data: TCreate;
-  }) => Promise<unknown>;
-
-  update: (options: {
-    token?: string | null;
-    organizationId?: string | null;
-    id: string;
-    data: TUpdate;
-  }) => Promise<unknown>;
-
-  delete: (options: {
-    token?: string | null;
-    organizationId?: string | null;
-    id: string;
-  }) => Promise<unknown>;
-
-  upload?: (options: {
-    token?: string | null;
-    organizationId?: string | null;
-    data: FormData;
-    id?: string;
-    path?: string;
-  }) => Promise<unknown>;
-
-  search?: (options: {
-    token?: string | null;
-    organizationId?: string | null;
-    params?: Record<string, unknown>;
-    options?: { signal?: AbortSignal; [key: string]: unknown };
-  }) => Promise<unknown>;
+/**
+ * CRUD API interface accepted by createCrudHooks.
+ *
+ * Parameters are loose (Record<string, unknown>) so BaseApi instances satisfy
+ * this structurally without casts. Return types thread generics for type safety.
+ */
+export interface CrudApi<T = unknown, TCreate = unknown, TUpdate = unknown> {
+  getAll: (options: Record<string, unknown>) => Promise<PaginatedResponse<T> | unknown>;
+  getById: (options: Record<string, unknown>) => Promise<{ data?: T } | unknown>;
+  create: (options: Record<string, unknown>) => Promise<{ data?: T } | unknown>;
+  update: (options: Record<string, unknown>) => Promise<{ data?: T } | unknown>;
+  delete: (options: Record<string, unknown>) => Promise<unknown>;
+  upload?: (options: Record<string, unknown>) => Promise<unknown>;
+  search?: (options: Record<string, unknown>) => Promise<PaginatedResponse<T> | unknown>;
 }
 
 export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
@@ -99,18 +58,6 @@ export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> 
   entityKey: string;
   singular: string;
   plural?: string;
-  /**
-   * Platform-scoped hooks skip automatic organizationId injection.
-   *
-   * Use this for admin/superadmin hooks that query across all orgs
-   * (e.g., APIs configured with `x-arc-scope: platform`).
-   *
-   * When true, the hooks will NOT auto-inject the user's active
-   * organizationId into requests — the API's own headers control scoping.
-   *
-   * @default false
-   */
-  platformScoped?: boolean;
   defaults?: {
     staleTime?: number;
     gcTime?: number;
@@ -223,6 +170,8 @@ let useRouterHook: UseRouterHook | null = null;
 /**
  * Configure the router hook for useNavigation. Call once at app init.
  *
+ * **SSR safety:** This sets module-level state. Call only in client-side code.
+ *
  * @example
  * import { useRouter } from "next/navigation";
  * configureNavigation(useRouter);
@@ -252,13 +201,10 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   api,
   entityKey,
   singular,
-  platformScoped,
   defaults = {},
   callbacks = {},
   client,
 }: CrudHooksConfig<T, TCreate, TUpdate>): CrudHooksReturn<T, TCreate, TUpdate> {
-  // Auto-detect from api.scope when platformScoped is not explicitly set
-  const isPlatform = platformScoped ?? (api.scope === 'platform');
   const KEYS = createQueryKeys(entityKey);
   const cache = createCacheUtils<T>(KEYS);
 
@@ -303,16 +249,16 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       token = auth.token;
       params = (tokenOrParams as Record<string, unknown>) ?? {};
       options = (paramsOrOptions as ListQueryOptions) ?? {};
-      if (!isPlatform && auth.organizationId && !params.organizationId) {
+      if (auth.organizationId && !params.organizationId) {
         params = { ...params, organizationId: auth.organizationId };
       }
     }
 
     const { organizationId, ...restParams } = params;
-    const scope = options._scope || (isPlatform ? "platform" : organizationId ? "tenant" : "super-admin");
+    const scope = options._scope || (organizationId ? "tenant" : "super-admin");
     const { request: requestOpts, ...queryOpts } = options;
 
-    return createListQuery<T>({
+    return useListQuery<T>({
       queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
       queryFn: ({ signal }) => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
       enabled: createEnabledRule(token, queryOpts),
@@ -348,20 +294,21 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       const auth = getAuthContext();
       token = auth.token;
       options = (tokenOrOptions as DetailQueryOptions) ?? {};
-      if (!isPlatform && auth.organizationId && !options.organizationId) {
+      if (auth.organizationId && !options.organizationId) {
         options = { ...options, organizationId: auth.organizationId };
       }
     }
 
     const { organizationId, params: queryParams, request: requestOpts, ...restOptions } = options;
 
-    return createDetailQuery<T>({
+    return useDetailQuery<T>({
       queryKey: queryParams ? [...KEYS.detail(id || ""), queryParams] : KEYS.detail(id || ""),
       queryFn: ({ signal }) => api.getById({ id: id!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
       enabled: !!id && createEnabledRule(token, restOptions),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
+        refetchOnWindowFocus: restOptions.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
         structuralSharing: restOptions.structuralSharing ?? config.structuralSharing,
         refetchInterval: restOptions.refetchInterval,
         refetchIntervalInBackground: restOptions.refetchIntervalInBackground,
@@ -377,7 +324,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const silentRef = useRef(false);
     const shouldToast = useCallback(() => !silentRef.current, []);
 
-    const createMutation = createOptimisticMutation({
+    const createMutation = useOptimisticMutation({
       mutationFn: ({ token, organizationId, data }: MutationParams<TCreate>) =>
         api.create({ token, organizationId, data }),
       queryClient,
@@ -404,11 +351,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       toastHandler: instanceToast,
     });
 
-    const updateMutation = createOptimisticMutation({
+    const updateMutation = useOptimisticMutation({
       mutationFn: ({ token, organizationId, id, data }: UpdateParams<TUpdate>) =>
         api.update({ token, organizationId, id, data }),
       queryClient,
-      queryKeys: [KEYS.lists()],
+      queryKeys: [KEYS.lists(), KEYS.details()],
       shouldToast,
       optimisticUpdate: (oldData, { id, data }) => {
         const updated = updateListCache(oldData, (arr: unknown[]) =>
@@ -433,16 +380,17 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       toastHandler: instanceToast,
     });
 
-    const deleteMutation = createOptimisticMutation({
+    const deleteMutation = useOptimisticMutation({
       mutationFn: ({ token, organizationId, id }: DeleteParams) => api.delete({ token, organizationId, id }),
       queryClient,
       queryKeys: [KEYS.lists()],
       shouldToast,
       optimisticUpdate: (oldData, { id }) => {
-        queryClient.removeQueries({ queryKey: KEYS.detail(id) });
         return updateListCache(oldData, (arr: unknown[]) => (arr || []).filter((item) => getItemId(item) !== id));
       },
       onSuccess: (data, { id }) => {
+        // Remove detail cache after successful delete
+        queryClient.removeQueries({ queryKey: KEYS.detail(id) });
         callbacks.onDelete?.onSuccess?.(data, { id }, undefined);
       },
       onError: (error, { id }) => {
@@ -455,16 +403,16 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       toastHandler: instanceToast,
     });
 
-    const resolveAuth = <P extends { token?: string | null; organizationId?: string | null }>(params: P): P => {
+    const resolveAuth = useCallback(<P extends { token?: string | null; organizationId?: string | null }>(params: P): P => {
       const auth = getAuthContext();
       return {
         ...params,
         token: params.token ?? auth.token,
-        organizationId: isPlatform ? (params.organizationId ?? null) : (params.organizationId ?? auth.organizationId),
+        organizationId: params.organizationId ?? auth.organizationId,
       };
-    };
+    }, []);
 
-    const create = async (params: MutationParams<TCreate>, options?: CallOptions<T>): Promise<T> => {
+    const create = useCallback(async (params: MutationParams<TCreate>, options?: CallOptions<T>): Promise<T> => {
       silentRef.current = options?.silent ?? false;
       try {
         const result = await createMutation.mutateAsync(resolveAuth(params));
@@ -478,9 +426,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       } finally {
         silentRef.current = false;
       }
-    };
+    }, [createMutation, resolveAuth]);
 
-    const update = async (params: UpdateParams<TUpdate>, options?: CallOptions<T>): Promise<T> => {
+    const update = useCallback(async (params: UpdateParams<TUpdate>, options?: CallOptions<T>): Promise<T> => {
       silentRef.current = options?.silent ?? false;
       try {
         const result = await updateMutation.mutateAsync(resolveAuth(params));
@@ -494,9 +442,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       } finally {
         silentRef.current = false;
       }
-    };
+    }, [updateMutation, resolveAuth]);
 
-    const remove = async (params: DeleteParams, options?: CallOptions): Promise<unknown> => {
+    const remove = useCallback(async (params: DeleteParams, options?: CallOptions): Promise<unknown> => {
       silentRef.current = options?.silent ?? false;
       try {
         const result = await deleteMutation.mutateAsync(resolveAuth(params));
@@ -510,7 +458,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       } finally {
         silentRef.current = false;
       }
-    };
+    }, [deleteMutation, resolveAuth]);
 
     return {
       create,
@@ -543,7 +491,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       token = auth.token;
       params = (tokenOrParams as Record<string, unknown>) ?? {};
       options = (paramsOrOptions as InfiniteListQueryOptions) ?? {};
-      if (!isPlatform && auth.organizationId && !params.organizationId) {
+      if (auth.organizationId && !params.organizationId) {
         params = { ...params, organizationId: auth.organizationId };
       }
     }
@@ -552,7 +500,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const scope = options._scope || (organizationId ? "tenant" : "super-admin");
     const { request: requestOpts, ...queryOpts } = options;
 
-    return createInfiniteListQuery<T>({
+    return useInfiniteListQuery<T>({
       queryKey: [...KEYS.scopedList(scope, { organizationId, ...restParams }), 'infinite'],
       queryFn: ({ pageParam, signal }) => {
         const paginationParams = typeof pageParam === 'string'
@@ -588,6 +536,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         gcTime: queryOpts.gcTime ?? config.gcTime,
         refetchOnWindowFocus: queryOpts.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
         structuralSharing: queryOpts.structuralSharing ?? config.structuralSharing,
+        refetchInterval: queryOpts.refetchInterval,
+        refetchIntervalInBackground: queryOpts.refetchIntervalInBackground,
       },
     });
   }
@@ -601,16 +551,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     onError?: (error: Error) => void;
     onSettled?: (data: unknown | undefined, error: Error | null) => void;
   }) {
-    if (!api.upload) {
-      throw new Error(`[arc-next] "${entityKey}" api does not define an upload method`);
-    }
-
-    const uploadApi = api.upload;
-
     return useMutationWithTransition<unknown, { data: FormData; id?: string; path?: string }>({
       mutationFn: ({ data, id, path }) => {
+        if (!api.upload) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define an upload method`));
+        }
         const auth = getAuthContext();
-        return uploadApi({ token: auth.token, organizationId: isPlatform ? null : auth.organizationId, data, id, path });
+        return api.upload({ token: auth.token, organizationId: auth.organizationId, data, id, path });
       },
       invalidateQueries: options?.invalidateQueries ?? [KEYS.lists()],
       onSuccess: (data) => options?.onSuccess?.(data),
@@ -637,9 +584,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     const searchApi = api.search;
     const auth = getAuthContext();
-    const token = auth.token;
-    const organizationId = platformScoped ? null : (params?.organizationId as string | null ?? auth.organizationId);
-    const { organizationId: _, ...restParams } = params ?? {};
+    const token = params?.token as string | null ?? auth.token;
+    const organizationId = params?.organizationId as string | null ?? auth.organizationId;
+    const { organizationId: _, token: _t, ...restParams } = params ?? {};
     const searchParams = { q: query, ...restParams };
     const { request: requestOpts, ...queryOpts } = options ?? {};
 
@@ -648,7 +595,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       ? { organizationId, ...searchParams }
       : searchParams;
 
-    return createListQuery<T>({
+    return useListQuery<T>({
       queryKey: [...KEYS.lists(), 'search', searchKeyParams],
       queryFn: ({ signal }) => searchApi({
         token,
@@ -688,10 +635,14 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
   // ========== useNavigation ==========
 
+  // Resolve router hook once at factory time — stable identity for Rules of Hooks.
+  const resolvedRouterHook: UseRouterHook = instanceNavigation
+    ?? useRouterHook
+    ?? (() => ({ push: () => {}, replace: () => {} }));
+
   function useNavigation(): NavigateFn<T> {
     const queryClient = useQueryClient();
-    const activeRouterHook = instanceNavigation ?? useRouterHook;
-    const router = activeRouterHook?.();
+    const router = resolvedRouterHook();
 
     return useCallback(
       (href: string, item: T, options: NavigationOptions = {}) => {

@@ -5,9 +5,6 @@ import { useTransition } from "react";
 import { isArcApiError } from "./client.js";
 import type { ToastHandler } from "./client.js";
 
-// Re-export for backward compatibility
-export type { ToastHandler } from "./client.js";
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -46,6 +43,8 @@ let toastHandler: ToastHandler = {
 
 /**
  * Configure toast handler. Call once at app init.
+ *
+ * **SSR safety:** This sets module-level state. Call only in client-side code.
  *
  * @example
  * import { toast } from "sonner";
@@ -264,7 +263,7 @@ export interface CreateOptimisticMutationConfig<TData, TVariables> {
   toastHandler?: ToastHandler;
 }
 
-export function createOptimisticMutation<TData, TVariables>(config: CreateOptimisticMutationConfig<TData, TVariables>) {
+export function useOptimisticMutation<TData, TVariables>(config: CreateOptimisticMutationConfig<TData, TVariables>) {
   const {
     mutationFn,
     queryClient,
@@ -332,3 +331,6 @@ export const QUERY_CONFIGS = {
   stable: { staleTime: 300_000 },
   static: { staleTime: 600_000 },
 } as const;
+
+/** @deprecated Use `useOptimisticMutation` */
+export const createOptimisticMutation = useOptimisticMutation;

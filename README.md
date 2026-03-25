@@ -30,8 +30,8 @@ import { useRouter } from "next/navigation";
 // Required — sets the API base URL and auth mode
 configureClient({
   baseUrl: process.env.NEXT_PUBLIC_API_URL!,
-  authMode: "cookie", // 'cookie' for Better Auth, 'bearer' for token auth (default)
-  internalApiKey: process.env.NEXT_PUBLIC_INTERNAL_API_KEY, // optional
+  authMode: "cookie",   // 'cookie' for Better Auth, 'bearer' for token auth (default)
+  // credentials: 'omit', // override if you don't want cookies sent cross-origin
 });
 
 // Optional — auto-inject org context into queries/mutations
@@ -51,10 +51,11 @@ configureNavigation(useRouter);
 
 | Import                              | Purpose                                                                      | `"use client"` |
 | ----------------------------------- | ---------------------------------------------------------------------------- | :-------------: |
+| `@classytic/arc-next`               | Root — same as `/hooks` (`createCrudHooks`, `configureNavigation`)           |      Yes        |
 | `@classytic/arc-next/client`        | `configureClient`, `configureAuth`, `createClient`, `handleApiRequest`, `createQueryString`, `ArcApiError`, `isArcApiError`, `getAuthMode`, `getAuthContext` |       No        |
 | `@classytic/arc-next/api`           | `BaseApi`, `createCrudApi`, response types, type guards                      |       No        |
-| `@classytic/arc-next/query`         | `createQueryKeys`, `createCacheUtils`, `createListQuery`, `createDetailQuery`|      Yes        |
-| `@classytic/arc-next/mutation`      | `configureToast`, `useMutationWithTransition`, `createOptimisticMutation`    |      Yes        |
+| `@classytic/arc-next/query`         | `createQueryKeys`, `createCacheUtils`, `useListQuery`, `useDetailQuery`      |      Yes        |
+| `@classytic/arc-next/mutation`      | `configureToast`, `useMutationWithTransition`, `useOptimisticMutation`       |      Yes        |
 | `@classytic/arc-next/hooks`         | `createCrudHooks`, `configureNavigation`                                     |      Yes        |
 | `@classytic/arc-next/query-client`  | `getQueryClient` (SSR-safe singleton)                                        |       No        |
 | `@classytic/arc-next/prefetch`      | `createCrudPrefetcher`, `dehydrate` (SSR prefetch)                           |       No        |
@@ -148,13 +149,15 @@ export function ProductsPage() {
 configureClient({
   baseUrl: string;                          // Required — API base URL
   authMode?: 'cookie' | 'bearer';          // Default: 'bearer'
+  credentials?: RequestCredentials;         // Default: derived from authMode
   internalApiKey?: string;                  // Optional — sent as x-internal-api-key header
   defaultHeaders?: Record<string, string>; // Optional — merged into every request
 });
 ```
 
-- `authMode: 'bearer'` (default) — requires a token for authenticated requests; queries are disabled until a token is provided
-- `authMode: 'cookie'` — auth via HTTP-only cookies (e.g. Better Auth); queries are always enabled, no token needed
+- `authMode: 'bearer'` (default) — requires a token; queries disabled until token provided; `credentials: 'same-origin'`
+- `authMode: 'cookie'` — HTTP-only cookies (e.g. Better Auth); queries always enabled; `credentials: 'include'`
+- `credentials` — explicit override: `'include'` (send cookies cross-origin), `'same-origin'` (same-origin only), `'omit'` (never send cookies)
 
 Must be called before any API requests. Throws if not configured.
 
@@ -534,7 +537,7 @@ useProducts(token, {}, { ...QUERY_CONFIGS.realtime });
 
 ### `updateListCache(listData, updater)`
 
-Transforms list cache regardless of format (`docs[]`, `data[]`, `items[]`, `results[]`, or raw array).
+Transforms list cache regardless of format — well-known keys (`docs[]`, `data[]`, `items[]`, `results[]`), custom keys (`products[]`, `users[]`, etc.), or raw arrays.
 Automatically adjusts `total`/`totalDocs` counts when items are added or removed (optimistic add/delete).
 
 ```ts
@@ -551,11 +554,11 @@ Extracts `_id` or `id` from any item. Returns `string | null`.
 
 ### `normalizePagination(data)`
 
-Converts any pagination response format to a normalized `PaginationData` object. Handles `total`/`totalDocs`, `pages`/`totalPages`, `page`/`currentPage`, `hasNext`/`hasNextPage`/`hasMore`, `hasPrev`/`hasPrevPage`.
+Converts any pagination response format to a normalized `PaginationData` object. Detects pagination method (`offset`, `keyset`, `aggregate`) and normalizes all fields: `total`/`totalDocs`, `pages`/`totalPages`, `page`/`currentPage`, `hasNext`/`hasNextPage`/`hasMore`, `hasPrev`/`hasPrevPage`, `next` (keyset cursor).
 
 ### `extractItems<T>(data)`
 
-Extracts the items array from any response format — looks for `docs`, `data`, `items`, `results` fields, or returns the data directly if it's already an array.
+Extracts the items array from any response format. Checks well-known keys first (`docs`, `data`, `items`, `results`), then falls back to finding the first top-level array — so `{ products: [...] }` or `{ users: [...] }` works without configuration.
 
 ## Multi-Client (Multiple APIs)
 
@@ -705,10 +708,10 @@ const adminApi = createCrudApi("users", {
 - **CRUD Factory** — `createCrudApi` + `createCrudHooks` generates typed API clients and React Query hooks
 - **Optimistic Updates** — Create, update, delete with instant UI feedback and automatic rollback
 - **Multi-Tenant Scoping** — `organizationId` in headers + scoped query keys
-- **Pagination Normalization** — Handles `docs`/`data`/`items`/`results` response formats, offset/keyset/aggregate pagination
+- **Pagination Normalization** — Handles `docs`/`data`/`items`/`results` + any custom key, offset/keyset/aggregate pagination
 - **Detail Cache Prefilling** — List results auto-populate detail query cache
 - **React 19 Transitions** — `useMutationWithTransition` wraps invalidation in `startTransition`
-- **Cookie & Bearer Auth** — `authMode: 'cookie'` for Better Auth, `'bearer'` for token auth
+- **Cookie & Bearer Auth** — `authMode: 'cookie'` for Better Auth, `'bearer'` for token auth, configurable `credentials` policy
 - **SSR Prefetch** — `createCrudPrefetcher` + `dehydrate` for server component data loading
 - **Multi-Client** — `createClient()` for multiple API backends side by side
 - **Pluggable Toast** — `configureToast()` — use sonner, react-hot-toast, or anything

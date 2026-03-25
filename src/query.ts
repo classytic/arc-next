@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useInfiniteQuery, useQueryClient, keepPreviousData, type QueryKey, type InfiniteData } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 
 // ============================================================================
@@ -9,12 +9,16 @@ import type { QueryClient } from "@tanstack/react-query";
 // ============================================================================
 
 export interface PaginationData {
+  /** Pagination method detected from response (offset | keyset | aggregate) */
+  method: 'offset' | 'keyset' | 'aggregate' | null;
   total: number;
   pages: number;
   page: number;
   limit: number;
   hasNext: boolean;
   hasPrev: boolean;
+  /** Keyset cursor for next page (keyset pagination only) */
+  next?: string | null;
 }
 
 /** Request-level options passed through to the fetch call */
@@ -49,6 +53,7 @@ export interface DetailQueryOptions<TData = unknown> {
   enabled?: boolean;
   staleTime?: number;
   gcTime?: number;
+  refetchOnWindowFocus?: boolean;
   structuralSharing?: boolean;
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
@@ -130,19 +135,34 @@ function normalizePagination(data: unknown): PaginationData | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
 
+  // Detect pagination method from response
+  const method = (d.method as PaginationData['method']) ?? null;
+
+  // Keyset pagination: has hasMore but no total/pages
+  const isKeyset = method === 'keyset' || (d.hasMore != null && d.total == null && d.pages == null);
+
   const hasTotal = d.total != null || d.totalDocs != null;
   const hasPages = d.pages != null || d.totalPages != null;
-  if (!hasTotal && !hasPages) return null;
+
+  // Return null only when no pagination signal exists at all
+  if (!hasTotal && !hasPages && !isKeyset) return null;
 
   return {
+    method,
     total: Number(d.total ?? d.totalDocs ?? 0),
-    pages: Number(d.pages ?? d.totalPages ?? 1),
-    page: Number(d.page ?? d.currentPage ?? 1),
+    pages: Number(d.pages ?? d.totalPages ?? (isKeyset ? 0 : 1)),
+    page: Number(d.page ?? d.currentPage ?? (isKeyset ? 0 : 1)),
     limit: Number(d.limit ?? 10),
     hasNext: Boolean(d.hasNext ?? d.hasNextPage ?? d.hasMore ?? false),
     hasPrev: Boolean(d.hasPrev ?? d.hasPrevPage ?? false),
+    ...(isKeyset ? { next: (d.next as string | null) ?? null } : {}),
   };
 }
+
+/** Well-known keys checked in order for list responses. */
+const LIST_KEYS = ['docs', 'data', 'items', 'results'] as const;
+/** Well-known keys checked in order for detail responses. */
+const DETAIL_KEYS = ['data', 'doc', 'item', 'result'] as const;
 
 function extractItems<T>(data: unknown): T[] {
   if (!data) return [];
@@ -150,16 +170,34 @@ function extractItems<T>(data: unknown): T[] {
   if (typeof data !== "object") return [];
 
   const d = data as Record<string, unknown>;
-  const items = d.docs ?? d.data ?? d.items ?? d.results;
-  return Array.isArray(items) ? (items as T[]) : [];
+
+  // 1. Check well-known keys first
+  for (const key of LIST_KEYS) {
+    if (Array.isArray(d[key])) return d[key] as T[];
+  }
+
+  // 2. Fallback: find the first top-level array (handles { products: [...] } etc.)
+  for (const value of Object.values(d)) {
+    if (Array.isArray(value)) return value as T[];
+  }
+
+  return [];
 }
 
 function extractItem<T>(data: unknown): T | null {
-  if (!data) return null;
-  if (typeof data !== "object") return null;
+  if (data == null) return null;
+  // Primitive response (string, number, boolean) — return directly
+  if (typeof data !== "object") return data as T;
 
   const d = data as Record<string, unknown>;
-  return (d.data ?? d) as T | null;
+
+  // 1. Check well-known keys first (accept any non-null value, including primitives)
+  for (const key of DETAIL_KEYS) {
+    if (d[key] != null) return d[key] as T;
+  }
+
+  // 2. Fallback: return the response itself (direct object)
+  return d as T;
 }
 
 export function updateListCache<T>(listData: unknown, updater: (items: T[]) => T[]): unknown {
@@ -172,11 +210,16 @@ export function updateListCache<T>(listData: unknown, updater: (items: T[]) => T
   if (typeof listData !== "object") return listData;
   const d = listData as Record<string, unknown>;
 
-  // Detect the items array field: docs > data > items > results (same order as extractItems)
-  const arrayField = "docs" in d ? "docs"
-    : (Array.isArray(d.data) ? "data"
-    : ("items" in d && Array.isArray(d.items) ? "items"
-    : ("results" in d && Array.isArray(d.results) ? "results" : null)));
+  // Detect the items array field: well-known keys first, then first array found
+  let arrayField: string | null = null;
+  for (const key of LIST_KEYS) {
+    if (Array.isArray(d[key])) { arrayField = key; break; }
+  }
+  if (!arrayField) {
+    for (const [key, value] of Object.entries(d)) {
+      if (Array.isArray(value)) { arrayField = key; break; }
+    }
+  }
 
   if (!arrayField) return listData;
 
@@ -242,7 +285,7 @@ export interface CreateListQueryConfig {
   select?: (data: unknown) => unknown;
 }
 
-export function createListQuery<T>({
+export function useListQuery<T>({
   queryKey,
   queryFn,
   enabled = true,
@@ -263,8 +306,9 @@ export function createListQuery<T>({
     placeholderData: keepPreviousData,
   });
 
-  const items = extractItems<T>(query.data);
-  const pagination = normalizePagination(query.data);
+  // Memoize to avoid re-running useEffect on every render
+  const items = useMemo(() => extractItems<T>(query.data), [query.data]);
+  const pagination = useMemo(() => normalizePagination(query.data), [query.data]);
 
   useEffect(() => {
     if (!prefillDetailCache || !detailKeyBuilder || items.length === 0) return;
@@ -301,7 +345,7 @@ export interface CreateDetailQueryConfig {
   select?: (data: unknown) => unknown;
 }
 
-export function createDetailQuery<T>({
+export function useDetailQuery<T>({
   queryKey,
   queryFn,
   enabled = true,
@@ -343,6 +387,8 @@ export interface InfiniteListQueryOptions {
   gcTime?: number;
   refetchOnWindowFocus?: boolean;
   structuralSharing?: boolean;
+  refetchInterval?: number | false;
+  refetchIntervalInBackground?: boolean;
   _scope?: string;
   request?: RequestPassthrough;
 }
@@ -374,7 +420,7 @@ export interface CreateInfiniteListQueryConfig {
   getPreviousPageParam?: (firstPage: unknown) => unknown;
 }
 
-export function createInfiniteListQuery<T>({
+export function useInfiniteListQuery<T>({
   queryKey,
   queryFn,
   enabled = true,
@@ -394,7 +440,10 @@ export function createInfiniteListQuery<T>({
     ...options,
   });
 
-  const items: T[] = query.data?.pages.flatMap((page) => extractItems<T>(page)) ?? [];
+  const items = useMemo(
+    () => query.data?.pages.flatMap((page) => extractItems<T>(page)) ?? [],
+    [query.data],
+  );
 
   return {
     items,
@@ -413,3 +462,11 @@ export function createInfiniteListQuery<T>({
     data: query.data,
   };
 }
+
+// Deprecated aliases — use useListQuery, useDetailQuery, useInfiniteListQuery
+/** @deprecated Use `useListQuery` */
+export const createListQuery = useListQuery;
+/** @deprecated Use `useDetailQuery` */
+export const createDetailQuery = useDetailQuery;
+/** @deprecated Use `useInfiniteListQuery` */
+export const createInfiniteListQuery = useInfiniteListQuery;

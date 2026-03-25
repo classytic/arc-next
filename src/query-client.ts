@@ -71,6 +71,11 @@ export function getQueryClient(overrides?: QueryClientOverrides): QueryClient {
 
   if (!browserQueryClient) {
     browserQueryClient = makeQueryClient(overrides);
+  } else if (overrides) {
+    console.warn(
+      '[arc-next] getQueryClient(): Browser singleton already exists — overrides are ignored. ' +
+      'Pass overrides only on the first call.',
+    );
   }
   return browserQueryClient;
 }

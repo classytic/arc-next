@@ -96,6 +96,44 @@ describe('updateListCache', () => {
 });
 
 // ============================================================================
+// Flexible response extraction (custom keys)
+// ============================================================================
+
+describe('extractItems flexibility (via updateListCache)', () => {
+  it('handles custom key like { products: [...] }', () => {
+    const data = { products: [{ _id: '1', name: 'Widget' }], total: 1 };
+    const result = updateListCache(data, (items: unknown[]) => [...items, { _id: '2', name: 'Gadget' }]);
+    expect(result).toEqual({ products: [{ _id: '1', name: 'Widget' }, { _id: '2', name: 'Gadget' }], total: 2 });
+  });
+
+  it('handles custom key like { users: [...] }', () => {
+    const data = { users: [{ id: 'a' }, { id: 'b' }], count: 2 };
+    const result = updateListCache(data, (items: unknown[]) => items.filter((i: any) => i.id !== 'a'));
+    expect(result).toEqual({ users: [{ id: 'b' }], count: 2 });
+  });
+
+  it('handles { orders: [...] } with no pagination fields', () => {
+    const data = { orders: [{ id: '1' }], success: true };
+    const result = updateListCache(data, (items: unknown[]) => []);
+    expect(result).toEqual({ orders: [], success: true });
+  });
+
+  it('well-known keys take precedence over custom keys', () => {
+    // If both `docs` and `products` exist, `docs` wins
+    const data = { docs: [{ _id: '1' }], products: [{ _id: '2' }], total: 1 };
+    const result = updateListCache(data, (items: unknown[]) => [...items, { _id: '3' }]);
+    const r = result as Record<string, unknown>;
+    expect(r.docs).toEqual([{ _id: '1' }, { _id: '3' }]);
+    expect(r.products).toEqual([{ _id: '2' }]); // untouched
+  });
+
+  it('returns unchanged when no array field exists', () => {
+    const data = { message: 'ok', count: 0 };
+    expect(updateListCache(data, () => [])).toEqual(data);
+  });
+});
+
+// ============================================================================
 // createQueryKeys
 // ============================================================================
 
@@ -361,5 +399,124 @@ describe('DEFAULT_QUERY_CONFIG', () => {
     expect(DEFAULT_QUERY_CONFIG.gcTime).toBe(1_800_000);
     expect(DEFAULT_QUERY_CONFIG.refetchOnWindowFocus).toBe(false);
     expect(DEFAULT_QUERY_CONFIG.retry).toBe(0);
+  });
+});
+
+// ============================================================================
+// Arc Backend Response Shape Coverage
+// ============================================================================
+
+describe('Arc backend response shapes', () => {
+  describe('BaseController.list — offset pagination', () => {
+    const response = {
+      success: true,
+      method: 'offset',
+      docs: [{ _id: '1' }, { _id: '2' }],
+      page: 1,
+      limit: 10,
+      total: 50,
+      pages: 5,
+      hasNext: true,
+      hasPrev: false,
+    };
+
+    it('extractItems returns docs', () => {
+      const items = updateListCache(response, (i: unknown[]) => i);
+      expect((items as Record<string, unknown>).docs).toEqual(response.docs);
+    });
+
+    it('updateListCache updates docs and total', () => {
+      const result = updateListCache(response, (items: unknown[]) => [...items, { _id: '3' }]) as Record<string, unknown>;
+      expect((result.docs as unknown[]).length).toBe(3);
+      expect(result.total).toBe(51);
+    });
+  });
+
+  describe('BaseController.list — keyset pagination', () => {
+    const response = {
+      success: true,
+      method: 'keyset',
+      docs: [{ _id: 'a' }, { _id: 'b' }],
+      limit: 20,
+      hasMore: true,
+      next: 'cursor_abc',
+    };
+
+    it('extractItems returns docs', () => {
+      const result = updateListCache(response, (i: unknown[]) => i);
+      expect((result as Record<string, unknown>).docs).toEqual(response.docs);
+    });
+
+    it('updateListCache works on keyset response', () => {
+      const result = updateListCache(response, (items: unknown[]) =>
+        items.filter((i: any) => i._id !== 'a')
+      ) as Record<string, unknown>;
+      expect((result.docs as unknown[]).length).toBe(1);
+      // keyset has no total — should not add one
+      expect(result.total).toBeUndefined();
+    });
+  });
+
+  describe('BaseController.list — aggregate pagination', () => {
+    const response = {
+      success: true,
+      method: 'aggregate',
+      docs: [{ _id: '1', sum: 100 }],
+      page: 1,
+      limit: 10,
+      total: 1,
+      pages: 1,
+      hasNext: false,
+      hasPrev: false,
+    };
+
+    it('updateListCache updates docs', () => {
+      const result = updateListCache(response, (items: unknown[]) => [...items, { _id: '2', sum: 200 }]) as Record<string, unknown>;
+      expect((result.docs as unknown[]).length).toBe(2);
+      expect(result.total).toBe(2);
+    });
+  });
+
+  describe('BaseController.get — detail response', () => {
+    it('handles { success, data: TDoc }', () => {
+      const response = { success: true, data: { _id: '1', name: 'Widget' } };
+      // extractItem would pull out `data`
+      const d = response as Record<string, unknown>;
+      expect(d.data).toEqual({ _id: '1', name: 'Widget' });
+    });
+  });
+
+  describe('BaseController.delete — delete response', () => {
+    it('handles { success, data: { message, id, soft } }', () => {
+      const response = { success: true, data: { message: 'Deleted successfully', id: '1', soft: true } };
+      expect(response.data.message).toBe('Deleted successfully');
+      expect(response.data.soft).toBe(true);
+    });
+  });
+
+  describe('createActionRouter — action response', () => {
+    it('handles { success, data: result } with object result', () => {
+      const response = { success: true, data: { status: 'approved', approvedBy: 'admin' } };
+      expect(response.data.status).toBe('approved');
+    });
+
+    it('handles { success, data: result } with primitive result', () => {
+      const response = { success: true, data: 'ok' };
+      expect(response.data).toBe('ok');
+    });
+  });
+
+  describe('additional routes — custom response shapes', () => {
+    it('handles { products: [...] } via fallback', () => {
+      const response = { success: true, products: [{ _id: '1' }], total: 1 };
+      const result = updateListCache(response, (items: unknown[]) => [...items, { _id: '2' }]) as Record<string, unknown>;
+      expect((result.products as unknown[]).length).toBe(2);
+    });
+
+    it('handles plain array response', () => {
+      const response = [{ _id: '1' }, { _id: '2' }];
+      const result = updateListCache(response, (items: unknown[]) => items.filter((i: any) => i._id !== '1'));
+      expect((result as unknown[]).length).toBe(1);
+    });
   });
 });

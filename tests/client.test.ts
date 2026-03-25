@@ -62,7 +62,7 @@ describe('handleApiRequest', () => {
       'http://api.test/users',
       expect.objectContaining({
         method: 'GET',
-        credentials: 'include',
+        credentials: 'same-origin',
       })
     );
   });
@@ -206,6 +206,79 @@ describe('handleApiRequest', () => {
     const fetchOpts = options as RequestInit & { next?: { revalidate?: number; tags?: string[] } };
     expect(fetchOpts.next?.revalidate).toBe(60);
     expect(fetchOpts.next?.tags).toEqual(['posts']);
+  });
+});
+
+// ============================================================================
+// Credentials Policy
+// ============================================================================
+
+describe('credentials policy', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: 'ok' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('bearer mode (default) uses same-origin credentials', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+    await handleApiRequest('GET', '/test');
+
+    const [, opts] = fetchMock.mock.calls[0]!;
+    expect((opts as RequestInit).credentials).toBe('same-origin');
+  });
+
+  it('cookie mode uses include credentials', async () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'cookie' });
+    await handleApiRequest('GET', '/test');
+
+    const [, opts] = fetchMock.mock.calls[0]!;
+    expect((opts as RequestInit).credentials).toBe('include');
+  });
+
+  it('explicit credentials override authMode default', async () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'cookie', credentials: 'omit' });
+    await handleApiRequest('GET', '/test');
+
+    const [, opts] = fetchMock.mock.calls[0]!;
+    expect((opts as RequestInit).credentials).toBe('omit');
+  });
+
+  it('bearer mode with explicit include sends cookies', async () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'bearer', credentials: 'include' });
+    await handleApiRequest('GET', '/test');
+
+    const [, opts] = fetchMock.mock.calls[0]!;
+    expect((opts as RequestInit).credentials).toBe('include');
+  });
+
+  it('createClient respects credentials config', async () => {
+    configureClient({ baseUrl: 'http://global.test' });
+    const client = createClient({ baseUrl: 'http://other.test', credentials: 'omit' });
+    const api = (await import('../src/api.js')).createCrudApi('items', { basePath: '/api', client });
+    await api.getAll();
+
+    const [, opts] = fetchMock.mock.calls[0]!;
+    expect((opts as RequestInit).credentials).toBe('omit');
+  });
+
+  it('createClient cookie mode defaults to include', async () => {
+    configureClient({ baseUrl: 'http://global.test' });
+    const client = createClient({ baseUrl: 'http://cookie.test', authMode: 'cookie' });
+    const api = (await import('../src/api.js')).createCrudApi('items', { basePath: '/api', client });
+    await api.getAll();
+
+    const [, opts] = fetchMock.mock.calls[0]!;
+    expect((opts as RequestInit).credentials).toBe('include');
   });
 });
 
@@ -829,5 +902,62 @@ describe('configureAuth', () => {
     const ctx = getAuthContext();
     expect(ctx.token).toBeNull();
     expect(ctx.organizationId).toBe('org-only');
+  });
+});
+
+// ============================================================================
+// v0.2.1 — Error preservation
+// ============================================================================
+
+describe('v0.2.1 error preservation', () => {
+  beforeEach(() => {
+    configureClient({ baseUrl: 'https://api.test.com' });
+  });
+
+  it('preserves AbortError when fetch is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const abortError = new Error('The operation was aborted');
+    abortError.name = 'AbortError';
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
+
+    try {
+      await handleApiRequest('GET', '/test');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).name).toBe('AbortError');
+    }
+
+    vi.unstubAllGlobals();
+  });
+
+  it('preserves TypeError on network failure', async () => {
+    const networkError = new TypeError('Failed to fetch');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(networkError));
+
+    try {
+      await handleApiRequest('GET', '/test');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(TypeError);
+      expect((error as TypeError).message).toBe('Failed to fetch');
+    }
+
+    vi.unstubAllGlobals();
+  });
+
+  it('wraps non-Error throws in generic Error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue('string error'));
+
+    try {
+      await handleApiRequest('GET', '/test');
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('An error occurred while fetching data.');
+    }
+
+    vi.unstubAllGlobals();
   });
 });

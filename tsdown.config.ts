@@ -15,14 +15,18 @@ export default defineConfig({
   target: 'es2022',
   outDir: 'dist',
   clean: true,
-  sourcemap: true,
-  dts: true,
+  sourcemap: false,
+  dts: {
+    sourcemap: false,
+  },
   unbundle: true,
   treeshake: true,
   minify: false,
-  external: [
-    'react',
-    'react/jsx-runtime',
-    '@tanstack/react-query',
-  ],
+  deps: {
+    neverBundle: [
+      'react',
+      'react/jsx-runtime',
+      '@tanstack/react-query',
+    ],
+  },
 });

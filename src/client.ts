@@ -83,12 +83,27 @@ export interface ClientConfig {
    * - 'cookie': Auth is handled via HTTP-only cookies (e.g. Better Auth). Queries are always enabled — no token needed.
    */
   authMode?: 'bearer' | 'cookie';
+  /**
+   * Fetch credentials policy.
+   * - 'include': Always send cookies cross-origin (required for cookie-based auth).
+   * - 'same-origin': Only send cookies to same-origin requests (browser default).
+   * - 'omit': Never send cookies.
+   *
+   * When not set, derived from `authMode`:
+   * - `authMode: 'cookie'` → `'include'`
+   * - `authMode: 'bearer'` (default) → `'same-origin'`
+   */
+  credentials?: RequestCredentials;
 }
 
 let clientConfig: ClientConfig | null = null;
 
 /**
  * Configure the API client. Call once at app init before any API requests.
+ *
+ * **SSR safety:** This sets module-level state. In Next.js, call this only in
+ * client-side code (e.g. a `"use client"` provider or `useEffect`).
+ * Calling on the server risks leaking state between requests.
  *
  * @example
  * // Bearer token auth (default)
@@ -122,6 +137,8 @@ let authConfig: AuthConfig | null = null;
 /**
  * Configure auth context for automatic token/orgId injection.
  * When configured, hooks auto-inject these values so you don't need to pass them manually.
+ *
+ * **SSR safety:** This sets module-level state. Call only in client-side code.
  *
  * @example
  * // Cookie auth (no token needed)
@@ -257,10 +274,14 @@ async function executeRequest<T = unknown>(
       headers = { ...headers, ...headerOptions };
     }
 
+    // Derive credentials: explicit config > authMode-based default
+    const credentials = config.credentials
+      ?? (config.authMode === 'cookie' ? 'include' : 'same-origin');
+
     const fetchOptions: RequestInit & { next?: { revalidate?: number; tags?: string[] } } = {
       method,
       headers,
-      credentials: 'include',
+      credentials,
       ...(signal ? { signal } : {}),
     };
 
@@ -321,10 +342,9 @@ async function executeRequest<T = unknown>(
 
     return data as T;
   } catch (error) {
-    if (error instanceof ArcApiError) throw error;
-    throw new Error(
-      error instanceof Error ? error.message : 'An error occurred while fetching data.'
-    );
+    // Preserve original error type (ArcApiError, AbortError, TypeError, etc.)
+    if (error instanceof Error) throw error;
+    throw new Error('An error occurred while fetching data.');
   }
 }
 

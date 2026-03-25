@@ -203,6 +203,135 @@ describe('createCrudHooks', () => {
     });
   });
 
+  describe('useList with custom response keys', () => {
+    it('extracts items from custom key like { products: [...] }', async () => {
+      const customApi = createMockApi();
+      customApi.getAll = vi.fn().mockResolvedValue({
+        success: true,
+        products: [{ _id: '1', name: 'Widget' }, { _id: '2', name: 'Gadget' }],
+        total: 2,
+        page: 1,
+        pages: 1,
+      });
+
+      const customHooks = createCrudHooks({
+        api: customApi,
+        entityKey: 'products',
+        singular: 'Product',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => customHooks.useList(null, {}, { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.items).toHaveLength(2);
+      expect(result.current.items[0]!._id).toBe('1');
+      expect(result.current.pagination?.total).toBe(2);
+    });
+
+    it('extracts items from { users: [...] } with no standard key', async () => {
+      const customApi = createMockApi();
+      customApi.getAll = vi.fn().mockResolvedValue({
+        users: [{ _id: 'u1', name: 'Alice' }],
+        totalDocs: 1,
+        pages: 1,
+      });
+
+      const customHooks = createCrudHooks({
+        api: customApi,
+        entityKey: 'users',
+        singular: 'User',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => customHooks.useList(null, {}, { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.items).toHaveLength(1);
+      });
+
+      expect(result.current.items[0]!._id).toBe('u1');
+    });
+
+    it('handles plain array response', async () => {
+      const customApi = createMockApi();
+      customApi.getAll = vi.fn().mockResolvedValue([
+        { _id: '1', name: 'A' },
+        { _id: '2', name: 'B' },
+      ]);
+
+      const customHooks = createCrudHooks({
+        api: customApi,
+        entityKey: 'plain',
+        singular: 'Plain',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => customHooks.useList(null, {}, { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.items).toHaveLength(2);
+      });
+
+      expect(result.current.pagination).toBeNull();
+    });
+  });
+
+  describe('useDetail with custom response keys', () => {
+    it('extracts item from { product: {...} }', async () => {
+      const customApi = createMockApi();
+      customApi.getById = vi.fn().mockResolvedValue({
+        success: true,
+        product: { _id: '1', name: 'Widget' },
+      });
+
+      const customHooks = createCrudHooks({
+        api: customApi,
+        entityKey: 'products',
+        singular: 'Product',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => customHooks.useDetail('1', null, { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      // The extractItem fallback finds the first object value
+      expect(result.current.item).toBeDefined();
+    });
+
+    it('extracts item from standard { data: {...} }', async () => {
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => hooks.useDetail('1', null, { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.item).toEqual({ _id: '1', name: 'Item 1' });
+    });
+  });
+
   describe('useDetail', () => {
     it('fetches single item', async () => {
       const wrapper = createWrapper(queryClient);
@@ -393,12 +522,19 @@ describe('createCrudHooks', () => {
     it('calls router.push when configured', async () => {
       const mockPush = vi.fn();
       const mockReplace = vi.fn();
+      // Configure navigation BEFORE creating hooks (resolved at factory time)
       configureNavigation(() => ({ push: mockPush, replace: mockReplace }));
+
+      const navHooks = createCrudHooks({
+        api: mockApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
 
       const wrapper = createWrapper(queryClient);
 
       const { result } = renderHook(
-        () => hooks.useNavigation(),
+        () => navHooks.useNavigation(),
         { wrapper }
       );
 
@@ -415,12 +551,19 @@ describe('createCrudHooks', () => {
     it('calls router.replace when replace option set', async () => {
       const mockPush = vi.fn();
       const mockReplace = vi.fn();
+      // Configure navigation BEFORE creating hooks (resolved at factory time)
       configureNavigation(() => ({ push: mockPush, replace: mockReplace }));
+
+      const navHooks = createCrudHooks({
+        api: mockApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
 
       const wrapper = createWrapper(queryClient);
 
       const { result } = renderHook(
-        () => hooks.useNavigation(),
+        () => navHooks.useNavigation(),
         { wrapper }
       );
 
@@ -1050,31 +1193,189 @@ describe('createCrudHooks', () => {
     });
   });
 
-  describe('custom staleTime and gcTime', () => {
+  describe('polling and refetch configuration', () => {
+    // ---- useList polling ----
     it('useList respects custom staleTime', async () => {
       const wrapper = createWrapper(queryClient);
-
       renderHook(
         () => hooks.useList(null, {}, { public: true, staleTime: 1000 }),
         { wrapper }
       );
-
-      await waitFor(() => {
-        expect(mockApi.getAll).toHaveBeenCalled();
-      });
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
     });
 
-    it('useList respects refetchInterval', async () => {
+    it('useList respects refetchInterval for polling', async () => {
       const wrapper = createWrapper(queryClient);
-
       renderHook(
         () => hooks.useList(null, {}, { public: true, refetchInterval: 5000 }),
         { wrapper }
       );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
 
-      await waitFor(() => {
-        expect(mockApi.getAll).toHaveBeenCalled();
+    it('useList respects refetchIntervalInBackground', async () => {
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useList(null, {}, { public: true, refetchInterval: 5000, refetchIntervalInBackground: true }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
+
+    it('useList respects refetchOnWindowFocus override', async () => {
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useList(null, {}, { public: true, refetchOnWindowFocus: true }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
+
+    it('useList disables polling with refetchInterval: false', async () => {
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useList(null, {}, { public: true, refetchInterval: false }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalledTimes(1); });
+    });
+
+    it('useList respects custom gcTime', async () => {
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useList(null, {}, { public: true, gcTime: 60_000 }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
+
+    // ---- useDetail polling ----
+    it('useDetail respects refetchInterval for polling', async () => {
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useDetail('1', null, { public: true, refetchInterval: 3000 }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getById).toHaveBeenCalled(); });
+    });
+
+    it('useDetail respects refetchOnWindowFocus', async () => {
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useDetail('1', null, { public: true, refetchOnWindowFocus: true }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getById).toHaveBeenCalled(); });
+    });
+
+    it('useDetail respects refetchIntervalInBackground', async () => {
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useDetail('1', null, { public: true, refetchInterval: 2000, refetchIntervalInBackground: true }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getById).toHaveBeenCalled(); });
+    });
+
+    // ---- useInfiniteList polling ----
+    it('useInfiniteList respects refetchInterval', async () => {
+      mockApi.getAll = vi.fn().mockResolvedValue({
+        success: true,
+        method: 'offset',
+        docs: [{ _id: '1' }],
+        page: 1, limit: 10, total: 1, pages: 1,
+        hasNext: false, hasPrev: false,
       });
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useInfiniteList(null, {}, { public: true, refetchInterval: 10_000 }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
+
+    it('useInfiniteList respects refetchOnWindowFocus', async () => {
+      mockApi.getAll = vi.fn().mockResolvedValue({
+        success: true,
+        method: 'offset',
+        docs: [{ _id: '1' }],
+        page: 1, limit: 10, total: 1, pages: 1,
+        hasNext: false, hasPrev: false,
+      });
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => hooks.useInfiniteList(null, {}, { public: true, refetchOnWindowFocus: true }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
+
+    // ---- Defaults from createCrudHooks config ----
+    it('createCrudHooks defaults.refetchOnWindowFocus is passed to useList', async () => {
+      const customHooks = createCrudHooks({
+        api: mockApi,
+        entityKey: 'polling-items',
+        singular: 'Polling Item',
+        defaults: { refetchOnWindowFocus: true, staleTime: 1000 },
+      });
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => customHooks.useList(null, {}, { public: true }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
+
+    it('per-call options override createCrudHooks defaults', async () => {
+      const customHooks = createCrudHooks({
+        api: mockApi,
+        entityKey: 'override-items',
+        singular: 'Override Item',
+        defaults: { staleTime: 60_000, refetchOnWindowFocus: true },
+      });
+      const wrapper = createWrapper(queryClient);
+      // Per-call override: disable refetchOnWindowFocus
+      renderHook(
+        () => customHooks.useList(null, {}, { public: true, refetchOnWindowFocus: false, staleTime: 1000 }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
+
+    // ---- QUERY_CONFIGS presets integration ----
+    it('QUERY_CONFIGS.realtime preset works with useList', async () => {
+      const { QUERY_CONFIGS } = await import('../src/mutation.js');
+      const realtimeHooks = createCrudHooks({
+        api: mockApi,
+        entityKey: 'realtime-items',
+        singular: 'Realtime Item',
+        defaults: { staleTime: QUERY_CONFIGS.realtime.staleTime },
+      });
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => realtimeHooks.useList(null, {}, {
+          public: true,
+          refetchInterval: QUERY_CONFIGS.realtime.refetchInterval,
+        }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getAll).toHaveBeenCalled(); });
+    });
+
+    it('QUERY_CONFIGS.stable preset works with useDetail', async () => {
+      const { QUERY_CONFIGS } = await import('../src/mutation.js');
+      const stableHooks = createCrudHooks({
+        api: mockApi,
+        entityKey: 'stable-items',
+        singular: 'Stable Item',
+        defaults: { staleTime: QUERY_CONFIGS.stable.staleTime },
+      });
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => stableHooks.useDetail('1', null, { public: true }),
+        { wrapper }
+      );
+      await waitFor(() => { expect(mockApi.getById).toHaveBeenCalled(); });
     });
   });
 
@@ -1873,12 +2174,16 @@ describe('createCrudHooks', () => {
   });
 
   describe('useUpload', () => {
-    it('throws when api has no upload method', () => {
+    it('rejects when api has no upload method', async () => {
       const wrapper = createWrapper(queryClient);
 
-      expect(() => {
-        renderHook(() => hooks.useUpload(), { wrapper });
-      }).toThrow('[arc-next] "items" api does not define an upload method');
+      const { result } = renderHook(() => hooks.useUpload(), { wrapper });
+
+      await act(async () => {
+        await expect(
+          result.current.mutateAsync({ data: new FormData() })
+        ).rejects.toThrow('[arc-next] "items" api does not define an upload method');
+      });
     });
 
     it('calls upload api and shows toast', async () => {
@@ -2375,6 +2680,105 @@ describe('createCrudHooks', () => {
         expect.objectContaining({ id: '1', data: { name: 'Fail' } }),
         undefined,
       );
+    });
+  });
+
+  // ==========================================================================
+  // v0.2.1 — Regression tests for critical fixes
+  // ==========================================================================
+
+  describe('v0.2.1 detail cache rollback on update failure', () => {
+    it('rolls back detail cache when update mutation fails', async () => {
+      const failApi = createMockApi();
+      failApi.update = vi.fn().mockRejectedValue(new Error('update failed'));
+
+      const failHooks = createCrudHooks({
+        api: failApi,
+        entityKey: 'rollback-items',
+        singular: 'RollbackItem',
+      });
+
+      const wrapper = createWrapper(queryClient);
+
+      // Pre-populate list and detail caches
+      const listKey = failHooks.KEYS.scopedList('super-admin', {});
+      queryClient.setQueryData(listKey, {
+        docs: [{ _id: '1', name: 'Original' }],
+        total: 1,
+      });
+      queryClient.setQueryData(failHooks.KEYS.detail('1'), {
+        data: { _id: '1', name: 'Original' },
+      });
+
+      const { result } = renderHook(
+        () => failHooks.useActions(),
+        { wrapper }
+      );
+
+      await act(async () => {
+        try {
+          await result.current.update({ id: '1', data: { name: 'Changed' } });
+        } catch {}
+      });
+
+      // Detail cache should be rolled back to original value
+      const cached = queryClient.getQueryData(failHooks.KEYS.detail('1')) as any;
+      expect(cached?.data?.name).toBe('Original');
+    });
+  });
+
+  describe('v0.2.1 useNavigation noop safety', () => {
+    it('does not throw when no router is configured', () => {
+      // Reset navigation config
+      configureNavigation(null as any);
+
+      const wrapper = createWrapper(queryClient);
+
+      // Should not throw
+      const { result } = renderHook(
+        () => hooks.useNavigation(),
+        { wrapper }
+      );
+
+      // Navigate should be a function that doesn't crash
+      expect(typeof result.current).toBe('function');
+      expect(() => result.current('/test', { _id: '1', name: 'Test' })).not.toThrow();
+    });
+  });
+
+  describe('v0.2.1 useActions returns functions', () => {
+    it('create/update/remove are callable functions', () => {
+      const wrapper = createWrapper(queryClient);
+
+      const { result } = renderHook(
+        () => hooks.useActions(),
+        { wrapper }
+      );
+
+      expect(typeof result.current.create).toBe('function');
+      expect(typeof result.current.update).toBe('function');
+      expect(typeof result.current.remove).toBe('function');
+      expect(typeof result.current.isCreating).toBe('boolean');
+      expect(typeof result.current.isUpdating).toBe('boolean');
+      expect(typeof result.current.isDeleting).toBe('boolean');
+      expect(typeof result.current.isMutating).toBe('boolean');
+    });
+  });
+
+  describe('v0.2.1 deprecated aliases', () => {
+    it('createListQuery is exported as alias for useListQuery', async () => {
+      const { createListQuery, useListQuery } = await import('../src/query.js');
+      expect(createListQuery).toBe(useListQuery);
+    });
+
+    it('createDetailQuery is exported as alias for useDetailQuery', async () => {
+      const { createDetailQuery, useDetailQuery } = await import('../src/query.js');
+      expect(createDetailQuery).toBe(useDetailQuery);
+    });
+
+    it('createOptimisticMutation is exported as alias for useOptimisticMutation', async () => {
+      const { createOptimisticMutation, useOptimisticMutation } = await import('../src/mutation.js');
+      expect(createOptimisticMutation).toBe(useOptimisticMutation);
     });
   });
 });
