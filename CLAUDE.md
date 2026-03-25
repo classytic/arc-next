@@ -8,7 +8,7 @@ React + TanStack Query SDK for the Arc backend framework. Companion to `@classyt
 |---------|-------------|
 | `npm run build` | Build with tsdown (ESM, .d.ts, no sourcemaps) |
 | `npm run dev` | Watch mode |
-| `npm test` | Run vitest (348 tests) |
+| `npm test` | Run vitest (366 tests) |
 | `npm run test:watch` | Watch mode tests |
 | `npm run typecheck` | `tsc --noEmit` (strict) |
 | `npm run prepublishOnly` | Full gate: typecheck + test + build |
@@ -62,6 +62,13 @@ If `api.upload` is undefined, the error is thrown at mutation call time (Promise
 
 ### Polling options are symmetric
 All three query types (`ListQueryOptions`, `DetailQueryOptions`, `InfiniteListQueryOptions`) support the same polling fields: `refetchInterval`, `refetchIntervalInBackground`, `refetchOnWindowFocus`.
+
+### CrudApi is derived from BaseApi via Pick
+`CrudApi` is NOT a separate interface — it's `Pick<BaseApi, 'getAll' | 'getById' | ...>`. This means:
+- Types auto-sync when BaseApi methods change (no manual duplication)
+- `createCrudApi()` result is always assignable to `createCrudHooks()` without casts
+- Compile-time tests in `tests/hooks.test.tsx` guard against type drift
+- Generic defaults (`TCreate = Partial<T>`, `TUpdate = Partial<T>`) match `CrudHooksConfig`
 
 ## Arc backend compatibility
 

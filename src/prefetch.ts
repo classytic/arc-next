@@ -11,6 +11,11 @@ export interface PrefetchOptions {
   staleTime?: number;
 }
 
+export interface PrefetchDetailOptions extends PrefetchOptions {
+  /** Query params (select, populate) — key must match useDetail's params to share cache */
+  params?: { select?: string; populate?: string | string[] };
+}
+
 export interface CrudPrefetcher {
   /**
    * Prefetch a list query on the server. Uses the same query keys as useList.
@@ -35,7 +40,7 @@ export interface CrudPrefetcher {
   prefetchDetail: (
     queryClient: QueryClient,
     id: string,
-    options?: PrefetchOptions,
+    options?: PrefetchDetailOptions,
   ) => Promise<void>;
 }
 
@@ -112,12 +117,18 @@ export function createCrudPrefetcher(
     },
 
     async prefetchDetail(queryClient, id, options = {}) {
-      const queryKey = detailKey(entityKey, id);
+      const { params, staleTime } = options as PrefetchDetailOptions;
+      // Key matches useDetail: [entity, "detail", id] or [entity, "detail", id, params]
+      const baseKey = detailKey(entityKey, id);
+      const queryKey = params ? [...baseKey, params] : baseKey;
 
       await queryClient.prefetchQuery({
         queryKey,
-        queryFn: () => api.getById({ id }),
-        staleTime: options.staleTime,
+        queryFn: () => api.getById({
+          id,
+          ...(params ? { params } : {}),
+        }),
+        staleTime,
       });
     },
   };

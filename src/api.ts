@@ -221,7 +221,8 @@ export class BaseApi<
     params?: QueryParams;
     options?: Omit<RequestOptions, 'token' | 'organizationId'>;
   } = {}): Promise<PaginatedResponse<TDoc>> {
-    const processedParams = this.prepareParams(params);
+    const mergedParams = { ...this.config.defaultParams, ...params };
+    const processedParams = this.prepareParams(mergedParams);
     const queryString = this.createQueryString(processedParams);
 
     const requestOptions: ApiRequestOptions = {
@@ -377,7 +378,7 @@ export class BaseApi<
     params?: QueryParams;
     options?: Omit<RequestOptions, 'token' | 'organizationId'>;
   } = {}): Promise<PaginatedResponse<TDoc>> {
-    const queryParams = { ...params, ...searchParams };
+    const queryParams = { ...this.config.defaultParams, ...params, ...searchParams };
     const processedParams = this.prepareParams(queryParams);
     const queryString = this.createQueryString(processedParams);
 
@@ -413,7 +414,7 @@ export class BaseApi<
       throw new Error('Field and value are required');
     }
 
-    const queryParams: QueryParams = { ...params };
+    const queryParams: QueryParams = { ...this.config.defaultParams, ...params };
 
     if (operator) {
       queryParams[`${field}[${operator}]`] = Array.isArray(value) ? value.join(',') : value;

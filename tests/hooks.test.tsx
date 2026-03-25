@@ -3,6 +3,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { createCrudHooks, configureNavigation } from '../src/hooks.js';
+import { createQueryKeys, createCacheUtils } from '../src/query.js';
 import { configureClient, configureAuth, createClient, getAuthMode } from '../src/client.js';
 import { configureToast } from '../src/mutation.js';
 import type { CrudApi } from '../src/hooks.js';
@@ -1675,7 +1676,7 @@ describe('createCrudHooks', () => {
   });
 
   describe('onSettled callbacks', () => {
-    it('calls onSettled after successful create', async () => {
+    it('calls onSettled after successful create (with extracted entity, not raw ApiResponse)', async () => {
       const onSettled = vi.fn();
       const hooksWithCallbacks = createCrudHooks({
         api: mockApi,
@@ -1697,8 +1698,9 @@ describe('createCrudHooks', () => {
         await result.current.create({ data: { name: 'New' } });
       });
 
+      // extractItem unwraps { data: T } → T
       expect(onSettled).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { _id: '3', name: 'New Item' } }),
+        expect.objectContaining({ _id: '3', name: 'New Item' }),
         null,
         expect.objectContaining({ data: { name: 'New' } }),
         undefined,
@@ -2094,7 +2096,7 @@ describe('createCrudHooks', () => {
   });
 
   describe('CallOptions.onSettled', () => {
-    it('calls per-call onSettled after successful create', async () => {
+    it('calls per-call onSettled after successful create (with extracted entity)', async () => {
       const wrapper = createWrapper(queryClient);
       const onSettled = vi.fn();
 
@@ -2107,8 +2109,9 @@ describe('createCrudHooks', () => {
         await result.current.create({ data: { name: 'New' } }, { onSettled });
       });
 
+      // extractItem unwraps { data: T } → T
       expect(onSettled).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { _id: '3', name: 'New Item' } }),
+        expect.objectContaining({ _id: '3', name: 'New Item' }),
         null,
       );
     });
@@ -2779,6 +2782,221 @@ describe('createCrudHooks', () => {
     it('createOptimisticMutation is exported as alias for useOptimisticMutation', async () => {
       const { createOptimisticMutation, useOptimisticMutation } = await import('../src/mutation.js');
       expect(createOptimisticMutation).toBe(useOptimisticMutation);
+    });
+  });
+
+  // ==========================================================================
+  // Type compatibility: BaseApi ↔ CrudApi (compile-time + runtime)
+  //
+  // These tests serve as COMPILE-TIME guards. If CrudApi ever drifts from
+  // BaseApi (the bug that caused v0.3.0 TS errors), TypeScript will reject
+  // these tests before publishing — not in downstream user code.
+  // ==========================================================================
+
+  describe('CrudApi type compatibility', () => {
+    it('createCrudApi result is assignable to CrudApi (no cast needed)', async () => {
+      const { createCrudApi } = await import('../src/api.js');
+      const api = createCrudApi<{ _id: string; name: string }>('products', {
+        basePath: '/api',
+      });
+
+      // Pass directly to createCrudHooks — no `as CrudApi<...>` cast required.
+      // If CrudApi drifts from BaseApi, this line fails at compile time.
+      const result = createCrudHooks({
+        api,
+        entityKey: 'products',
+        singular: 'Product',
+      });
+
+      expect(result).toHaveProperty('useList');
+      expect(result).toHaveProperty('useDetail');
+      expect(result).toHaveProperty('useActions');
+      expect(result).toHaveProperty('KEYS');
+      expect(result).toHaveProperty('cache');
+    });
+
+    it('createCrudApi with full generics is assignable to CrudHooksConfig', async () => {
+      const { createCrudApi } = await import('../src/api.js');
+
+      interface Product { _id: string; name: string; price: number }
+      interface CreateProduct { name: string; price: number }
+      interface UpdateProduct { name?: string; price?: number }
+
+      const api = createCrudApi<Product, CreateProduct, UpdateProduct>('products', {
+        basePath: '/api',
+      });
+
+      // All three generics threaded — must compile without casts
+      const result = createCrudHooks<Product, CreateProduct, UpdateProduct>({
+        api,
+        entityKey: 'products',
+        singular: 'Product',
+      });
+
+      expect(result.KEYS.all).toEqual(['products']);
+    });
+
+    it('BaseApi exposes all methods required by CrudApi', async () => {
+      const { createCrudApi } = await import('../src/api.js');
+      const api = createCrudApi('items');
+
+      // Required methods (Pick<BaseApi, ...> guarantees these)
+      expect(typeof api.getAll).toBe('function');
+      expect(typeof api.getById).toBe('function');
+      expect(typeof api.create).toBe('function');
+      expect(typeof api.update).toBe('function');
+      expect(typeof api.delete).toBe('function');
+
+      // Optional methods (available on BaseApi, optional on CrudApi)
+      expect(typeof api.upload).toBe('function');
+      expect(typeof api.search).toBe('function');
+    });
+
+    it('CrudApi generic defaults match CrudHooksConfig defaults (Partial<T>)', async () => {
+      // CrudApi<Product> should resolve TCreate=Partial<Product>, TUpdate=Partial<Product>
+      // matching CrudHooksConfig<Product> which also defaults to Partial<T>.
+      // If these defaults diverge, single-generic usage like createCrudHooks<Product>({api})
+      // would require explicit casts.
+      const { createCrudApi } = await import('../src/api.js');
+
+      interface Product { _id: string; name: string; price: number }
+
+      // Single generic — TCreate and TUpdate inferred as Partial<Product> on both sides
+      const api = createCrudApi<Product>('products', { basePath: '/api' });
+      const result = createCrudHooks<Product>({ api, entityKey: 'products', singular: 'Product' });
+
+      expect(result.KEYS.all).toEqual(['products']);
+    });
+
+    it('CrudApi without optional methods still satisfies CrudHooksConfig', () => {
+      // A minimal object with only required methods (no upload/search)
+      type MinimalApi = CrudApi<{ _id: string; name: string }, { name: string }, { name: string }>;
+      const api: MinimalApi = {
+        getAll: vi.fn().mockResolvedValue({ docs: [], total: 0, page: 1, limit: 10, pages: 0, hasNext: false, hasPrev: false }),
+        getById: vi.fn().mockResolvedValue({ data: null }),
+        create: vi.fn().mockResolvedValue({ data: null }),
+        update: vi.fn().mockResolvedValue({ data: null }),
+        delete: vi.fn().mockResolvedValue({ success: true }),
+        // no upload, no search
+      };
+
+      const result = createCrudHooks({
+        api,
+        entityKey: 'minimal',
+        singular: 'Minimal',
+      });
+
+      expect(result).toHaveProperty('useList');
+      expect(result).toHaveProperty('useActions');
+    });
+  });
+
+  // ==========================================================================
+  // v0.3.1 bug fix regression tests
+  // ==========================================================================
+
+  describe('v0.3.1 bug fixes', () => {
+    // --- FIX 1: create/update extract entity from ApiResponse ---
+
+    it('create() returns extracted entity T, not raw ApiResponse', async () => {
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useActions(), { wrapper });
+
+      let returned: unknown;
+      await act(async () => {
+        returned = await result.current.create({ data: { name: 'New' } });
+      });
+
+      // Should be { _id: '3', name: 'New Item' }, NOT { success: true, data: { ... } }
+      expect(returned).toEqual({ _id: '3', name: 'New Item' });
+      expect(returned).not.toHaveProperty('success');
+      expect(returned).not.toHaveProperty('data');
+    });
+
+    it('update() returns extracted entity T, not raw ApiResponse', async () => {
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useActions(), { wrapper });
+
+      let returned: unknown;
+      await act(async () => {
+        returned = await result.current.update({ id: '1', data: { name: 'Updated' } });
+      });
+
+      expect(returned).toEqual({ _id: '1', name: 'Updated Item' });
+      expect(returned).not.toHaveProperty('success');
+    });
+
+    it('create() onSuccess callback receives entity T, not ApiResponse', async () => {
+      const onSuccess = vi.fn();
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useActions(), { wrapper });
+
+      await act(async () => {
+        await result.current.create({ data: { name: 'New' } }, { onSuccess });
+      });
+
+      expect(onSuccess).toHaveBeenCalledWith({ _id: '3', name: 'New Item' });
+    });
+
+    // --- Detail keys: _id is globally unique, no tenant scoping needed ---
+    // Backend enforces tenant isolation via middleware (orgScoped, permissions).
+    // Frontend cache keys use [entity, "detail", id] — simple and correct.
+
+    it('detail query key uses simple [entity, detail, id] (no tenant scoping)', () => {
+      const keys = createQueryKeys('products');
+      expect(keys.detail('123')).toEqual(['products', 'detail', '123']);
+    });
+
+    it('detail cache set/get round-trips correctly', () => {
+      const keys = createQueryKeys('products');
+      const cache = createCacheUtils<{ _id: string }>(keys);
+
+      cache.setDetail(queryClient, '1', { _id: '1' });
+      expect(cache.getDetail(queryClient, '1')).toEqual({ _id: '1' });
+    });
+
+    // --- FIX 3: defaultParams merged into requests ---
+    // Tested in api.test.ts (defaultParams merge into getAll/search/findBy).
+    // Smoke test here to confirm hooks surface the behavior.
+
+    it('defaultParams are stored on BaseApi config', async () => {
+      const { createCrudApi } = await import('../src/api.js');
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        defaultParams: { limit: 25, page: 1 },
+      });
+
+      expect(api.config.defaultParams).toEqual({ limit: 25, page: 1 });
+    });
+
+    // --- FIX 4: multi-client auth mode ---
+
+    it('cookie-mode client enables queries without token even when global is bearer', async () => {
+      // Global is bearer (default)
+      configureClient({ baseUrl: 'http://api.test' });
+      configureAuth({ getToken: () => null, getOrgId: () => null });
+
+      const cookieClient = {
+        request: vi.fn(),
+        config: { baseUrl: 'http://cookie-api.test', authMode: 'cookie' as const },
+        toast: undefined,
+        navigation: undefined,
+      };
+
+      const cookieApi = createMockApi();
+      const cookieHooks = createCrudHooks({
+        api: cookieApi,
+        entityKey: 'cookie-items',
+        singular: 'CookieItem',
+        client: cookieClient,
+      });
+
+      const wrapper = createWrapper(queryClient);
+      renderHook(() => cookieHooks.useList({}), { wrapper });
+
+      await waitFor(() => {
+        expect(cookieApi.getAll).toHaveBeenCalled();
+      });
     });
   });
 });

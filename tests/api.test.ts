@@ -528,4 +528,60 @@ describe('BaseApi with client', () => {
     const headers = (options as RequestInit).headers as Record<string, string>;
     expect(headers['x-internal-api-key']).toBe('key-123');
   });
+
+  // ========== v0.3.1: defaultParams merge into request methods ==========
+
+  describe('defaultParams merge', () => {
+    it('getAll includes defaultParams in query string', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        defaultParams: { limit: 25 },
+      });
+
+      await api.getAll({ params: { status: 'active' } });
+
+      const url = fetchMock.mock.calls[0]![0] as string;
+      expect(url).toContain('limit=25');
+      expect(url).toContain('status=active');
+    });
+
+    it('explicit params override defaultParams', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        defaultParams: { limit: 25 },
+      });
+
+      await api.getAll({ params: { limit: 50 } });
+
+      const url = fetchMock.mock.calls[0]![0] as string;
+      expect(url).toContain('limit=50');
+      expect(url).not.toContain('limit=25');
+    });
+
+    it('search includes defaultParams in query string', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        defaultParams: { limit: 15 },
+      });
+
+      await api.search({ searchParams: { q: 'test' } });
+
+      const url = fetchMock.mock.calls[0]![0] as string;
+      expect(url).toContain('limit=15');
+      expect(url).toContain('q=test');
+    });
+
+    it('findBy includes defaultParams in query string', async () => {
+      const api = createCrudApi('items', {
+        basePath: '/api',
+        defaultParams: { limit: 30 },
+      });
+
+      await api.findBy({ field: 'status', value: 'active' });
+
+      const url = fetchMock.mock.calls[0]![0] as string;
+      expect(url).toContain('limit=30');
+      expect(url).toContain('status=active');
+    });
+  });
 });

@@ -184,7 +184,7 @@ function extractItems<T>(data: unknown): T[] {
   return [];
 }
 
-function extractItem<T>(data: unknown): T | null {
+export function extractItem<T>(data: unknown): T | null {
   if (data == null) return null;
   // Primitive response (string, number, boolean) — return directly
   if (typeof data !== "object") return data as T;

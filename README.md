@@ -34,9 +34,9 @@ configureClient({
   // credentials: 'omit', // override if you don't want cookies sent cross-origin
 });
 
-// Optional — auto-inject org context into queries/mutations
+// Optional — auto-inject tenant context into queries/mutations
 configureAuth({
-  getOrgId: () => activeOrgId, // return current org ID
+  getOrgId: () => activeTenantId, // return current tenant/org/workspace ID
   getToken: () => null, // null for cookie auth (token only for bearer)
 });
 
@@ -170,7 +170,7 @@ configureAuth({
 });
 ```
 
-Auto-injects `token` and `organizationId` into queries/mutations. Hooks use the new signature (no explicit token param) — legacy signature still works.
+Auto-injects `token` and tenant ID (sent as `x-organization-id` header) into queries/mutations. The header name is a convention — your backend controls how it's read and which field it maps to (`organizationId`, `workspaceId`, `teamId`, etc.). Hooks use the new signature (no explicit token param) — legacy signature still works.
 
 ### `handleApiRequest<T>(method, endpoint, options?)`
 
@@ -229,7 +229,7 @@ const api = createCrudApi<Product, CreateProduct>("products", {
 
 ### `createCrudHooks<T, TCreate, TUpdate>(config)`
 
-Factory that returns everything you need:
+Factory that returns everything you need. The `api` parameter accepts any `createCrudApi()` result directly — no casts needed. Types are derived from `BaseApi` via `Pick`, so generics thread through automatically:
 
 ```ts
 const {
@@ -238,7 +238,7 @@ const {
   useActions, useUpload, useSearch, useCustomMutation,
   useNavigation,
 } = createCrudHooks<Product, CreateProduct>({
-    api: productsApi,       // from createCrudApi()
+    api: productsApi,       // from createCrudApi() — types inferred, no cast
     entityKey: "products",  // TanStack Query key prefix
     singular: "Product",    // for toast messages
     defaults: {             // optional
@@ -266,7 +266,7 @@ const { items, pagination, isLoading, isFetching, refetch } = useList(
 );
 ```
 
-- Auto-scopes query keys by `organizationId` (tenant vs super-admin)
+- Auto-scopes list query keys by tenant context (when present → `tenant` scope, otherwise → `super-admin`)
 - Normalizes pagination from `docs`/`data`/`items`/`results` formats
 - Prefills detail cache from list results (skips re-fetch on navigate)
 - `options.public: true` — enables query without token
@@ -657,8 +657,10 @@ try {
 ### Multi-tenant data fetching
 
 ```ts
-// organizationId in params → scoped query key → isolated cache per tenant
-const { items } = useProducts(token, { organizationId: currentOrg });
+// Tenant ID in params → scoped query key → isolated cache per tenant
+// The param name is up to you — arc-next sends it as x-organization-id header,
+// your backend maps it to whatever tenant field your schema uses.
+const { items } = useProducts(token, { organizationId: currentTenantId });
 ```
 
 ### Public endpoints (no auth)
@@ -707,7 +709,7 @@ const adminApi = createCrudApi("users", {
 
 - **CRUD Factory** — `createCrudApi` + `createCrudHooks` generates typed API clients and React Query hooks
 - **Optimistic Updates** — Create, update, delete with instant UI feedback and automatic rollback
-- **Multi-Tenant Scoping** — `organizationId` in headers + scoped query keys
+- **Multi-Tenant Scoping** — Tenant ID sent via `x-organization-id` header + scoped list query keys. Backend controls the tenant field name and access enforcement.
 - **Pagination Normalization** — Handles `docs`/`data`/`items`/`results` + any custom key, offset/keyset/aggregate pagination
 - **Detail Cache Prefilling** — List results auto-populate detail query cache
 - **React 19 Transitions** — `useMutationWithTransition` wraps invalidation in `startTransition`

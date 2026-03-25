@@ -168,4 +168,32 @@ describe('createCrudPrefetcher', () => {
     expect(dehydratedState.queries).toBeInstanceOf(Array);
     expect(dehydratedState.queries.length).toBeGreaterThan(0);
   });
+
+  // ========== v0.3.1: prefetchDetail with params and organizationId ==========
+
+  it('prefetchDetail passes params to getById', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+
+    await prefetcher.prefetchDetail(queryClient, 'prod-1', {
+      params: { select: 'name,price', populate: 'category' },
+    });
+
+    const callArgs = mockApi.getById.mock.calls[0]![0];
+    expect(callArgs.id).toBe('prod-1');
+    expect(callArgs.params).toEqual({ select: 'name,price', populate: 'category' });
+  });
+
+  it('prefetchDetail with params uses extended key (matches useDetail)', async () => {
+    const { createQueryKeys } = await import('../src/query.js');
+    const KEYS = createQueryKeys('products');
+
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+    const params = { select: 'name', populate: 'category' };
+    await prefetcher.prefetchDetail(queryClient, 'prod-1', { params });
+
+    // Key should be [entity, "detail", id, params] — same shape as useDetail with params
+    const key = [...KEYS.detail('prod-1'), params];
+    const cached = queryClient.getQueryData(key);
+    expect(cached).toBeDefined();
+  });
 });

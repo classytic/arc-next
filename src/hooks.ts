@@ -13,6 +13,7 @@ import {
   createQueryKeys,
   createCacheUtils,
   DEFAULT_QUERY_CONFIG,
+  extractItem,
 } from "./query.js";
 import type {
   QueryKeys,
@@ -28,7 +29,7 @@ import {
   isOffsetPagination,
   isKeysetPagination,
 } from "./api.js";
-import type { PaginatedResponse } from "./api.js";
+import type { PaginatedResponse, BaseApi } from "./api.js";
 import type { MutationCallbacks, TransitionMutationReturn } from "./mutation.js";
 import { getAuthMode, getAuthContext } from "./client.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
@@ -40,18 +41,17 @@ import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
 /**
  * CRUD API interface accepted by createCrudHooks.
  *
- * Parameters are loose (Record<string, unknown>) so BaseApi instances satisfy
- * this structurally without casts. Return types thread generics for type safety.
+ * Derived from BaseApi via Pick so the types are always in sync.
+ * BaseApi instances satisfy this exactly (same source of truth).
+ * Custom implementations just need to match BaseApi's method signatures.
  */
-export interface CrudApi<T = unknown, TCreate = unknown, TUpdate = unknown> {
-  getAll: (options: Record<string, unknown>) => Promise<PaginatedResponse<T> | unknown>;
-  getById: (options: Record<string, unknown>) => Promise<{ data?: T } | unknown>;
-  create: (options: Record<string, unknown>) => Promise<{ data?: T } | unknown>;
-  update: (options: Record<string, unknown>) => Promise<{ data?: T } | unknown>;
-  delete: (options: Record<string, unknown>) => Promise<unknown>;
-  upload?: (options: Record<string, unknown>) => Promise<unknown>;
-  search?: (options: Record<string, unknown>) => Promise<PaginatedResponse<T> | unknown>;
-}
+export type CrudApi<T = unknown, TCreate = Partial<T>, TUpdate = Partial<T>> = Pick<
+  BaseApi<T, TCreate, TUpdate>,
+  'getAll' | 'getById' | 'create' | 'update' | 'delete'
+> & {
+  upload?: BaseApi<T, TCreate, TUpdate>['upload'];
+  search?: BaseApi<T, TCreate, TUpdate>['search'];
+};
 
 export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
   api: CrudApi<T, TCreate, TUpdate>;
@@ -184,9 +184,9 @@ export function configureNavigation(hook: UseRouterHook): void {
 // Enabled Rule
 // ============================================================================
 
-function createEnabledRule(token: string | null, options: { public?: boolean; enabled?: boolean }): boolean {
+function createEnabledRule(token: string | null, options: { public?: boolean; enabled?: boolean }, authMode: 'bearer' | 'cookie' = getAuthMode()): boolean {
   // Cookie-based auth: no token needed, queries always enabled (cookies sent via credentials: 'include')
-  if (getAuthMode() === 'cookie' || options.public) {
+  if (authMode === 'cookie' || options.public) {
     return options.enabled ?? true;
   }
   // Bearer token auth: require token to enable queries
@@ -212,6 +212,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   const instanceToast: ToastHandler | undefined = client?.toast;
   // Resolve navigation hook: client instance → global
   const instanceNavigation: UseRouterHook | null = client?.navigation ?? null;
+  // Resolve auth mode: client instance → global (fixes multi-client query enablement)
+  // Lazy: read at query time, not factory time (global config can change after createCrudHooks)
+  const resolveAuthMode = () => client?.config?.authMode ?? getAuthMode();
 
   const config = {
     ...DEFAULT_QUERY_CONFIG,
@@ -261,7 +264,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useListQuery<T>({
       queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
       queryFn: ({ signal }) => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
-      enabled: createEnabledRule(token, queryOpts),
+      enabled: createEnabledRule(token, queryOpts, resolveAuthMode()),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -304,7 +307,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useDetailQuery<T>({
       queryKey: queryParams ? [...KEYS.detail(id || ""), queryParams] : KEYS.detail(id || ""),
       queryFn: ({ signal }) => api.getById({ id: id!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
-      enabled: !!id && createEnabledRule(token, restOptions),
+      enabled: !!id && createEnabledRule(token, restOptions, resolveAuthMode()),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
@@ -338,14 +341,14 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         };
         return updateListCache(oldData, (arr: unknown[]) => [optimisticItem, ...(arr || [])]);
       },
-      onSuccess: (data, variables) => {
-        callbacks.onCreate?.onSuccess?.(data as T, { data: variables.data }, undefined);
+      onSuccess: (raw, variables) => {
+        callbacks.onCreate?.onSuccess?.(extractItem<T>(raw) as T, { data: variables.data }, undefined);
       },
       onError: (error, variables) => {
         callbacks.onCreate?.onError?.(error, { data: variables.data }, undefined);
       },
-      onSettled: (data, error, variables) => {
-        callbacks.onCreate?.onSettled?.(data as T | undefined, error, { data: variables.data }, undefined);
+      onSettled: (raw, error, variables) => {
+        callbacks.onCreate?.onSettled?.(raw ? extractItem<T>(raw) as T : undefined, error, { data: variables.data }, undefined);
       },
       messages: { success: config.messages.createSuccess, error: config.messages.createError },
       toastHandler: instanceToast,
@@ -366,15 +369,15 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         );
         return updated;
       },
-      onSuccess: (data, { id, data: updateData }) => {
+      onSuccess: (raw, { id, data: updateData }) => {
         queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
-        callbacks.onUpdate?.onSuccess?.(data as T, { id, data: updateData }, undefined);
+        callbacks.onUpdate?.onSuccess?.(extractItem<T>(raw) as T, { id, data: updateData }, undefined);
       },
       onError: (error, { id, data }) => {
         callbacks.onUpdate?.onError?.(error, { id, data }, undefined);
       },
-      onSettled: (data, error, { id, data: updateData }) => {
-        callbacks.onUpdate?.onSettled?.(data as T | undefined, error, { id, data: updateData }, undefined);
+      onSettled: (raw, error, { id, data: updateData }) => {
+        callbacks.onUpdate?.onSettled?.(raw ? extractItem<T>(raw) as T : undefined, error, { id, data: updateData }, undefined);
       },
       messages: { success: config.messages.updateSuccess, error: config.messages.updateError },
       toastHandler: instanceToast,
@@ -415,10 +418,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const create = useCallback(async (params: MutationParams<TCreate>, options?: CallOptions<T>): Promise<T> => {
       silentRef.current = options?.silent ?? false;
       try {
-        const result = await createMutation.mutateAsync(resolveAuth(params));
-        options?.onSuccess?.(result as T);
-        options?.onSettled?.(result as T, null);
-        return result as T;
+        const raw = await createMutation.mutateAsync(resolveAuth(params));
+        const entity = extractItem<T>(raw) as T;
+        options?.onSuccess?.(entity);
+        options?.onSettled?.(entity, null);
+        return entity;
       } catch (error) {
         options?.onError?.(error as Error);
         options?.onSettled?.(undefined, error as Error);
@@ -431,10 +435,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const update = useCallback(async (params: UpdateParams<TUpdate>, options?: CallOptions<T>): Promise<T> => {
       silentRef.current = options?.silent ?? false;
       try {
-        const result = await updateMutation.mutateAsync(resolveAuth(params));
-        options?.onSuccess?.(result as T);
-        options?.onSettled?.(result as T, null);
-        return result as T;
+        const raw = await updateMutation.mutateAsync(resolveAuth(params));
+        const entity = extractItem<T>(raw) as T;
+        options?.onSuccess?.(entity);
+        options?.onSettled?.(entity, null);
+        return entity;
       } catch (error) {
         options?.onError?.(error as Error);
         options?.onSettled?.(undefined, error as Error);
@@ -505,7 +510,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       queryFn: ({ pageParam, signal }) => {
         const paginationParams = typeof pageParam === 'string'
           ? { after: pageParam }
-          : { page: pageParam };
+          : { page: pageParam as number };
 
         return api.getAll({
           token,
@@ -514,7 +519,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           options: { signal, ...requestOpts },
         });
       },
-      enabled: createEnabledRule(token, queryOpts),
+      enabled: createEnabledRule(token, queryOpts, resolveAuthMode()),
       initialPageParam: restParams.after ? restParams.after : 1,
       getNextPageParam: (lastPage) => {
         const page = lastPage as PaginatedResponse<T>;
@@ -603,7 +608,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         params: searchParams,
         options: { signal, ...requestOpts },
       }),
-      enabled: query.length > 0 && createEnabledRule(token, queryOpts),
+      enabled: query.length > 0 && createEnabledRule(token, queryOpts, resolveAuthMode()),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,

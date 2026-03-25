@@ -1,6 +1,34 @@
 # Changelog
 
-## 0.3.0
+## 0.3.1
+
+### Bug Fixes
+
+- **hooks (HIGH)**: `useActions().create()` and `update()` now return the extracted entity `T`, not the raw `ApiResponse<T>`. Previously `{ success, data: T }` was cast to `T` — lying to consumers. Now uses `extractItem()` to unwrap. Factory-level `onSuccess`/`onSettled` callbacks also receive the extracted entity.
+- **hooks (TYPE)**: `CrudApi` type changed from manual interface to `Pick<BaseApi, ...>` — types derived from source of truth. **Fixes compile error** where `createCrudApi()` result was not assignable to `CrudApi` (TypeScript contravariance on `Record<string, unknown>` params).
+- **hooks (TYPE)**: `CrudApi` generic defaults aligned with `CrudHooksConfig` — both default `TCreate`/`TUpdate` to `Partial<T>`. Previously `CrudApi` defaulted to `unknown`.
+- **api (MEDIUM)**: `defaultParams` are now merged into `getAll`, `search`, and `findBy` requests. Previously `config.defaultParams` was stored but never applied — consumers relying on `defaultParams: { limit: 25 }` got wrong queries.
+- **hooks (MEDIUM)**: Multi-client `authMode` now respected. `createEnabledRule` reads auth mode lazily from `client?.config?.authMode` falling back to global `getAuthMode()`. Previously a secondary cookie-mode client would have queries disabled because the hook only checked the global bearer mode.
+- **prefetch (MEDIUM)**: `prefetchDetail` now accepts `params` option (`select`, `populate`) and uses extended query key `[entity, "detail", id, params]` matching `useDetail`'s key shape. Previously only prefetched bare `[entity, "detail", id]` — hydration missed for parameterized detail queries.
+- **query**: `extractItem` exported for use in hooks (was private).
+- **hooks**: `useInfiniteList` pageParam cast from `unknown` to `number` — surfaced by stricter types.
+
+### Design Decisions
+
+- **Detail keys NOT tenant-scoped**: `_id` is globally unique in MongoDB. Backend enforces tenant isolation via middleware (`orgScoped`, permissions). Frontend cache uses simple `[entity, "detail", id]` — no `organizationId` in the key. This avoids hardcoding a specific tenant field name (`organizationId` vs `workspaceId` vs `teamId`) and keeps the cache API simple.
+- **Auth mode resolved lazily**: `resolveAuthMode()` is a function (not captured at factory time) so global `configureClient({ authMode })` changes take effect immediately, while per-client overrides still work.
+
+### Tests
+
+- 366 tests (up from 348):
+  - `create()`/`update()` return extracted entity, not raw ApiResponse (3 tests)
+  - Detail keys use simple `[entity, "detail", id]` (2 tests)
+  - `defaultParams` merge into `getAll`/`search`/`findBy` (4 tests)
+  - Multi-client cookie auth mode enables queries (1 test)
+  - `prefetchDetail` with `params` (2 tests)
+  - Type-compatibility compile-time guards (5 tests)
+
+## 0.3.0 (unpublished — superseded by 0.3.1)
 
 ### Breaking Changes
 
