@@ -70,6 +70,21 @@ All three query types (`ListQueryOptions`, `DetailQueryOptions`, `InfiniteListQu
 - Compile-time tests in `tests/hooks.test.tsx` guard against type drift
 - Generic defaults (`TCreate = Partial<T>`, `TUpdate = Partial<T>`) match `CrudHooksConfig`
 
+### useActions extracts entity from ApiResponse
+`create()` and `update()` use `extractItem()` to unwrap `{ success, data: T }` → `T`. Callbacks (`onSuccess`, `onSettled`) also receive the extracted entity, not the raw response.
+
+### defaultParams merge into request methods
+`config.defaultParams` (set in `createCrudApi`) are merged into `getAll`, `search`, and `findBy` before `prepareParams`. Explicit params override defaults.
+
+### Multi-client auth mode resolved lazily
+`resolveAuthMode()` reads `client?.config?.authMode` falling back to global `getAuthMode()`. It's a function (not captured at factory time) so global config changes take effect immediately.
+
+### Detail cache keys are simple — no tenant scoping
+`[entity, "detail", id]` — because `_id` is globally unique. Backend enforces tenant isolation (Arc's `multiTenantPreset`, permissions). The frontend doesn't hardcode any tenant field name.
+
+### All headers are conditional
+`x-organization-id` only sent when `organizationId` is truthy. `Authorization` only when `token` is truthy. With session cookie auth, no headers need to be sent — the backend reads context from the cookie.
+
 ## Arc backend compatibility
 
 The library handles all response shapes from `@classytic/arc`:
