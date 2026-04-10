@@ -1,4 +1,5 @@
-import { dehydrate, type QueryClient, type QueryKey } from '@tanstack/react-query';
+import { dehydrate, type QueryClient } from '@tanstack/react-query';
+import { createQueryKeys } from './query.js';
 
 // Re-export for convenience in server components
 export { dehydrate } from '@tanstack/react-query';
@@ -42,18 +43,36 @@ export interface CrudPrefetcher {
     id: string,
     options?: PrefetchDetailOptions,
   ) => Promise<void>;
-}
 
-// ============================================================================
-// Query Key Generators (must match createQueryKeys in query.ts)
-// ============================================================================
+  /**
+   * Prefetch a detail-by-slug query. Uses the same query keys as useDetailBySlug.
+   * Only available when the API has a `getBySlug` method (slugLookup preset).
+   */
+  prefetchBySlug: (
+    queryClient: QueryClient,
+    slug: string,
+    options?: PrefetchDetailOptions,
+  ) => Promise<void>;
 
-function scopedListKey(entityKey: string, scope: string, params?: Record<string, unknown>): QueryKey {
-  return [entityKey, 'list', { _scope: scope, ...(params || {}) }];
-}
+  /**
+   * Prefetch soft-deleted items. Uses the same query keys as useDeleted.
+   * Only available when the API has a `getDeleted` method (softDelete preset).
+   */
+  prefetchDeleted: (
+    queryClient: QueryClient,
+    params?: Record<string, unknown>,
+    options?: PrefetchOptions,
+  ) => Promise<void>;
 
-function detailKey(entityKey: string, id: string): QueryKey {
-  return [entityKey, 'detail', id];
+  /**
+   * Prefetch a tree query. Uses the same query keys as useTree.
+   * Only available when the API has a `getTree` method (tree preset).
+   */
+  prefetchTree: (
+    queryClient: QueryClient,
+    params?: Record<string, unknown>,
+    options?: PrefetchOptions,
+  ) => Promise<void>;
 }
 
 // ============================================================================
@@ -97,14 +116,32 @@ export function createCrudPrefetcher(
       token?: string | null;
       organizationId?: string | null;
     }) => Promise<unknown>;
+    getBySlug?: (opts: {
+      slug: string;
+      token?: string | null;
+      organizationId?: string | null;
+      params?: Record<string, unknown>;
+    }) => Promise<unknown>;
+    getDeleted?: (opts: {
+      params?: Record<string, unknown>;
+      token?: string | null;
+      organizationId?: string | null;
+    }) => Promise<unknown>;
+    getTree?: (opts: {
+      params?: Record<string, unknown>;
+      token?: string | null;
+      organizationId?: string | null;
+    }) => Promise<unknown>;
   },
   entityKey: string,
 ): CrudPrefetcher {
+  const KEYS = createQueryKeys(entityKey);
+
   return {
     async prefetchList(queryClient, params = {}, options = {}) {
       const { organizationId, ...restParams } = params;
       const scope = organizationId ? 'tenant' : 'super-admin';
-      const queryKey = scopedListKey(entityKey, scope, { organizationId, ...restParams });
+      const queryKey = KEYS.scopedList(scope, { organizationId, ...restParams });
 
       await queryClient.prefetchQuery({
         queryKey,
@@ -118,8 +155,7 @@ export function createCrudPrefetcher(
 
     async prefetchDetail(queryClient, id, options = {}) {
       const { params, staleTime } = options as PrefetchDetailOptions;
-      // Key matches useDetail: [entity, "detail", id] or [entity, "detail", id, params]
-      const baseKey = detailKey(entityKey, id);
+      const baseKey = KEYS.detail(id);
       const queryKey = params ? [...baseKey, params] : baseKey;
 
       await queryClient.prefetchQuery({
@@ -129,6 +165,54 @@ export function createCrudPrefetcher(
           ...(params ? { params } : {}),
         }),
         staleTime,
+      });
+    },
+
+    async prefetchBySlug(queryClient, slug, options = {}) {
+      if (!api.getBySlug) {
+        throw new Error(`[arc-next] prefetchBySlug requires an api with getBySlug (slugLookup preset)`);
+      }
+      const { params, staleTime } = options as PrefetchDetailOptions;
+      const queryKey = params ? KEYS.custom('slug', slug, params) : KEYS.custom('slug', slug);
+
+      await queryClient.prefetchQuery({
+        queryKey,
+        queryFn: () => api.getBySlug!({ slug, ...(params ? { params } : {}) }),
+        staleTime,
+      });
+    },
+
+    async prefetchDeleted(queryClient, params = {}, options = {}) {
+      if (!api.getDeleted) {
+        throw new Error(`[arc-next] prefetchDeleted requires an api with getDeleted (softDelete preset)`);
+      }
+      const { organizationId, ...restParams } = params;
+      const queryKey = KEYS.custom('deleted', { organizationId, ...restParams });
+
+      await queryClient.prefetchQuery({
+        queryKey,
+        queryFn: () => api.getDeleted!({
+          params: restParams,
+          organizationId: (organizationId as string | null) ?? null,
+        }),
+        staleTime: options.staleTime,
+      });
+    },
+
+    async prefetchTree(queryClient, params = {}, options = {}) {
+      if (!api.getTree) {
+        throw new Error(`[arc-next] prefetchTree requires an api with getTree (tree preset)`);
+      }
+      const { organizationId, ...restParams } = params;
+      const queryKey = KEYS.custom('tree', { organizationId, ...restParams });
+
+      await queryClient.prefetchQuery({
+        queryKey,
+        queryFn: () => api.getTree!({
+          params: restParams,
+          organizationId: (organizationId as string | null) ?? null,
+        }),
+        staleTime: options.staleTime,
       });
     },
   };

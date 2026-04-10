@@ -196,4 +196,74 @@ describe('createCrudPrefetcher', () => {
     const cached = queryClient.getQueryData(key);
     expect(cached).toBeDefined();
   });
+
+  // ========== prefetchBySlug ==========
+
+  it('prefetchBySlug stores under correct key', async () => {
+    const slugApi = { ...mockApi, getBySlug: vi.fn().mockResolvedValue({ success: true, data: { _id: '1', slug: 'my-product' } }) };
+    const prefetcher = createCrudPrefetcher(slugApi, 'products');
+
+    await prefetcher.prefetchBySlug(queryClient, 'my-product');
+
+    const key = ['products', 'slug', 'my-product'];
+    const cached = queryClient.getQueryData(key);
+    expect(cached).toBeDefined();
+    expect(slugApi.getBySlug).toHaveBeenCalledWith({ slug: 'my-product' });
+  });
+
+  it('prefetchBySlug throws when api lacks getBySlug', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+    await expect(prefetcher.prefetchBySlug(queryClient, 'test')).rejects.toThrow('getBySlug');
+  });
+
+  // ========== prefetchDeleted ==========
+
+  it('prefetchDeleted stores under correct key', async () => {
+    const deletedApi = { ...mockApi, getDeleted: vi.fn().mockResolvedValue({ success: true, docs: [] }) };
+    const prefetcher = createCrudPrefetcher(deletedApi, 'products');
+
+    await prefetcher.prefetchDeleted(queryClient, { limit: 10 });
+
+    const key = ['products', 'deleted', { limit: 10 }];
+    const cached = queryClient.getQueryData(key);
+    expect(cached).toBeDefined();
+    expect(deletedApi.getDeleted).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { limit: 10 } })
+    );
+  });
+
+  it('prefetchDeleted scopes by organizationId', async () => {
+    const deletedApi = { ...mockApi, getDeleted: vi.fn().mockResolvedValue({ success: true, docs: [] }) };
+    const prefetcher = createCrudPrefetcher(deletedApi, 'products');
+
+    await prefetcher.prefetchDeleted(queryClient, { organizationId: 'org-1' });
+
+    expect(deletedApi.getDeleted).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: 'org-1' })
+    );
+  });
+
+  it('prefetchDeleted throws when api lacks getDeleted', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+    await expect(prefetcher.prefetchDeleted(queryClient)).rejects.toThrow('getDeleted');
+  });
+
+  // ========== prefetchTree ==========
+
+  it('prefetchTree stores under correct key', async () => {
+    const treeApi = { ...mockApi, getTree: vi.fn().mockResolvedValue({ success: true, data: [] }) };
+    const prefetcher = createCrudPrefetcher(treeApi, 'categories');
+
+    await prefetcher.prefetchTree(queryClient);
+
+    const key = ['categories', 'tree', {}];
+    const cached = queryClient.getQueryData(key);
+    expect(cached).toBeDefined();
+    expect(treeApi.getTree).toHaveBeenCalled();
+  });
+
+  it('prefetchTree throws when api lacks getTree', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'categories');
+    await expect(prefetcher.prefetchTree(queryClient)).rejects.toThrow('getTree');
+  });
 });

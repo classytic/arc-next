@@ -1140,6 +1140,11 @@ describe('createCrudHooks', () => {
       expect(result.current.items[0]!._id).toBe('1');
       expect(result.current.items[1]!._id).toBe('2');
     });
+
+    // NOTE: Multi-page scroll (4+ pages), filter switching, maxPages eviction,
+    // and keyset cursor navigation are tested comprehensively in the integration
+    // test suite (arc-next-test-api/tests/infinite-scroll.test.ts) against a real
+    // Arc backend with real HTTP requests and MongoDB pagination.
   });
 
   describe('cookie auth mode', () => {
@@ -2274,12 +2279,13 @@ describe('createCrudHooks', () => {
   });
 
   describe('useSearch', () => {
-    it('throws when api has no search method', () => {
+    it('disables query when api has no search method', () => {
       const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useSearch('test'), { wrapper });
 
-      expect(() => {
-        renderHook(() => hooks.useSearch('test'), { wrapper });
-      }).toThrow('[arc-next] "items" api does not define a search method');
+      // Query disabled — no fetch, no error
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.items).toHaveLength(0);
     });
 
     it('calls search api with query param', async () => {
@@ -2996,6 +3002,542 @@ describe('createCrudHooks', () => {
 
       await waitFor(() => {
         expect(cookieApi.getAll).toHaveBeenCalled();
+      });
+    });
+  });
+
+  // ==========================================================================
+  // Preset hooks: useDeleted, useDetailBySlug, useTree, useChildren, useFindBy
+  // ==========================================================================
+
+  describe('useDeleted', () => {
+    it('fetches soft-deleted items', async () => {
+      const deletedApi = {
+        ...createMockApi(),
+        getDeleted: vi.fn().mockResolvedValue({
+          success: true,
+          docs: [{ _id: 'del-1', name: 'Deleted Item', deletedAt: '2024-01-01' }],
+          total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
+        }),
+      };
+
+      const deletedHooks = createCrudHooks({
+        api: deletedApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => deletedHooks.useDeleted({}, { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.items).toHaveLength(1);
+      expect(result.current.items[0]!._id).toBe('del-1');
+      expect(deletedApi.getDeleted).toHaveBeenCalled();
+    });
+
+    it('disables query when api lacks getDeleted', () => {
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useDeleted({}, { public: true }), { wrapper });
+
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.items).toHaveLength(0);
+    });
+  });
+
+  describe('useDetailBySlug', () => {
+    it('fetches item by slug', async () => {
+      const slugApi = {
+        ...createMockApi(),
+        getBySlug: vi.fn().mockResolvedValue({
+          success: true,
+          data: { _id: '1', name: 'My Article', slug: 'my-article' },
+        }),
+      };
+
+      const slugHooks = createCrudHooks({
+        api: slugApi,
+        entityKey: 'articles',
+        singular: 'Article',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => slugHooks.useDetailBySlug('my-article', { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.item).toBeDefined();
+      expect(result.current.item!.name).toBe('My Article');
+      expect(slugApi.getBySlug).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: 'my-article' })
+      );
+    });
+
+    it('is disabled when slug is null', async () => {
+      const slugApi = {
+        ...createMockApi(),
+        getBySlug: vi.fn(),
+      };
+
+      const slugHooks = createCrudHooks({
+        api: slugApi,
+        entityKey: 'articles',
+        singular: 'Article',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => slugHooks.useDetailBySlug(null, { public: true }),
+        { wrapper }
+      );
+
+      // Should not fetch
+      expect(slugApi.getBySlug).not.toHaveBeenCalled();
+    });
+
+    it('disables query when api lacks getBySlug', () => {
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useDetailBySlug('test', { public: true }), { wrapper });
+
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.item).toBeNull();
+    });
+  });
+
+  describe('useTree', () => {
+    it('fetches tree data', async () => {
+      const treeApi = {
+        ...createMockApi(),
+        getTree: vi.fn().mockResolvedValue({
+          success: true,
+          data: [
+            { _id: 'root', name: 'Root', children: [{ _id: 'child', name: 'Child' }] },
+          ],
+        }),
+      };
+
+      const treeHooks = createCrudHooks({
+        api: treeApi,
+        entityKey: 'categories',
+        singular: 'Category',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => treeHooks.useTree({}, { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.items).toHaveLength(1);
+      expect(treeApi.getTree).toHaveBeenCalled();
+    });
+
+    it('disables query when api lacks getTree', () => {
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useTree({}, { public: true }), { wrapper });
+
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.items).toHaveLength(0);
+    });
+  });
+
+  describe('useChildren', () => {
+    it('fetches children of a parent', async () => {
+      const treeApi = {
+        ...createMockApi(),
+        getChildren: vi.fn().mockResolvedValue({
+          success: true,
+          docs: [{ _id: 'child-1', name: 'Child 1' }, { _id: 'child-2', name: 'Child 2' }],
+          total: 2, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
+        }),
+      };
+
+      const treeHooks = createCrudHooks({
+        api: treeApi,
+        entityKey: 'categories',
+        singular: 'Category',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => treeHooks.useChildren('parent-1', {}, { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.items).toHaveLength(2);
+      expect(treeApi.getChildren).toHaveBeenCalledWith(
+        expect.objectContaining({ parentId: 'parent-1' })
+      );
+    });
+
+    it('is disabled when parentId is null', async () => {
+      const treeApi = {
+        ...createMockApi(),
+        getChildren: vi.fn(),
+      };
+
+      const treeHooks = createCrudHooks({
+        api: treeApi,
+        entityKey: 'categories',
+        singular: 'Category',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => treeHooks.useChildren(null, {}, { public: true }),
+        { wrapper }
+      );
+
+      expect(treeApi.getChildren).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('useFindBy', () => {
+    it('fetches items by field and value', async () => {
+      const findByApi = {
+        ...createMockApi(),
+        findBy: vi.fn().mockResolvedValue({
+          success: true,
+          docs: [{ _id: '1', name: 'Active Item', status: 'active' }],
+          total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
+        }),
+      };
+
+      const findByHooks = createCrudHooks({
+        api: findByApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(
+        () => findByHooks.useFindBy('status', 'active', { public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.items).toHaveLength(1);
+      expect(findByApi.findBy).toHaveBeenCalledWith(
+        expect.objectContaining({ field: 'status', value: 'active' })
+      );
+    });
+
+    it('supports filter operators', async () => {
+      const findByApi = {
+        ...createMockApi(),
+        findBy: vi.fn().mockResolvedValue({
+          success: true,
+          docs: [{ _id: '1', name: 'Big Item', price: 100 }],
+          total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
+        }),
+      };
+
+      const findByHooks = createCrudHooks({
+        api: findByApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => findByHooks.useFindBy('price', 50, { operator: 'gte', public: true }),
+        { wrapper }
+      );
+
+      await waitFor(() => {
+        expect(findByApi.findBy).toHaveBeenCalledWith(
+          expect.objectContaining({ field: 'price', value: 50, operator: 'gte' })
+        );
+      });
+    });
+
+    it('is disabled when value is null', async () => {
+      const findByApi = {
+        ...createMockApi(),
+        findBy: vi.fn(),
+      };
+
+      const findByHooks = createCrudHooks({
+        api: findByApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      renderHook(
+        () => findByHooks.useFindBy('status', null, { public: true }),
+        { wrapper }
+      );
+
+      expect(findByApi.findBy).not.toHaveBeenCalled();
+    });
+
+    it('disables query when api lacks findBy', () => {
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useFindBy('status', 'active', { public: true }), { wrapper });
+
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.items).toHaveLength(0);
+    });
+  });
+
+  // ==========================================================================
+  // useActions — restore
+  // ==========================================================================
+
+  describe('useActions — restore', () => {
+    it('calls api.restore and shows success toast', async () => {
+      const restoreApi = {
+        ...createMockApi(),
+        restore: vi.fn().mockResolvedValue({
+          success: true,
+          data: { _id: 'del-1', name: 'Restored Item' },
+        }),
+      };
+
+      const restoreHooks = createCrudHooks({
+        api: restoreApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => restoreHooks.useActions(), { wrapper });
+
+      await act(async () => {
+        await result.current.restore({ id: 'del-1' });
+      });
+
+      expect(restoreApi.restore).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'del-1' })
+      );
+      expect(toastHandler.success).toHaveBeenCalledWith('Item restored successfully');
+    });
+
+    it('restore returns extracted entity', async () => {
+      const restoreApi = {
+        ...createMockApi(),
+        restore: vi.fn().mockResolvedValue({
+          success: true,
+          data: { _id: 'del-1', name: 'Restored Item' },
+        }),
+      };
+
+      const restoreHooks = createCrudHooks({
+        api: restoreApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => restoreHooks.useActions(), { wrapper });
+
+      let returned: unknown;
+      await act(async () => {
+        returned = await result.current.restore({ id: 'del-1' });
+      });
+
+      expect(returned).toEqual({ _id: 'del-1', name: 'Restored Item' });
+    });
+
+    it('shows error toast when restore fails', async () => {
+      const restoreApi = {
+        ...createMockApi(),
+        restore: vi.fn().mockRejectedValue(new Error('Cannot restore')),
+      };
+
+      const restoreHooks = createCrudHooks({
+        api: restoreApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => restoreHooks.useActions(), { wrapper });
+
+      await act(async () => {
+        try { await result.current.restore({ id: '1' }); } catch {}
+      });
+
+      expect(toastHandler.error).toHaveBeenCalled();
+    });
+
+    it('rejects when api lacks restore', async () => {
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useActions(), { wrapper });
+
+      await act(async () => {
+        try {
+          await result.current.restore({ id: '1' });
+          expect.fail('Should have thrown');
+        } catch (error) {
+          expect((error as Error).message).toContain('restore');
+        }
+      });
+    });
+  });
+
+  // ==========================================================================
+  // useBulkActions
+  // ==========================================================================
+
+  describe('useBulkActions', () => {
+    it('bulkCreate calls api.bulkCreate and returns items', async () => {
+      const bulkApi = {
+        ...createMockApi(),
+        bulkCreate: vi.fn().mockResolvedValue({
+          success: true,
+          data: [{ _id: '10', name: 'A' }, { _id: '11', name: 'B' }],
+          count: 2,
+        }),
+      };
+
+      const bulkHooks = createCrudHooks({
+        api: bulkApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => bulkHooks.useBulkActions(), { wrapper });
+
+      let returned: unknown;
+      await act(async () => {
+        returned = await result.current.bulkCreate({ data: [{ name: 'A' }, { name: 'B' }] });
+      });
+
+      expect(bulkApi.bulkCreate).toHaveBeenCalled();
+      expect(returned).toHaveLength(2);
+      expect(toastHandler.success).toHaveBeenCalledWith('Items created successfully');
+    });
+
+    it('bulkUpdate calls api.bulkUpdate', async () => {
+      const bulkApi = {
+        ...createMockApi(),
+        bulkUpdate: vi.fn().mockResolvedValue({ success: true, modifiedCount: 5 }),
+      };
+
+      const bulkHooks = createCrudHooks({
+        api: bulkApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => bulkHooks.useBulkActions(), { wrapper });
+
+      await act(async () => {
+        await result.current.bulkUpdate({
+          filter: { status: 'draft' },
+          data: { status: 'published' },
+        });
+      });
+
+      expect(bulkApi.bulkUpdate).toHaveBeenCalled();
+      expect(toastHandler.success).toHaveBeenCalledWith('Items updated successfully');
+    });
+
+    it('bulkRemove calls api.bulkDelete', async () => {
+      const bulkApi = {
+        ...createMockApi(),
+        bulkDelete: vi.fn().mockResolvedValue({ success: true, deletedCount: 3 }),
+      };
+
+      const bulkHooks = createCrudHooks({
+        api: bulkApi,
+        entityKey: 'items',
+        singular: 'Item',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => bulkHooks.useBulkActions(), { wrapper });
+
+      await act(async () => {
+        await result.current.bulkRemove({ filter: { archived: true } });
+      });
+
+      expect(bulkApi.bulkDelete).toHaveBeenCalled();
+      expect(toastHandler.success).toHaveBeenCalledWith('Items deleted successfully');
+    });
+
+    it('uses custom plural name in messages', async () => {
+      const bulkApi = {
+        ...createMockApi(),
+        bulkCreate: vi.fn().mockResolvedValue({ success: true, data: [{ _id: '1', name: 'A' }] }),
+      };
+
+      const bulkHooks = createCrudHooks({
+        api: bulkApi,
+        entityKey: 'people',
+        singular: 'Person',
+        plural: 'People',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => bulkHooks.useBulkActions(), { wrapper });
+
+      await act(async () => {
+        await result.current.bulkCreate({ data: [{ name: 'A' }] });
+      });
+
+      expect(toastHandler.success).toHaveBeenCalledWith('People created successfully');
+    });
+  });
+
+  // ==========================================================================
+  // authMode: 'header' — hook enablement
+  // ==========================================================================
+
+  describe('authMode: header', () => {
+    afterEach(() => {
+      configureClient({ baseUrl: 'http://api.test' });
+      configureAuth({ getToken: () => null, getOrgId: () => null });
+    });
+
+    it('disables queries until token is available (same as bearer)', async () => {
+      configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
+      configureAuth({ getToken: () => null, headerName: 'x-api-key' });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useList(), { wrapper });
+
+      // Should not fetch — no token
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.items).toHaveLength(0);
+      expect(mockApi.getAll).not.toHaveBeenCalled();
+    });
+
+    it('enables queries when token is available', async () => {
+      configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
+      configureAuth({ getToken: () => 'snr_key_123', headerName: 'x-api-key' });
+
+      const wrapper = createWrapper(queryClient);
+      renderHook(() => hooks.useList(), { wrapper });
+
+      await waitFor(() => {
+        expect(mockApi.getAll).toHaveBeenCalled();
       });
     });
   });

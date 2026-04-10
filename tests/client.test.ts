@@ -961,3 +961,189 @@ describe('v0.2.1 error preservation', () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ============================================================================
+// authMode: 'header'
+// ============================================================================
+
+describe('authMode: header', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({ getToken: () => null, getOrgId: () => null });
+  });
+
+  it('sets custom header instead of Authorization when authMode is header', async () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
+    configureAuth({ getToken: () => 'snr_abc123', headerName: 'x-api-key' });
+
+    await handleApiRequest('GET', '/test', { token: 'snr_abc123' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-api-key']).toBe('snr_abc123');
+    expect(headers['Authorization']).toBeUndefined();
+  });
+
+  it('defaults headerName to x-api-key when not specified', async () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
+    configureAuth({ getToken: () => 'key123' });
+
+    await handleApiRequest('GET', '/test', { token: 'key123' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-api-key']).toBe('key123');
+  });
+
+  it('uses custom headerName from authConfig', async () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
+    configureAuth({ getToken: () => 'admin-key', headerName: 'x-admin-key' });
+
+    await handleApiRequest('GET', '/test', { token: 'admin-key' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-admin-key']).toBe('admin-key');
+    expect(headers['x-api-key']).toBeUndefined();
+  });
+
+  it('still uses Bearer for authMode: bearer (default)', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+
+    await handleApiRequest('GET', '/test', { token: 'my-token' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer my-token');
+  });
+
+  it('getAuthMode returns header when configured', () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
+    expect(getAuthMode()).toBe('header');
+  });
+});
+
+// ============================================================================
+// apiVersion
+// ============================================================================
+
+describe('apiVersion', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    configureClient({ baseUrl: 'http://api.test' });
+  });
+
+  it('sends Accept-Version header when apiVersion is configured', async () => {
+    configureClient({ baseUrl: 'http://api.test', apiVersion: '2' });
+
+    await handleApiRequest('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Accept-Version']).toBe('2');
+  });
+
+  it('does not send Accept-Version when not configured', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+
+    await handleApiRequest('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Accept-Version']).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// idempotency
+// ============================================================================
+
+describe('idempotency', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    configureClient({ baseUrl: 'http://api.test' });
+  });
+
+  it('sends explicit idempotencyKey when provided', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+
+    await handleApiRequest('POST', '/items', {
+      body: { name: 'test' },
+      idempotencyKey: 'my-key-123',
+    });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe('my-key-123');
+  });
+
+  it('raw handleApiRequest does NOT auto-generate — auto-idempotency is mutation-level', async () => {
+    configureClient({ baseUrl: 'http://api.test', autoIdempotency: true });
+
+    await handleApiRequest('POST', '/items', { body: { name: 'test' } });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    // Auto-generation happens in useMutationWithTransition, not in raw client
+    expect(headers['Idempotency-Key']).toBeUndefined();
+  });
+
+  it('explicit idempotencyKey is always sent', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+
+    await handleApiRequest('POST', '/items', {
+      body: { name: 'test' },
+      idempotencyKey: 'explicit-key',
+    });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe('explicit-key');
+  });
+
+  it('isAutoIdempotency reflects client config', async () => {
+    const { isAutoIdempotency } = await import('../src/client.js');
+
+    configureClient({ baseUrl: 'http://api.test' });
+    expect(isAutoIdempotency()).toBe(false);
+
+    configureClient({ baseUrl: 'http://api.test', autoIdempotency: true });
+    expect(isAutoIdempotency()).toBe(true);
+
+    configureClient({ baseUrl: 'http://api.test' });
+  });
+});

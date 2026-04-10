@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQueryClient, type QueryClient, type QueryKey, type UseMutateFunction, type UseMutateAsyncFunction } from "@tanstack/react-query";
-import { useTransition } from "react";
-import { isArcApiError } from "./client.js";
+import { useTransition, useRef, useCallback } from "react";
+import { isArcApiError, isAutoIdempotency } from "./client.js";
 import type { ToastHandler } from "./client.js";
 
 // ============================================================================
@@ -121,8 +121,26 @@ export function useMutationWithTransition<TData, TVariables>(config: TransitionM
   const queryClient = useQueryClient();
   const [isTransitioning, startTransition] = useTransition();
 
+  // Stable idempotency key per mutate() call — survives TanStack Query retries.
+  // Generated once in onMutate, reused if mutationFn is retried.
+  const idempotencyKeyRef = useRef<string | null>(null);
+
   const mutation = useMutation({
-    mutationFn,
+    mutationFn: (variables: TVariables) => {
+      // If autoIdempotency is on and we have a key from onMutate, inject it
+      if (idempotencyKeyRef.current && typeof variables === "object" && variables !== null) {
+        const vars = variables as Record<string, unknown>;
+        if (vars.options && typeof vars.options === "object") {
+          (vars.options as Record<string, unknown>).idempotencyKey ??= idempotencyKeyRef.current;
+        }
+      }
+      return mutationFn(variables);
+    },
+
+    onMutate: () => {
+      // Generate one key per mutate() call — retries reuse this same key
+      idempotencyKeyRef.current = isAutoIdempotency() ? globalThis.crypto.randomUUID() : null;
+    },
 
     onSuccess: (data, variables) => {
       const invalidate = () => {
@@ -321,16 +339,8 @@ export function useOptimisticMutation<TData, TVariables>(config: CreateOptimisti
   });
 }
 
-// ============================================================================
-// Query Config Presets
-// ============================================================================
-
-export const QUERY_CONFIGS = {
-  realtime: { staleTime: 20_000, refetchInterval: 30_000 },
-  frequent: { staleTime: 60_000 },
-  stable: { staleTime: 300_000 },
-  static: { staleTime: 600_000 },
-} as const;
+/** @deprecated Import from `@classytic/arc-next/query` instead */
+export { QUERY_CONFIGS } from "./query.js";
 
 /** @deprecated Use `useOptimisticMutation` */
 export const createOptimisticMutation = useOptimisticMutation;

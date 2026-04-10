@@ -1,7 +1,7 @@
 "use client";
 
-import { useQueryClient, useMutation, type QueryKey } from "@tanstack/react-query";
-import { useCallback, useRef, useMemo } from "react";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useCallback, useRef } from "react";
 import { useOptimisticMutation, useMutationWithTransition } from "./mutation.js";
 import type { MutationMessages } from "./mutation.js";
 import {
@@ -29,7 +29,7 @@ import {
   isOffsetPagination,
   isKeysetPagination,
 } from "./api.js";
-import type { PaginatedResponse, BaseApi } from "./api.js";
+import type { PaginatedResponse, BaseApi, FilterOperator } from "./api.js";
 import type { MutationCallbacks, TransitionMutationReturn } from "./mutation.js";
 import { getAuthMode, getAuthContext } from "./client.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
@@ -51,6 +51,15 @@ export type CrudApi<T = unknown, TCreate = Partial<T>, TUpdate = Partial<T>> = P
 > & {
   upload?: BaseApi<T, TCreate, TUpdate>['upload'];
   search?: BaseApi<T, TCreate, TUpdate>['search'];
+  getDeleted?: BaseApi<T, TCreate, TUpdate>['getDeleted'];
+  restore?: BaseApi<T, TCreate, TUpdate>['restore'];
+  bulkCreate?: BaseApi<T, TCreate, TUpdate>['bulkCreate'];
+  bulkUpdate?: BaseApi<T, TCreate, TUpdate>['bulkUpdate'];
+  bulkDelete?: BaseApi<T, TCreate, TUpdate>['bulkDelete'];
+  getBySlug?: BaseApi<T, TCreate, TUpdate>['getBySlug'];
+  getTree?: BaseApi<T, TCreate, TUpdate>['getTree'];
+  getChildren?: BaseApi<T, TCreate, TUpdate>['getChildren'];
+  findBy?: BaseApi<T, TCreate, TUpdate>['findBy'];
 };
 
 export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
@@ -58,6 +67,17 @@ export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> 
   entityKey: string;
   singular: string;
   plural?: string;
+  /**
+   * Primary key field used to extract item IDs from response data.
+   * Used for cache key resolution, optimistic updates, and detail cache prefill.
+   *
+   * Default lookup order: `_id` → `id`.
+   * Set this when your resource uses a custom ID field (e.g., `'sku'`, `'slug'`, `'code'`).
+   *
+   * @example
+   * createCrudHooks({ idField: 'sku', ... }) // GET /products/:sku
+   */
+  idField?: string;
   defaults?: {
     staleTime?: number;
     gcTime?: number;
@@ -107,10 +127,22 @@ export interface CrudActions<T, TCreate, TUpdate> {
   create: (params: MutationParams<TCreate>, options?: CallOptions<T>) => Promise<T>;
   update: (params: UpdateParams<TUpdate>, options?: CallOptions<T>) => Promise<T>;
   remove: (params: DeleteParams, options?: CallOptions) => Promise<unknown>;
+  /** Restore a soft-deleted item. Only available when backend has softDelete preset. */
+  restore: (params: DeleteParams, options?: CallOptions<T>) => Promise<T>;
   isCreating: boolean;
   isUpdating: boolean;
   isDeleting: boolean;
+  isRestoring: boolean;
   isMutating: boolean;
+}
+
+export interface BulkActions<T, TCreate> {
+  bulkCreate: (params: { data: TCreate[]; token?: string | null; organizationId?: string | null }, options?: CallOptions<T[]>) => Promise<T[]>;
+  bulkUpdate: (params: { filter: Record<string, unknown>; data: Partial<T>; token?: string | null; organizationId?: string | null }, options?: CallOptions) => Promise<unknown>;
+  bulkRemove: (params: { filter: Record<string, unknown>; token?: string | null; organizationId?: string | null }, options?: CallOptions) => Promise<unknown>;
+  isBulkCreating: boolean;
+  isBulkUpdating: boolean;
+  isBulkDeleting: boolean;
 }
 
 export interface NavigationOptions {
@@ -142,6 +174,12 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     (token: string | null, params?: Record<string, unknown>, options?: InfiniteListQueryOptions): InfiniteListQueryResult<T>;
   };
   useActions: () => CrudActions<T, TCreate, TUpdate>;
+  useBulkActions: () => BulkActions<T, TCreate>;
+  useDeleted: (params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
+  useDetailBySlug: (slug: string | null, options?: DetailQueryOptions<T>) => DetailQueryResult<T>;
+  useTree: (params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
+  useChildren: (parentId: string | null, params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
+  useFindBy: (field: string, value: unknown, options?: ListQueryOptions<T> & { operator?: FilterOperator }) => ListQueryResult<T>;
   useUpload: (options?: {
     invalidateQueries?: QueryKey[];
     messages?: MutationMessages;
@@ -184,7 +222,7 @@ export function configureNavigation(hook: UseRouterHook): void {
 // Enabled Rule
 // ============================================================================
 
-function createEnabledRule(token: string | null, options: { public?: boolean; enabled?: boolean }, authMode: 'bearer' | 'cookie' = getAuthMode()): boolean {
+function createEnabledRule(token: string | null, options: { public?: boolean; enabled?: boolean }, authMode: 'bearer' | 'cookie' | 'header' = getAuthMode()): boolean {
   // Cookie-based auth: no token needed, queries always enabled (cookies sent via credentials: 'include')
   if (authMode === 'cookie' || options.public) {
     return options.enabled ?? true;
@@ -201,10 +239,24 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   api,
   entityKey,
   singular,
+  plural,
+  idField,
   defaults = {},
   callbacks = {},
   client,
 }: CrudHooksConfig<T, TCreate, TUpdate>): CrudHooksReturn<T, TCreate, TUpdate> {
+  const pluralName = plural ?? `${singular}s`;
+
+  /** Extract ID from an item using configured idField, falling back to _id → id */
+  function resolveItemId(item: unknown): string | null {
+    if (!item || typeof item !== "object") return null;
+    const obj = item as Record<string, unknown>;
+    if (idField) {
+      const val = obj[idField];
+      if (val != null) return String(val);
+    }
+    return getItemId(item);
+  }
   const KEYS = createQueryKeys(entityKey);
   const cache = createCacheUtils<T>(KEYS);
 
@@ -275,6 +327,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       },
       prefillDetailCache: queryOpts.prefillDetailCache ?? true,
       detailKeyBuilder: (id) => KEYS.detail(id),
+      itemIdResolver: resolveItemId,
       select: queryOpts.select,
     });
   }
@@ -337,7 +390,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         const optimisticItem = {
           ...(data as object),
           _optimistic: true,
-          [getItemId(data) ? "id" : "_id"]: getItemId(data) ?? `temp-${Date.now()}`,
+          [idField ?? (resolveItemId(data) ? "id" : "_id")]: resolveItemId(data) ?? `temp-${Date.now()}`,
         };
         return updateListCache(oldData, (arr: unknown[]) => [optimisticItem, ...(arr || [])]);
       },
@@ -362,7 +415,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       shouldToast,
       optimisticUpdate: (oldData, { id, data }) => {
         const updated = updateListCache(oldData, (arr: unknown[]) =>
-          (arr || []).map((item) => (getItemId(item) === id ? { ...(item as object), ...(data as object) } : item))
+          (arr || []).map((item) => (resolveItemId(item) === id ? { ...(item as object), ...(data as object) } : item))
         );
         queryClient.setQueryData(KEYS.detail(id), (current: unknown) =>
           current ? { ...(current as object), data: { ...((current as { data?: object }).data || {}), ...(data as object) } } : current
@@ -389,7 +442,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       queryKeys: [KEYS.lists()],
       shouldToast,
       optimisticUpdate: (oldData, { id }) => {
-        return updateListCache(oldData, (arr: unknown[]) => (arr || []).filter((item) => getItemId(item) !== id));
+        return updateListCache(oldData, (arr: unknown[]) => (arr || []).filter((item) => resolveItemId(item) !== id));
       },
       onSuccess: (data, { id }) => {
         // Remove detail cache after successful delete
@@ -403,6 +456,22 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         callbacks.onDelete?.onSettled?.(data, error, { id }, undefined);
       },
       messages: { success: config.messages.deleteSuccess, error: config.messages.deleteError },
+      toastHandler: instanceToast,
+    });
+
+    const restoreMutation = useMutationWithTransition<unknown, DeleteParams>({
+      mutationFn: ({ token, organizationId, id }) => {
+        if (!api.restore) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a restore method`));
+        }
+        return api.restore({ token, organizationId, id });
+      },
+      invalidateQueries: [KEYS.lists(), KEYS.custom('deleted')],
+      shouldToast,
+      messages: {
+        success: `${singular} restored successfully`,
+        error: `Failed to restore ${singular.toLowerCase()}`,
+      },
       toastHandler: instanceToast,
     });
 
@@ -465,14 +534,33 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       }
     }, [deleteMutation, resolveAuth]);
 
+    const restore = useCallback(async (params: DeleteParams, options?: CallOptions<T>): Promise<T> => {
+      silentRef.current = options?.silent ?? false;
+      try {
+        const raw = await restoreMutation.mutateAsync(resolveAuth(params));
+        const entity = extractItem<T>(raw) as T;
+        options?.onSuccess?.(entity);
+        options?.onSettled?.(entity, null);
+        return entity;
+      } catch (error) {
+        options?.onError?.(error as Error);
+        options?.onSettled?.(undefined, error as Error);
+        throw error;
+      } finally {
+        silentRef.current = false;
+      }
+    }, [restoreMutation, resolveAuth]);
+
     return {
       create,
       update,
       remove,
+      restore,
       isCreating: createMutation.isPending,
       isUpdating: updateMutation.isPending,
       isDeleting: deleteMutation.isPending,
-      isMutating: createMutation.isPending || updateMutation.isPending || deleteMutation.isPending,
+      isRestoring: restoreMutation.isPending,
+      isMutating: createMutation.isPending || updateMutation.isPending || deleteMutation.isPending || restoreMutation.isPending,
     };
   }
 
@@ -529,13 +617,25 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (isOffsetPagination(page)) {
           return page.hasNext ? page.page + 1 : undefined;
         }
-        // Fallback: check common pagination fields
         const p = page as unknown as Record<string, unknown>;
         if (typeof p.hasNext === 'boolean' && typeof p.page === 'number') {
           return p.hasNext ? (p.page as number) + 1 : undefined;
         }
         return undefined;
       },
+      // Required when maxPages is set — enables backward re-fetching on scroll-back
+      getPreviousPageParam: queryOpts.maxPages != null ? (firstPage) => {
+        const page = firstPage as PaginatedResponse<T>;
+        if (isOffsetPagination(page)) {
+          return page.hasPrev ? page.page - 1 : undefined;
+        }
+        const p = page as unknown as Record<string, unknown>;
+        if (typeof p.hasPrev === 'boolean' && typeof p.page === 'number') {
+          return p.hasPrev ? (p.page as number) - 1 : undefined;
+        }
+        return undefined;
+      } : undefined,
+      maxPages: queryOpts.maxPages,
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -583,11 +683,6 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     params?: Record<string, unknown>,
     options?: ListQueryOptions<T>,
   ): ListQueryResult<T> {
-    if (!api.search) {
-      throw new Error(`[arc-next] "${entityKey}" api does not define a search method`);
-    }
-
-    const searchApi = api.search;
     const auth = getAuthContext();
     const token = params?.token as string | null ?? auth.token;
     const organizationId = params?.organizationId as string | null ?? auth.organizationId;
@@ -595,20 +690,17 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const searchParams = { q: query, ...restParams };
     const { request: requestOpts, ...queryOpts } = options ?? {};
 
-    // Include organizationId in query key when present to isolate per-tenant search cache
     const searchKeyParams = organizationId
       ? { organizationId, ...searchParams }
       : searchParams;
 
     return useListQuery<T>({
       queryKey: [...KEYS.lists(), 'search', searchKeyParams],
-      queryFn: ({ signal }) => searchApi({
-        token,
-        organizationId,
-        params: searchParams,
-        options: { signal, ...requestOpts },
-      }),
-      enabled: query.length > 0 && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      queryFn: ({ signal }) => {
+        if (!api.search) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a search method`));
+        return api.search({ token, organizationId, params: searchParams, options: { signal, ...requestOpts } });
+      },
+      enabled: !!api.search && query.length > 0 && createEnabledRule(token, queryOpts, resolveAuthMode()),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -638,6 +730,240 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     });
   }
 
+  // ========== useDeleted (soft delete preset) ==========
+
+  function useDeleted(
+    params?: Record<string, unknown>,
+    options?: ListQueryOptions<T>,
+  ): ListQueryResult<T> {
+    const auth = getAuthContext();
+    const token = auth.token;
+    const mergedParams = params ?? {};
+    const organizationId = (mergedParams.organizationId as string | null) ?? auth.organizationId;
+    const { organizationId: _, ...restParams } = mergedParams;
+    const { request: requestOpts, ...queryOpts } = options ?? {};
+
+    return useListQuery<T>({
+      queryKey: KEYS.custom('deleted', { organizationId, ...restParams }),
+      queryFn: ({ signal }) => {
+        if (!api.getDeleted) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getDeleted method`));
+        return api.getDeleted({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
+      },
+      enabled: !!api.getDeleted && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      options: {
+        staleTime: queryOpts.staleTime ?? config.staleTime,
+        gcTime: queryOpts.gcTime ?? config.gcTime,
+      },
+      select: queryOpts.select,
+    });
+  }
+
+  // ========== useDetailBySlug ==========
+
+  function useDetailBySlug(
+    slug: string | null,
+    options?: DetailQueryOptions<T>,
+  ): DetailQueryResult<T> {
+    const auth = getAuthContext();
+    const token = auth.token;
+    const resolvedOptions = options ?? {};
+    const organizationId = resolvedOptions.organizationId ?? auth.organizationId;
+    const { params: queryParams, request: requestOpts, ...restOptions } = resolvedOptions;
+
+    return useDetailQuery<T>({
+      queryKey: queryParams ? KEYS.custom('slug', slug, queryParams) : KEYS.custom('slug', slug),
+      queryFn: ({ signal }) => {
+        if (!api.getBySlug) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getBySlug method`));
+        return api.getBySlug({ slug: slug!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } });
+      },
+      enabled: !!api.getBySlug && !!slug && createEnabledRule(token, restOptions, resolveAuthMode()),
+      options: {
+        staleTime: restOptions.staleTime ?? config.staleTime,
+        gcTime: restOptions.gcTime ?? config.gcTime,
+        refetchOnWindowFocus: restOptions.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
+        structuralSharing: restOptions.structuralSharing ?? config.structuralSharing,
+      },
+      select: restOptions.select,
+    });
+  }
+
+  // ========== useTree ==========
+
+  function useTree(
+    params?: Record<string, unknown>,
+    options?: ListQueryOptions<T>,
+  ): ListQueryResult<T> {
+    const auth = getAuthContext();
+    const token = auth.token;
+    const mergedParams = params ?? {};
+    const organizationId = (mergedParams.organizationId as string | null) ?? auth.organizationId;
+    const { organizationId: _, ...restParams } = mergedParams;
+    const { request: requestOpts, ...queryOpts } = options ?? {};
+
+    return useListQuery<T>({
+      queryKey: KEYS.custom('tree', { organizationId, ...restParams }),
+      queryFn: ({ signal }) => {
+        if (!api.getTree) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getTree method`));
+        return api.getTree({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
+      },
+      enabled: !!api.getTree && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      options: {
+        staleTime: queryOpts.staleTime ?? config.staleTime,
+        gcTime: queryOpts.gcTime ?? config.gcTime,
+      },
+      select: queryOpts.select,
+    });
+  }
+
+  // ========== useChildren ==========
+
+  function useChildren(
+    parentId: string | null,
+    params?: Record<string, unknown>,
+    options?: ListQueryOptions<T>,
+  ): ListQueryResult<T> {
+    const auth = getAuthContext();
+    const token = auth.token;
+    const mergedParams = params ?? {};
+    const organizationId = (mergedParams.organizationId as string | null) ?? auth.organizationId;
+    const { organizationId: _, ...restParams } = mergedParams;
+    const { request: requestOpts, ...queryOpts } = options ?? {};
+
+    return useListQuery<T>({
+      queryKey: KEYS.custom('children', parentId, { organizationId, ...restParams }),
+      queryFn: ({ signal }) => {
+        if (!api.getChildren) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getChildren method`));
+        return api.getChildren({ token, organizationId, parentId: parentId!, params: restParams, options: { signal, ...requestOpts } });
+      },
+      enabled: !!api.getChildren && !!parentId && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      options: {
+        staleTime: queryOpts.staleTime ?? config.staleTime,
+        gcTime: queryOpts.gcTime ?? config.gcTime,
+      },
+      prefillDetailCache: queryOpts.prefillDetailCache ?? true,
+      detailKeyBuilder: (id) => KEYS.detail(id),
+      itemIdResolver: resolveItemId,
+      select: queryOpts.select,
+    });
+  }
+
+  // ========== useFindBy ==========
+
+  function useFindBy(
+    field: string,
+    value: unknown,
+    options?: ListQueryOptions<T> & { operator?: FilterOperator },
+  ): ListQueryResult<T> {
+    const auth = getAuthContext();
+    const token = auth.token;
+    const organizationId = auth.organizationId;
+    const { operator, request: requestOpts, ...queryOpts } = options ?? {};
+
+    return useListQuery<T>({
+      queryKey: KEYS.custom('findBy', field, value, operator),
+      queryFn: ({ signal }) => {
+        if (!api.findBy) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a findBy method`));
+        return api.findBy({ token, organizationId, field, value, operator, options: { signal, ...requestOpts } });
+      },
+      enabled: !!api.findBy && value !== undefined && value !== null && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      options: {
+        staleTime: queryOpts.staleTime ?? config.staleTime,
+        gcTime: queryOpts.gcTime ?? config.gcTime,
+      },
+      prefillDetailCache: queryOpts.prefillDetailCache ?? true,
+      detailKeyBuilder: (id) => KEYS.detail(id),
+      itemIdResolver: resolveItemId,
+      select: queryOpts.select,
+    });
+  }
+
+  // ========== useBulkActions ==========
+
+  function useBulkActions(): BulkActions<T, TCreate> {
+    const bulkCreateMutation = useMutationWithTransition<unknown, { data: TCreate[]; token?: string | null; organizationId?: string | null }>({
+      mutationFn: (vars) => {
+        if (!api.bulkCreate) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkCreate method`));
+        }
+        const auth = getAuthContext();
+        return api.bulkCreate({
+          token: vars.token ?? auth.token,
+          organizationId: vars.organizationId ?? auth.organizationId,
+          data: vars.data,
+        });
+      },
+      invalidateQueries: [KEYS.lists()],
+      messages: {
+        success: `${pluralName} created successfully`,
+        error: `Failed to create ${(pluralName).toLowerCase()}`,
+      },
+      toastHandler: instanceToast,
+    });
+
+    const bulkUpdateMutation = useMutationWithTransition<unknown, { filter: Record<string, unknown>; data: Partial<T>; token?: string | null; organizationId?: string | null }>({
+      mutationFn: (vars) => {
+        if (!api.bulkUpdate) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkUpdate method`));
+        }
+        const auth = getAuthContext();
+        return api.bulkUpdate({
+          token: vars.token ?? auth.token,
+          organizationId: vars.organizationId ?? auth.organizationId,
+          filter: vars.filter,
+          data: vars.data as Parameters<NonNullable<typeof api.bulkUpdate>>[0]['data'],
+        });
+      },
+      invalidateQueries: [KEYS.lists(), KEYS.details()],
+      messages: {
+        success: `${pluralName} updated successfully`,
+        error: `Failed to update ${(pluralName).toLowerCase()}`,
+      },
+      toastHandler: instanceToast,
+    });
+
+    const bulkDeleteMutation = useMutationWithTransition<unknown, { filter: Record<string, unknown>; token?: string | null; organizationId?: string | null }>({
+      mutationFn: (vars) => {
+        if (!api.bulkDelete) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkDelete method`));
+        }
+        const auth = getAuthContext();
+        return api.bulkDelete({
+          token: vars.token ?? auth.token,
+          organizationId: vars.organizationId ?? auth.organizationId,
+          filter: vars.filter,
+        });
+      },
+      invalidateQueries: [KEYS.lists()],
+      messages: {
+        success: `${pluralName} deleted successfully`,
+        error: `Failed to delete ${(pluralName).toLowerCase()}`,
+      },
+      toastHandler: instanceToast,
+    });
+
+    return {
+      bulkCreate: async (params, options) => {
+        const raw = await bulkCreateMutation.mutateAsync(params);
+        const items = ((raw as { data?: T[] })?.data ?? []) as T[];
+        options?.onSuccess?.(items);
+        return items;
+      },
+      bulkUpdate: async (params, options) => {
+        const result = await bulkUpdateMutation.mutateAsync(params);
+        options?.onSuccess?.(result);
+        return result;
+      },
+      bulkRemove: async (params, options) => {
+        const result = await bulkDeleteMutation.mutateAsync(params);
+        options?.onSuccess?.(result);
+        return result;
+      },
+      isBulkCreating: bulkCreateMutation.isPending,
+      isBulkUpdating: bulkUpdateMutation.isPending,
+      isBulkDeleting: bulkDeleteMutation.isPending,
+    };
+  }
+
   // ========== useNavigation ==========
 
   // Resolve router hook once at factory time — stable identity for Rules of Hooks.
@@ -651,7 +977,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     return useCallback(
       (href: string, item: T, options: NavigationOptions = {}) => {
-        const id = getItemId(item);
+        const id = resolveItemId(item);
         if (id) {
           queryClient.setQueryData(KEYS.detail(id), { data: item });
         }
@@ -676,6 +1002,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     useDetail,
     useInfiniteList,
     useActions,
+    useBulkActions,
+    useDeleted,
+    useDetailBySlug,
+    useTree,
+    useChildren,
+    useFindBy,
     useUpload,
     useSearch,
     useCustomMutation,

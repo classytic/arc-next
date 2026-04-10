@@ -584,4 +584,190 @@ describe('BaseApi with client', () => {
       expect(url).toContain('status=active');
     });
   });
+
+  // ==========================================================================
+  // Soft Delete Preset
+  // ==========================================================================
+
+  describe('getDeleted', () => {
+    it('sends GET to /deleted endpoint', async () => {
+      const api = createCrudApi('items', { basePath: '/api' });
+      await api.getDeleted();
+
+      const url = fetchMock.mock.calls[0]![0] as string;
+      expect(url).toContain('/api/items/deleted?');
+      const [, options] = fetchMock.mock.calls[0]!;
+      expect((options as RequestInit).method).toBe('GET');
+    });
+
+    it('passes pagination params', async () => {
+      const api = createCrudApi('items', { basePath: '/api' });
+      await api.getDeleted({ params: { page: 2, limit: 5 } });
+
+      const url = fetchMock.mock.calls[0]![0] as string;
+      expect(url).toContain('page=2');
+      expect(url).toContain('limit=5');
+    });
+  });
+
+  describe('restore', () => {
+    it('sends POST to /:id/restore', async () => {
+      const api = createCrudApi('items', { basePath: '/api' });
+      await api.restore({ id: 'abc' });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/items/abc/restore'),
+        expect.objectContaining({ method: 'POST' })
+      );
+    });
+
+    it('throws when id is empty', async () => {
+      const api = createCrudApi('items', { basePath: '/api' });
+      await expect(api.restore({ id: '' })).rejects.toThrow('ID is required');
+    });
+  });
+
+  // ==========================================================================
+  // Bulk Preset
+  // ==========================================================================
+
+  describe('bulkCreate', () => {
+    it('sends POST to /bulk with array body', async () => {
+      const api = createCrudApi('items', { basePath: '/api' });
+      await api.bulkCreate({ data: [{ name: 'A' }, { name: 'B' }] });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/items/bulk'),
+        expect.objectContaining({ method: 'POST' })
+      );
+      const [, options] = fetchMock.mock.calls[0]!;
+      expect((options as RequestInit).body).toBe(JSON.stringify([{ name: 'A' }, { name: 'B' }]));
+    });
+  });
+
+  describe('bulkUpdate', () => {
+    it('sends PATCH to /bulk with filter and data', async () => {
+      const api = createCrudApi('items', { basePath: '/api' });
+      await api.bulkUpdate({
+        filter: { status: 'draft' },
+        data: { status: 'published' },
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/items/bulk'),
+        expect.objectContaining({ method: 'PATCH' })
+      );
+      const [, options] = fetchMock.mock.calls[0]!;
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.filter).toEqual({ status: 'draft' });
+      expect(body.data).toEqual({ status: 'published' });
+    });
+  });
+
+  describe('bulkDelete', () => {
+    it('sends DELETE to /bulk with filter', async () => {
+      const api = createCrudApi('items', { basePath: '/api' });
+      await api.bulkDelete({ filter: { status: 'archived' } });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/items/bulk'),
+        expect.objectContaining({ method: 'DELETE' })
+      );
+      const [, options] = fetchMock.mock.calls[0]!;
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.filter).toEqual({ status: 'archived' });
+    });
+  });
+
+  // ==========================================================================
+  // Slug Lookup Preset
+  // ==========================================================================
+
+  describe('getBySlug', () => {
+    it('sends GET to /slug/:slug', async () => {
+      const api = createCrudApi('articles', { basePath: '/api' });
+      await api.getBySlug({ slug: 'my-article' });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/articles/slug/my-article'),
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('appends select/populate params', async () => {
+      const api = createCrudApi('articles', { basePath: '/api' });
+      await api.getBySlug({ slug: 'my-article', params: { select: 'title,body' } });
+
+      const url = fetchMock.mock.calls[0]![0] as string;
+      expect(url).toContain('select=title%2Cbody');
+    });
+
+    it('throws when slug is empty', async () => {
+      const api = createCrudApi('articles', { basePath: '/api' });
+      await expect(api.getBySlug({ slug: '' })).rejects.toThrow('Slug is required');
+    });
+  });
+
+  // ==========================================================================
+  // Tree Preset
+  // ==========================================================================
+
+  describe('getTree', () => {
+    it('sends GET to /tree', async () => {
+      const api = createCrudApi('categories', { basePath: '/api' });
+      await api.getTree();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/categories/tree?'),
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+  });
+
+  describe('getChildren', () => {
+    it('sends GET to /:parentId/children', async () => {
+      const api = createCrudApi('categories', { basePath: '/api' });
+      await api.getChildren({ parentId: 'parent-1' });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/categories/parent-1/children?'),
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('throws when parentId is empty', async () => {
+      const api = createCrudApi('categories', { basePath: '/api' });
+      await expect(api.getChildren({ parentId: '' })).rejects.toThrow('Parent ID is required');
+    });
+  });
+
+  // ==========================================================================
+  // Lookup params
+  // ==========================================================================
+
+  describe('prepareParams — lookup', () => {
+    const api = new BaseApi('test');
+
+    it('serializes simple string lookup', () => {
+      const result = api.prepareParams({ lookup: { dept: 'departments' } });
+      expect(result['lookup[dept]']).toBe('departments');
+    });
+
+    it('serializes full lookup config', () => {
+      const result = api.prepareParams({
+        lookup: {
+          dept: {
+            from: 'departments',
+            localField: 'deptId',
+            foreignField: '_id',
+            select: 'name',
+          },
+        },
+      });
+      expect(result['lookup[dept][from]']).toBe('departments');
+      expect(result['lookup[dept][localField]']).toBe('deptId');
+      expect(result['lookup[dept][foreignField]']).toBe('_id');
+      expect(result['lookup[dept][select]']).toBe('name');
+    });
+  });
 });

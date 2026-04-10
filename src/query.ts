@@ -120,6 +120,18 @@ export const DEFAULT_QUERY_CONFIG = {
   retry: 0,
 } as const;
 
+/** Pre-built query config presets for common data freshness patterns. */
+export const QUERY_CONFIGS = {
+  /** Live data: 20s stale, 30s polling */
+  realtime: { staleTime: 20_000, refetchInterval: 30_000 },
+  /** Frequently updated: 60s stale */
+  frequent: { staleTime: 60_000 },
+  /** Stable data: 5min stale (same as default) */
+  stable: { staleTime: 300_000 },
+  /** Rarely changes: 10min stale */
+  static: { staleTime: 600_000 },
+} as const;
+
 // ============================================================================
 // Utilities
 // ============================================================================
@@ -282,6 +294,8 @@ export interface CreateListQueryConfig {
   options?: Record<string, unknown>;
   prefillDetailCache?: boolean;
   detailKeyBuilder?: (id: string) => QueryKey;
+  /** Custom ID extractor for cache prefill. Falls back to getItemId (_id → id). */
+  itemIdResolver?: (item: unknown) => string | null;
   select?: (data: unknown) => unknown;
 }
 
@@ -292,6 +306,7 @@ export function useListQuery<T>({
   options = {},
   prefillDetailCache = true,
   detailKeyBuilder,
+  itemIdResolver,
   select,
 }: CreateListQueryConfig): ListQueryResult<T> {
   const queryClient = useQueryClient();
@@ -313,8 +328,9 @@ export function useListQuery<T>({
   useEffect(() => {
     if (!prefillDetailCache || !detailKeyBuilder || items.length === 0) return;
 
+    const resolveId = itemIdResolver ?? getItemId;
     items.forEach((item) => {
-      const id = getItemId(item);
+      const id = resolveId(item);
       if (id) queryClient.setQueryData(detailKeyBuilder(id), { data: item });
     });
   }, [items, prefillDetailCache, detailKeyBuilder, queryClient]);
@@ -391,6 +407,12 @@ export interface InfiniteListQueryOptions {
   refetchIntervalInBackground?: boolean;
   _scope?: string;
   request?: RequestPassthrough;
+  /**
+   * Max pages to keep in memory. Old pages are evicted and re-fetched on scroll-back.
+   * Requires `getPreviousPageParam` for backward re-fetching.
+   * When unset, all fetched pages are retained (default TanStack Query behavior).
+   */
+  maxPages?: number;
 }
 
 export interface InfiniteListQueryResult<T> {
@@ -418,6 +440,8 @@ export interface CreateInfiniteListQueryConfig {
   initialPageParam?: unknown;
   getNextPageParam: (lastPage: unknown) => unknown;
   getPreviousPageParam?: (firstPage: unknown) => unknown;
+  /** Max pages to keep in memory. Old pages are evicted when exceeded. */
+  maxPages?: number;
 }
 
 export function useInfiniteListQuery<T>({
@@ -428,6 +452,7 @@ export function useInfiniteListQuery<T>({
   initialPageParam = 1,
   getNextPageParam,
   getPreviousPageParam,
+  maxPages,
 }: CreateInfiniteListQueryConfig): InfiniteListQueryResult<T> {
   const query = useInfiniteQuery({
     queryKey,
@@ -436,6 +461,7 @@ export function useInfiniteListQuery<T>({
     initialPageParam,
     getNextPageParam,
     getPreviousPageParam,
+    ...(maxPages != null ? { maxPages } : {}),
     ...DEFAULT_QUERY_CONFIG,
     ...options,
   });

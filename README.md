@@ -30,8 +30,9 @@ import { useRouter } from "next/navigation";
 // Required — sets the API base URL and auth mode
 configureClient({
   baseUrl: process.env.NEXT_PUBLIC_API_URL!,
-  authMode: "cookie",   // 'cookie' for Better Auth, 'bearer' for token auth (default)
-  // credentials: 'omit', // override if you don't want cookies sent cross-origin
+  authMode: "cookie",        // 'cookie' | 'bearer' (default) | 'header'
+  // apiVersion: '2',        // sends Accept-Version header
+  // autoIdempotency: true,  // auto Idempotency-Key on mutations (retry-safe)
 });
 
 // Optional — auto-inject tenant context into queries/mutations
@@ -59,6 +60,7 @@ configureNavigation(useRouter);
 | `@classytic/arc-next/hooks`         | `createCrudHooks`, `configureNavigation`                                     |      Yes        |
 | `@classytic/arc-next/query-client`  | `getQueryClient` (SSR-safe singleton)                                        |       No        |
 | `@classytic/arc-next/prefetch`      | `createCrudPrefetcher`, `dehydrate` (SSR prefetch)                           |       No        |
+| `@classytic/arc-next/sse`           | `useEventStream` (Server-Sent Events for real-time cache invalidation)       |      Yes        |
 
 No barrel index — every file is its own entry point. Tree-shakeable (`sideEffects: false`).
 
@@ -148,25 +150,28 @@ export function ProductsPage() {
 ```ts
 configureClient({
   baseUrl: string;                          // Required — API base URL
-  authMode?: 'cookie' | 'bearer';          // Default: 'bearer'
+  authMode?: 'bearer' | 'cookie' | 'header'; // Default: 'bearer'
   credentials?: RequestCredentials;         // Default: derived from authMode
-  internalApiKey?: string;                  // Optional — sent as x-internal-api-key header
-  defaultHeaders?: Record<string, string>; // Optional — merged into every request
+  internalApiKey?: string;                  // Sent as x-internal-api-key header
+  defaultHeaders?: Record<string, string>; // Merged into every request
+  apiVersion?: string;                     // Sent as Accept-Version header
+  autoIdempotency?: boolean;               // Auto Idempotency-Key on mutations (retry-safe)
 });
 ```
 
-- `authMode: 'bearer'` (default) — requires a token; queries disabled until token provided; `credentials: 'same-origin'`
-- `authMode: 'cookie'` — HTTP-only cookies (e.g. Better Auth); queries always enabled; `credentials: 'include'`
-- `credentials` — explicit override: `'include'` (send cookies cross-origin), `'same-origin'` (same-origin only), `'omit'` (never send cookies)
+- `authMode: 'bearer'` (default) — requires token; queries disabled until provided
+- `authMode: 'cookie'` — HTTP-only cookies (e.g. Better Auth); queries always enabled
+- `authMode: 'header'` — custom header auth (e.g. `x-api-key`); uses `headerName` from `configureAuth`
 
-Must be called before any API requests. Throws if not configured.
+Must be called before any API requests. Warns if called on the server (SSR safety).
 
 ### `configureAuth(config)`
 
 ```ts
 configureAuth({
-  getToken?: () => string | null;   // For bearer auth — return access token
+  getToken?: () => string | null;   // For bearer/header auth — return access token or API key
   getOrgId?: () => string | null;   // Return active organization ID
+  headerName?: string;              // Custom header name for authMode: 'header' (default: 'x-api-key')
 });
 ```
 
@@ -235,12 +240,15 @@ Factory that returns everything you need. The `api` parameter accepts any `creat
 const {
   KEYS, cache,
   useList, useDetail, useInfiniteList,
-  useActions, useUpload, useSearch, useCustomMutation,
+  useActions, useBulkActions,
+  useDeleted, useDetailBySlug, useTree, useChildren, useFindBy,
+  useUpload, useSearch, useCustomMutation,
   useNavigation,
 } = createCrudHooks<Product, CreateProduct>({
     api: productsApi,       // from createCrudApi() — types inferred, no cast
     entityKey: "products",  // TanStack Query key prefix
     singular: "Product",    // for toast messages
+    idField: "sku",         // optional — custom ID field for cache keys (default: _id → id)
     defaults: {             // optional
       staleTime: 60_000,
       messages: { createSuccess: "Product added!" },
@@ -390,6 +398,52 @@ const { mutateAsync: publish, isPending } = useCustomMutation({
   mutationFn: (id: string) => api.request("POST", `${api.baseUrl}/${id}/publish`),
   invalidateQueries: [productKeys.lists()],
   messages: { success: "Published!", error: "Failed to publish" },
+});
+```
+
+#### `useDeleted(params?, options?)`
+
+List soft-deleted items. Requires `softDelete` preset on the Arc resource.
+
+#### `useDetailBySlug(slug, options?)`
+
+Fetch a single item by slug (`GET /slug/:slug`). Requires `slugLookup` preset.
+
+#### `useTree(params?, options?)`
+
+Fetch hierarchical tree data (`GET /tree`). Requires `tree` preset.
+
+#### `useChildren(parentId, params?, options?)`
+
+Fetch children of a parent node (`GET /:parentId/children`). Requires `tree` preset.
+
+#### `useFindBy(field, value, options?)`
+
+Query by a single field with optional operator:
+
+```ts
+const { items } = useFindBy("status", "active");
+const { items } = useFindBy("price", 50, { operator: "gte" });
+```
+
+#### `useBulkActions()`
+
+```ts
+const { bulkCreate, bulkUpdate, bulkRemove } = useBulkActions();
+await bulkCreate({ data: [{ name: "A" }, { name: "B" }] });
+```
+
+#### `useEventStream(options)` (from `./sse`)
+
+Subscribe to Arc SSE events with auto-reconnect and query invalidation:
+
+```ts
+import { useEventStream } from "@classytic/arc-next/sse";
+
+const { isConnected, lastEvent } = useEventStream({
+  resource: "agents",
+  patterns: ["agents.created", "agents.updated"],
+  invalidateQueries: [agentKeys.lists()],
 });
 ```
 
@@ -713,8 +767,15 @@ const adminApi = createCrudApi("users", {
 - **Pagination Normalization** — Handles `docs`/`data`/`items`/`results` + any custom key, offset/keyset/aggregate pagination
 - **Detail Cache Prefilling** — List results auto-populate detail query cache
 - **React 19 Transitions** — `useMutationWithTransition` wraps invalidation in `startTransition`
-- **Cookie & Bearer Auth** — `authMode: 'cookie'` for Better Auth, `'bearer'` for token auth, configurable `credentials` policy
-- **SSR Prefetch** — `createCrudPrefetcher` + `dehydrate` for server component data loading
+- **Cookie, Bearer & Header Auth** — `authMode: 'cookie'` / `'bearer'` / `'header'` (custom header like `x-api-key`)
+- **Custom ID Fields** — `idField` on `createCrudHooks` for resources keyed by `sku`, `slug`, `code`, etc.
+- **Preset Hooks** — `useDeleted`, `useBulkActions`, `useDetailBySlug`, `useTree`, `useChildren`, `useFindBy`
+- **SSE Real-Time** — `useEventStream` with auto-reconnect, pattern filtering, query invalidation
+- **Infinite Scroll** — `maxPages` for memory management with automatic scroll-back support
+- **Idempotency** — `autoIdempotency` generates retry-safe keys at mutation level
+- **API Versioning** — `apiVersion` sends `Accept-Version` header
+- **SSR Prefetch** — `createCrudPrefetcher` + `prefetchBySlug` / `prefetchDeleted` / `prefetchTree`
+- **SSR Safety** — warns when `configureClient`/`configureAuth` called on the server
 - **Multi-Client** — `createClient()` for multiple API backends side by side
 - **Pluggable Toast** — `configureToast()` — use sonner, react-hot-toast, or anything
 - **Pluggable Navigation** — `configureNavigation()` — use Next.js, React Router, or any router

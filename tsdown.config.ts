@@ -9,6 +9,7 @@ export default defineConfig({
     'src/hooks.ts',
     'src/query-client.ts',
     'src/prefetch.ts',
+    'src/sse.ts',
   ],
   format: 'esm',
   platform: 'browser',
@@ -16,9 +17,7 @@ export default defineConfig({
   outDir: 'dist',
   clean: true,
   sourcemap: false,
-  dts: {
-    sourcemap: false,
-  },
+  dts: true,
   unbundle: true,
   treeshake: true,
   minify: false,

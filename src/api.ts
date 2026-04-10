@@ -70,6 +70,22 @@ export interface DeleteResponse {
   };
 }
 
+export interface BulkCreateResponse<T = unknown> {
+  success: boolean;
+  data?: T[];
+  count?: number;
+}
+
+export interface BulkUpdateResponse {
+  success: boolean;
+  modifiedCount?: number;
+}
+
+export interface BulkDeleteResponse {
+  success: boolean;
+  deletedCount?: number;
+}
+
 // ============================================================================
 // Request Types
 // ============================================================================
@@ -80,7 +96,8 @@ export type SortSpec = Record<string, SortDirection> | string;
 export type FilterOperator =
   | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
   | 'in' | 'nin'
-  | 'contains' | 'startsWith' | 'endsWith' | 'regex';
+  | 'contains' | 'startsWith' | 'endsWith' | 'regex'
+  | 'like' | 'exists' | 'size' | 'type';
 
 export interface QueryParams {
   page?: number;
@@ -92,6 +109,13 @@ export interface QueryParams {
   populate?: string | string[];
   populateOptions?: PopulateOption[];
   lean?: boolean | 'true' | 'false';
+  /** Database-agnostic joins. Maps alias → collection or full lookup config. */
+  lookup?: Record<string, string | {
+    from: string;
+    localField: string;
+    foreignField: string;
+    select?: string;
+  }>;
   [key: string]: unknown;
 }
 
@@ -188,6 +212,23 @@ export class BaseApi<
       if (key === 'populateOptions') {
         if (Array.isArray(value) && value.length > 0) {
           result[key] = value;
+        }
+        return;
+      }
+
+      if (key === 'lookup') {
+        if (typeof value === 'object' && value !== null) {
+          Object.entries(value as Record<string, unknown>).forEach(([alias, lv]) => {
+            if (typeof lv === 'string') {
+              result[`lookup[${alias}]`] = lv;
+            } else if (typeof lv === 'object' && lv !== null) {
+              const cfg = lv as { from: string; localField: string; foreignField: string; select?: string };
+              result[`lookup[${alias}][from]`] = cfg.from;
+              result[`lookup[${alias}][localField]`] = cfg.localField;
+              result[`lookup[${alias}][foreignField]`] = cfg.foreignField;
+              if (cfg.select) result[`lookup[${alias}][select]`] = cfg.select;
+            }
+          });
         }
         return;
       }
@@ -471,6 +512,192 @@ export class BaseApi<
     if (organizationId) requestOptions.organizationId = organizationId;
 
     return this.requestFn(method, url, this.withHeaders(requestOptions));
+  }
+
+  // ==========================================================================
+  // Soft Delete Preset
+  // ==========================================================================
+
+  async getDeleted({
+    token = null,
+    organizationId = null,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  } = {}): Promise<PaginatedResponse<TDoc>> {
+    const mergedParams = { ...this.config.defaultParams, ...params };
+    const processedParams = this.prepareParams(mergedParams);
+    const queryString = this.createQueryString(processedParams);
+
+    const requestOptions: ApiRequestOptions = { cache: this.config.cache, ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('GET', `${this.baseUrl}/deleted?${queryString}`, this.withHeaders(requestOptions));
+  }
+
+  async restore({
+    token,
+    organizationId = null,
+    id,
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    id: string;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<ApiResponse<TDoc>> {
+    if (!id) throw new Error('ID is required');
+
+    const requestOptions: ApiRequestOptions = { ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('POST', `${this.baseUrl}/${id}/restore`, this.withHeaders(requestOptions));
+  }
+
+  // ==========================================================================
+  // Bulk Preset
+  // ==========================================================================
+
+  async bulkCreate({
+    token,
+    organizationId = null,
+    data,
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    data: TCreate[];
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<BulkCreateResponse<TDoc>> {
+    const requestOptions: ApiRequestOptions = { body: data, ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('POST', `${this.baseUrl}/bulk`, this.withHeaders(requestOptions));
+  }
+
+  async bulkUpdate({
+    token,
+    organizationId = null,
+    filter,
+    data,
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    filter: Record<string, unknown>;
+    data: TUpdate;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<BulkUpdateResponse> {
+    const requestOptions: ApiRequestOptions = { body: { filter, data }, ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('PATCH', `${this.baseUrl}/bulk`, this.withHeaders(requestOptions));
+  }
+
+  async bulkDelete({
+    token,
+    organizationId = null,
+    filter,
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    filter: Record<string, unknown>;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<BulkDeleteResponse> {
+    const requestOptions: ApiRequestOptions = { body: { filter }, ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('DELETE', `${this.baseUrl}/bulk`, this.withHeaders(requestOptions));
+  }
+
+  // ==========================================================================
+  // Slug Lookup Preset
+  // ==========================================================================
+
+  async getBySlug({
+    token = null,
+    organizationId = null,
+    slug,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    slug: string;
+    params?: { select?: string; populate?: string | string[] };
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<ApiResponse<TDoc>> {
+    if (!slug) throw new Error('Slug is required');
+
+    const queryString = this.createQueryString(params);
+    const url = queryString ? `${this.baseUrl}/slug/${slug}?${queryString}` : `${this.baseUrl}/slug/${slug}`;
+
+    const requestOptions: ApiRequestOptions = { cache: this.config.cache, ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('GET', url, this.withHeaders(requestOptions));
+  }
+
+  // ==========================================================================
+  // Tree Preset
+  // ==========================================================================
+
+  async getTree({
+    token = null,
+    organizationId = null,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  } = {}): Promise<ApiResponse<TDoc[]>> {
+    const processedParams = this.prepareParams(params);
+    const queryString = this.createQueryString(processedParams);
+
+    const requestOptions: ApiRequestOptions = { cache: this.config.cache, ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('GET', `${this.baseUrl}/tree?${queryString}`, this.withHeaders(requestOptions));
+  }
+
+  async getChildren({
+    token = null,
+    organizationId = null,
+    parentId,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    parentId: string;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<PaginatedResponse<TDoc>> {
+    if (!parentId) throw new Error('Parent ID is required');
+
+    const mergedParams = { ...this.config.defaultParams, ...params };
+    const processedParams = this.prepareParams(mergedParams);
+    const queryString = this.createQueryString(processedParams);
+
+    const requestOptions: ApiRequestOptions = { cache: this.config.cache, ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+
+    return this.requestFn('GET', `${this.baseUrl}/${parentId}/children?${queryString}`, this.withHeaders(requestOptions));
   }
 }
 

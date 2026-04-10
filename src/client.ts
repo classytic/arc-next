@@ -82,7 +82,7 @@ export interface ClientConfig {
    * - 'bearer' (default): Requires a token for authenticated requests. Queries are disabled until a token is provided.
    * - 'cookie': Auth is handled via HTTP-only cookies (e.g. Better Auth). Queries are always enabled — no token needed.
    */
-  authMode?: 'bearer' | 'cookie';
+  authMode?: 'bearer' | 'cookie' | 'header';
   /**
    * Fetch credentials policy.
    * - 'include': Always send cookies cross-origin (required for cookie-based auth).
@@ -94,6 +94,18 @@ export interface ClientConfig {
    * - `authMode: 'bearer'` (default) → `'same-origin'`
    */
   credentials?: RequestCredentials;
+  /**
+   * API version sent as `Accept-Version` header.
+   * Use when the Arc backend has versioning enabled.
+   * @example '2' // sends Accept-Version: 2
+   */
+  apiVersion?: string;
+  /**
+   * Auto-generate `Idempotency-Key` header for POST/PUT/PATCH requests.
+   * Prevents duplicate mutations on network retries.
+   * Default: false — opt-in per-request via `idempotencyKey` option.
+   */
+  autoIdempotency?: boolean;
 }
 
 let clientConfig: ClientConfig | null = null;
@@ -113,14 +125,26 @@ let clientConfig: ClientConfig | null = null;
  * configureClient({ baseUrl: process.env.NEXT_PUBLIC_API_URL!, authMode: 'cookie' });
  */
 export function configureClient(config: ClientConfig): void {
+  if (typeof window === "undefined") {
+    console.warn(
+      "[arc-next] configureClient() called on the server. " +
+      "This sets module-level state that persists across requests. " +
+      "Call only in client-side code (e.g., a 'use client' provider)."
+    );
+  }
   clientConfig = config;
 }
 
 /**
  * Get the configured auth mode. Returns 'bearer' if not configured.
  */
-export function getAuthMode(): 'bearer' | 'cookie' {
+export function getAuthMode(): 'bearer' | 'cookie' | 'header' {
   return clientConfig?.authMode ?? 'bearer';
+}
+
+/** Whether auto-idempotency is enabled on the global client. */
+export function isAutoIdempotency(): boolean {
+  return clientConfig?.autoIdempotency ?? false;
 }
 
 // ============================================================================
@@ -130,6 +154,8 @@ export function getAuthMode(): 'bearer' | 'cookie' {
 export interface AuthConfig {
   getToken?: () => string | null;
   getOrgId?: () => string | null;
+  /** Custom auth header name. Used when authMode is 'header'. Default: 'x-api-key' */
+  headerName?: string;
 }
 
 let authConfig: AuthConfig | null = null;
@@ -151,6 +177,13 @@ let authConfig: AuthConfig | null = null;
  * });
  */
 export function configureAuth(config: AuthConfig): void {
+  if (typeof window === "undefined") {
+    console.warn(
+      "[arc-next] configureAuth() called on the server. " +
+      "This sets module-level state that persists across requests. " +
+      "Call only in client-side code (e.g., a 'use client' provider)."
+    );
+  }
   authConfig = config;
 }
 
@@ -179,16 +212,8 @@ export interface ApiRequestOptions {
   tags?: string[];
   cache?: RequestCache;
   signal?: AbortSignal;
-}
-
-export interface BlobResponse {
-  data: Blob;
-  response: Response;
-}
-
-export interface TextResponse {
-  data: string;
-  response: Response;
+  /** Explicit idempotency key for this request. Sent as `Idempotency-Key` header. */
+  idempotencyKey?: string;
 }
 
 // ============================================================================
@@ -250,6 +275,7 @@ async function executeRequest<T = unknown>(
     tags,
     cache,
     signal,
+    idempotencyKey,
   } = options;
 
   try {
@@ -263,7 +289,20 @@ async function executeRequest<T = unknown>(
     }
 
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      if (config.authMode === 'header') {
+        const headerName = authConfig?.headerName ?? 'x-api-key';
+        headers[headerName] = token;
+      } else {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+
+    if (config.apiVersion) {
+      headers['Accept-Version'] = config.apiVersion;
+    }
+
+    if (idempotencyKey) {
+      headers['Idempotency-Key'] = idempotencyKey;
     }
 
     if (body !== undefined && body !== null && !(body instanceof FormData)) {

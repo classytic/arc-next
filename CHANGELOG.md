@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.4.0
+
+### Features
+
+- **`authMode: 'header'`** — custom header auth (x-api-key, x-admin-key) with configurable `headerName`
+- **`apiVersion`** — sends `Accept-Version` header for Arc versioning plugin
+- **`autoIdempotency`** — retry-safe `Idempotency-Key` generation at mutation level
+- **`idField`** on `createCrudHooks` — custom ID field for cache keys and optimistic updates
+- **`useDeleted`** — list soft-deleted items (softDelete preset)
+- **`restore()`** on `useActions` — restore soft-deleted items
+- **`useBulkActions`** — `bulkCreate`, `bulkUpdate`, `bulkRemove` (bulk preset)
+- **`useDetailBySlug`** — fetch by slug (slugLookup preset)
+- **`useTree` / `useChildren`** — hierarchical data (tree preset)
+- **`useFindBy`** — query by field with filter operator
+- **`useEventStream`** — SSE real-time with auto-reconnect, pattern filtering, query invalidation (`./sse`)
+- **`maxPages`** on `useInfiniteList` — page eviction with automatic `getPreviousPageParam`
+- **Filter operators** — added `like`, `exists`, `size`, `type`
+- **Lookup params** — `QueryParams.lookup` for database-agnostic joins
+- **SSR prefetch** — `prefetchBySlug`, `prefetchDeleted`, `prefetchTree`
+- **Biome + Knip config** — linting and dead code detection
+
+### Improvements
+
+- `QUERY_CONFIGS` moved from mutation.ts to query.ts (re-exported for compat)
+- SSR safety warnings on `configureClient`/`configureAuth` server calls
+- Preset hooks never throw before React hooks (safe conditional rendering)
+- `prefetch.ts` uses shared `createQueryKeys` (no duplicate key logic)
+- `useBulkActions` reads auth context fresh per mutation (no stale closures)
+- SSE uses refs for `patterns`/`invalidateQueries` (no reconnect storm)
+- Removed dead `BlobResponse`/`TextResponse` types and unused `headers` SSE option
+- `./package.json` subpath export added
+
+### Dependencies
+
+- Peer deps: `>=5.0.0` TanStack Query, `>=19.0.0` React
+- TypeScript 6.0.2, tsdown 0.21.7, vitest 4.1.4, react 19.2.5
+
 ## 0.3.1
 
 ### Bug Fixes

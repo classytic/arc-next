@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -21,7 +21,11 @@
     "pagination",
     "multi-tenant",
     "arc",
-    "mongokit"
+    "mongokit",
+    "sse",
+    "real-time",
+    "soft-delete",
+    "bulk-operations"
   ],
   "main": "./dist/hooks.js",
   "types": "./dist/hooks.d.ts",
@@ -57,7 +61,12 @@
     "./prefetch": {
       "types": "./dist/prefetch.d.ts",
       "default": "./dist/prefetch.js"
-    }
+    },
+    "./sse": {
+      "types": "./dist/sse.d.ts",
+      "default": "./dist/sse.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
@@ -78,20 +87,20 @@
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "peerDependencies": {
-    "@tanstack/react-query": "^5.0.0",
-    "react": "^19.0.0"
+    "@tanstack/react-query": ">=5.0.0",
+    "react": ">=19.0.0"
   },
   "devDependencies": {
-    "@tanstack/react-query": "^5.95.2",
+    "@tanstack/react-query": "^5.97.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
-    "@types/react": "^19.0.0",
+    "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "jsdom": "^28.1.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.2.4",
-    "tsdown": "^0.21.4",
-    "typescript": "^5.7.2",
-    "vitest": "^4.0.18"
+    "jsdom": "^29.0.2",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "tsdown": "^0.21.7",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
   }
 }
