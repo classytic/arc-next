@@ -6,8 +6,8 @@ import {
   configureToast,
   useMutationWithTransition,
   useMutationWithOptimistic,
-  QUERY_CONFIGS,
 } from '../src/mutation.js';
+import { QUERY_CONFIGS } from '../src/query.js';
 import { configureClient } from '../src/client.js';
 
 // ============================================================================

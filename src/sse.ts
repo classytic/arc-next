@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
-import { getAuthContext, getAuthMode } from "./client.js";
+import { getAuthContext, getAuthMode, getBaseUrl } from "./client.js";
 
 // ============================================================================
 // Types
@@ -17,12 +17,19 @@ export interface ArcServerEvent {
 }
 
 export interface EventStreamOptions {
-  /** SSE endpoint URL (absolute or relative to baseUrl). Default: `/{basePath}/{resource}/events/stream` */
+  /** Full SSE endpoint URL. When set, overrides `path` and `baseUrl`. Use for non-Arc backends or custom URLs. */
   url?: string;
-  /** Resource name used for the default endpoint path and event filtering. */
+  /**
+   * Resource name for automatic pattern filtering.
+   * When set and `patterns` is empty, auto-generates `['resource.*']` filter.
+   * Does NOT affect the endpoint URL — use `path` for that.
+   */
   resource?: string;
-  /** Base path for the events endpoint. Default: '/api/v1' */
-  basePath?: string;
+  /**
+   * SSE endpoint path (appended to baseUrl). Default: '/events/stream'.
+   * Matches Arc's ssePlugin default. Override if your backend uses a custom path.
+   */
+  path?: string;
   /** Event patterns to listen for (e.g., ['agents.created', 'agents.updated']). When empty, all events are received. */
   patterns?: string[];
   /** Query keys to invalidate when any event is received. */
@@ -75,7 +82,7 @@ export function useEventStream(options: EventStreamOptions): EventStreamResult {
   const {
     url,
     resource,
-    basePath = "/api/v1",
+    path: ssePath = "/events/stream",
     enabled = true,
     reconnectDelay = 3000,
     maxReconnectAttempts = Infinity,
@@ -104,15 +111,15 @@ export function useEventStream(options: EventStreamOptions): EventStreamResult {
 
   const buildUrl = useCallback(() => {
     if (url) return url;
-    if (!resource) throw new Error("[arc-next] useEventStream requires either `url` or `resource`");
 
-    // Read auth fresh on every connect (not stale from closure)
     const auth = getAuthContext();
     const params = new URLSearchParams();
 
+    // Auto-derive patterns from resource name if no explicit patterns
     const patterns = patternsRef.current;
-    if (patterns.length > 0) {
-      params.set("patterns", patterns.join(","));
+    const effectivePatterns = patterns.length > 0 ? patterns : (resource ? [`${resource}.*`] : []);
+    if (effectivePatterns.length > 0) {
+      params.set("patterns", effectivePatterns.join(","));
     }
     if (auth.organizationId) {
       params.set("organizationId", auth.organizationId);
@@ -122,9 +129,10 @@ export function useEventStream(options: EventStreamOptions): EventStreamResult {
     }
 
     const qs = params.toString();
-    const base = `${basePath}/${resource}/events/stream`;
+    const origin = getBaseUrl();
+    const base = `${origin}${ssePath}`;
     return qs ? `${base}?${qs}` : base;
-  }, [url, resource, basePath]);
+  }, [url, resource, ssePath]);
 
   const connect = useCallback(() => {
     if (esRef.current) {
@@ -205,6 +213,7 @@ export function useEventStream(options: EventStreamOptions): EventStreamResult {
 
   const reconnect = useCallback(() => {
     reconnectAttemptsRef.current = 0;
+    manualCloseRef.current = false;
     connect();
   }, [connect]);
 

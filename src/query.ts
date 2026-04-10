@@ -96,6 +96,8 @@ export interface QueryKeys {
   list: (params?: unknown) => QueryKey;
   details: () => QueryKey;
   detail: (id: string) => QueryKey;
+  /** Tenant-scoped detail key. Use when IDs are only unique within an org. */
+  scopedDetail: (id: string, organizationId: string | null) => QueryKey;
   custom: (key: string, ...args: unknown[]) => QueryKey;
   scopedList: (scope: string, params?: unknown) => QueryKey;
 }
@@ -103,10 +105,19 @@ export interface QueryKeys {
 export interface CacheUtils<T> {
   invalidateAll: (client: QueryClient) => Promise<void>;
   invalidateLists: (client: QueryClient) => Promise<void>;
+  /** Invalidate detail by ID (prefix-matches all scoped/parameterized variants). */
   invalidateDetail: (client: QueryClient, id: string) => Promise<void>;
   setDetail: (client: QueryClient, id: string, data: T) => void;
   getDetail: (client: QueryClient, id: string) => T | undefined;
   removeDetail: (client: QueryClient, id: string) => void;
+  /** Invalidate tenant-scoped detail (prefix-matches parameterized variants within org). */
+  invalidateScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => Promise<void>;
+  /** Set tenant-scoped detail cache. */
+  setScopedDetail: (client: QueryClient, id: string, organizationId: string | null, data: T) => void;
+  /** Get tenant-scoped detail from cache. */
+  getScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => T | undefined;
+  /** Remove tenant-scoped detail from cache. */
+  removeScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => void;
 }
 
 // ============================================================================
@@ -260,6 +271,8 @@ export function createQueryKeys(entityKey: string): QueryKeys {
     list: (params) => [entityKey, "list", params],
     details: () => [entityKey, "detail"],
     detail: (id) => [entityKey, "detail", id],
+    scopedDetail: (id, organizationId) =>
+      organizationId ? [entityKey, "detail", id, { _org: organizationId }] : [entityKey, "detail", id],
     custom: (key, ...args) => [entityKey, key, ...args],
     scopedList: (scope, params) => [entityKey, "list", { _scope: scope, ...(params as object) }],
   };
@@ -280,6 +293,16 @@ export function createCacheUtils<T>(KEYS: QueryKeys): CacheUtils<T> {
       return cached?.data;
     },
     removeDetail: (client, id) => client.removeQueries({ queryKey: KEYS.detail(id) }),
+    invalidateScopedDetail: (client, id, organizationId) =>
+      client.invalidateQueries({ queryKey: KEYS.scopedDetail(id, organizationId) }),
+    setScopedDetail: (client, id, organizationId, data) =>
+      client.setQueryData(KEYS.scopedDetail(id, organizationId), { data }),
+    getScopedDetail: (client, id, organizationId) => {
+      const cached = client.getQueryData(KEYS.scopedDetail(id, organizationId)) as { data?: T } | undefined;
+      return cached?.data;
+    },
+    removeScopedDetail: (client, id, organizationId) =>
+      client.removeQueries({ queryKey: KEYS.scopedDetail(id, organizationId) }),
   };
 }
 
@@ -489,10 +512,3 @@ export function useInfiniteListQuery<T>({
   };
 }
 
-// Deprecated aliases — use useListQuery, useDetailQuery, useInfiniteListQuery
-/** @deprecated Use `useListQuery` */
-export const createListQuery = useListQuery;
-/** @deprecated Use `useDetailQuery` */
-export const createDetailQuery = useDetailQuery;
-/** @deprecated Use `useInfiniteListQuery` */
-export const createInfiniteListQuery = useInfiniteListQuery;

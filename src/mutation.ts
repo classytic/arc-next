@@ -339,8 +339,3 @@ export function useOptimisticMutation<TData, TVariables>(config: CreateOptimisti
   });
 }
 
-/** @deprecated Import from `@classytic/arc-next/query` instead */
-export { QUERY_CONFIGS } from "./query.js";
-
-/** @deprecated Use `useOptimisticMutation` */
-export const createOptimisticMutation = useOptimisticMutation;

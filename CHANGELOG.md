@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1
+
+### Breaking Bug Fixes (from 0.4.0)
+
+- **token optional in all mutation methods** — `create`, `update`, `delete`, `upload`, `request`, `restore`, `bulkCreate/Update/Delete` now default `token = null` (was required, inconsistent with query methods)
+- **SSE `reconnect()` resets `manualCloseRef`** — `close()` → `reconnect()` now properly re-enables auto-reconnect on errors
+- **Legacy hook signature detection fixed** — `useList(null)` now correctly uses new signature (auto-inject token); legacy requires 3 args: `useList(null, params, options)`
+- **Non-JSON error responses capture body** — HTML/text error bodies (502 CDN pages, plain text) now captured in `ArcApiError.json.rawBody` instead of being silently null
+- **Blob fallback error context preserved** — response parsing errors no longer silently swallowed
+- Restored `BlobResponse` and `TextResponse` types
+- Removed deprecated aliases (`createOptimisticMutation`, `createListQuery`, `createDetailQuery`, `createInfiniteListQuery`)
+
+### New Features
+
+- **Per-client auth** — `createClient({ getToken, getOrgId, headerName })` for multi-backend apps with different auth (bearer + API key side by side)
+- **`getClientAuthContext(client?)`** — resolve auth for a specific client, falls back to global
+
 ## 0.4.0
 
 ### Features

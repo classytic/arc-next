@@ -41,7 +41,7 @@ describe('createCrudPrefetcher', () => {
     const cached = queryClient.getQueryData(key);
     expect(cached).toBeDefined();
     expect(mockApi.getAll).toHaveBeenCalledWith(
-      expect.objectContaining({ params: { limit: 20 } })
+      expect.objectContaining({ params: { limit: 20 }, token: null, organizationId: null })
     );
   });
 
@@ -56,6 +56,7 @@ describe('createCrudPrefetcher', () => {
     expect(mockApi.getAll).toHaveBeenCalledWith(
       expect.objectContaining({
         params: { limit: 10 },
+        token: null,
         organizationId: 'org-1',
       })
     );
@@ -69,7 +70,9 @@ describe('createCrudPrefetcher', () => {
     const key = ['products', 'detail', 'prod-1'];
     const cached = queryClient.getQueryData(key);
     expect(cached).toBeDefined();
-    expect(mockApi.getById).toHaveBeenCalledWith({ id: 'prod-1' });
+    expect(mockApi.getById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'prod-1', token: null, organizationId: null })
+    );
   });
 
   it('query keys match createQueryKeys format', async () => {
@@ -99,31 +102,44 @@ describe('createCrudPrefetcher', () => {
     expect(typeof dehydrate).toBe('function');
   });
 
-  it('prefetchList does not send token by default', async () => {
+  it('prefetchList sends null token/orgId by default (allows explicit auth via options)', async () => {
     const prefetcher = createCrudPrefetcher(mockApi, 'products');
 
     await prefetcher.prefetchList(queryClient, {});
 
-    expect(mockApi.getAll).toHaveBeenCalledWith(
-      expect.objectContaining({
-        organizationId: null,
-      })
-    );
-    // token should not be provided (server-side = no auth header)
     const callArgs = mockApi.getAll.mock.calls[0]![0];
-    expect(callArgs.token).toBeUndefined();
+    expect(callArgs.token).toBeNull();
+    expect(callArgs.organizationId).toBeNull();
   });
 
-  it('prefetchDetail does not send organizationId', async () => {
+  it('prefetchList with explicit token for protected routes', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+
+    await prefetcher.prefetchList(queryClient, { limit: 10 }, { token: 'server-token' });
+
+    const callArgs = mockApi.getAll.mock.calls[0]![0];
+    expect(callArgs.token).toBe('server-token');
+  });
+
+  it('prefetchDetail sends null token/orgId by default', async () => {
     const prefetcher = createCrudPrefetcher(mockApi, 'products');
 
     await prefetcher.prefetchDetail(queryClient, 'prod-1');
 
     const callArgs = mockApi.getById.mock.calls[0]![0];
     expect(callArgs.id).toBe('prod-1');
-    // No organizationId or token passed
-    expect(callArgs.organizationId).toBeUndefined();
-    expect(callArgs.token).toBeUndefined();
+    expect(callArgs.token).toBeNull();
+    expect(callArgs.organizationId).toBeNull();
+  });
+
+  it('prefetchDetail with explicit auth for protected routes', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+
+    await prefetcher.prefetchDetail(queryClient, 'prod-1', { token: 'srv-tok', organizationId: 'org-1' });
+
+    const callArgs = mockApi.getById.mock.calls[0]![0];
+    expect(callArgs.token).toBe('srv-tok');
+    expect(callArgs.organizationId).toBe('org-1');
   });
 
   it('prefetchList with multiple params', async () => {
@@ -208,7 +224,9 @@ describe('createCrudPrefetcher', () => {
     const key = ['products', 'slug', 'my-product'];
     const cached = queryClient.getQueryData(key);
     expect(cached).toBeDefined();
-    expect(slugApi.getBySlug).toHaveBeenCalledWith({ slug: 'my-product' });
+    expect(slugApi.getBySlug).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'my-product', token: null, organizationId: null })
+    );
   });
 
   it('prefetchBySlug throws when api lacks getBySlug', async () => {
@@ -228,7 +246,7 @@ describe('createCrudPrefetcher', () => {
     const cached = queryClient.getQueryData(key);
     expect(cached).toBeDefined();
     expect(deletedApi.getDeleted).toHaveBeenCalledWith(
-      expect.objectContaining({ params: { limit: 10 } })
+      expect.objectContaining({ params: { limit: 10 }, token: null, organizationId: null })
     );
   });
 
@@ -239,7 +257,7 @@ describe('createCrudPrefetcher', () => {
     await prefetcher.prefetchDeleted(queryClient, { organizationId: 'org-1' });
 
     expect(deletedApi.getDeleted).toHaveBeenCalledWith(
-      expect.objectContaining({ organizationId: 'org-1' })
+      expect.objectContaining({ organizationId: 'org-1', token: null })
     );
   });
 

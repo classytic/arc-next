@@ -142,6 +142,11 @@ export function getAuthMode(): 'bearer' | 'cookie' | 'header' {
   return clientConfig?.authMode ?? 'bearer';
 }
 
+/** Get the configured base URL. Returns empty string if not configured. */
+export function getBaseUrl(): string {
+  return clientConfig?.baseUrl ?? '';
+}
+
 /** Whether auto-idempotency is enabled on the global client. */
 export function isAutoIdempotency(): boolean {
   return clientConfig?.autoIdempotency ?? false;
@@ -203,6 +208,18 @@ export function getAuthContext(): { token: string | null; organizationId: string
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
+/** Returned by `handleApiRequest` for PDF, image, and CSV responses. */
+export interface BlobResponse {
+  data: Blob;
+  response: Response;
+}
+
+/** Returned by `handleApiRequest` for text/plain and text/html responses. */
+export interface TextResponse {
+  data: string;
+  response: Response;
+}
+
 export interface ApiRequestOptions {
   body?: unknown;
   token?: string | null;
@@ -223,6 +240,12 @@ export interface ApiRequestOptions {
 export interface ArcClientConfig extends ClientConfig {
   toast?: ToastHandler;
   navigation?: UseRouterHook;
+  /** Per-client token provider. Overrides global configureAuth().getToken. */
+  getToken?: () => string | null;
+  /** Per-client org ID provider. Overrides global configureAuth().getOrgId. */
+  getOrgId?: () => string | null;
+  /** Per-client custom auth header name. Used when authMode is 'header'. */
+  headerName?: string;
 }
 
 export interface ArcClient {
@@ -230,30 +253,74 @@ export interface ArcClient {
   config: ClientConfig;
   toast?: ToastHandler;
   navigation?: UseRouterHook;
+  /** Per-client auth context. Falls back to global configureAuth() when not set. */
+  auth?: { getToken?: () => string | null; getOrgId?: () => string | null; headerName?: string };
 }
 
 /**
  * Create an isolated API client for a specific backend.
- * Use this when your app needs to talk to multiple APIs.
+ * Use this when your app needs to talk to multiple APIs with different auth.
  *
  * @example
- * const analyticsClient = createClient({
- *   baseUrl: 'https://analytics.example.com',
- *   toast: { success: toast.success, error: toast.error },
- *   navigation: useRouter,
+ * // Bearer auth for main API
+ * const mainClient = createClient({
+ *   baseUrl: 'https://api.example.com',
+ *   getToken: () => session.accessToken,
  * });
  *
- * const eventsApi = createCrudApi('events', { client: analyticsClient });
+ * // API key auth for analytics
+ * const analyticsClient = createClient({
+ *   baseUrl: 'https://analytics.example.com',
+ *   authMode: 'header',
+ *   getToken: () => env.ANALYTICS_KEY,
+ *   headerName: 'x-api-key',
+ * });
  */
 export function createClient(config: ArcClientConfig): ArcClient {
-  const { toast, navigation, ...clientCfg } = config;
+  const { toast, navigation, getToken, getOrgId, headerName, ...clientCfg } = config;
+  const clientAuth = (getToken || getOrgId || headerName)
+    ? { getToken, getOrgId, headerName }
+    : undefined;
+
   return {
-    request: <T = unknown>(method: HttpMethod, endpoint: string, options?: ApiRequestOptions) =>
-      executeRequest<T>(clientCfg, method, endpoint, options),
+    request: <T = unknown>(method: HttpMethod, endpoint: string, options?: ApiRequestOptions) => {
+      // Auto-inject per-client auth if no explicit token/orgId in options
+      if (clientAuth) {
+        const resolved = { ...options };
+        if (resolved.token === undefined && clientAuth.getToken) {
+          resolved.token = clientAuth.getToken();
+        }
+        if (resolved.organizationId === undefined && clientAuth.getOrgId) {
+          resolved.organizationId = clientAuth.getOrgId();
+        }
+        // For header auth mode: inject token as custom header directly
+        if (clientCfg.authMode === 'header' && resolved.token) {
+          const name = clientAuth.headerName ?? 'x-api-key';
+          resolved.headerOptions = { [name]: resolved.token, ...(resolved.headerOptions ?? {}) };
+          resolved.token = undefined; // prevent double-injection via Bearer
+        }
+        return executeRequest<T>(clientCfg, method, endpoint, resolved);
+      }
+      return executeRequest<T>(clientCfg, method, endpoint, options);
+    },
     config: clientCfg,
     toast,
     navigation,
+    auth: clientAuth,
   };
+}
+
+/**
+ * Get auth context for a specific client instance, falling back to global.
+ */
+export function getClientAuthContext(client?: ArcClient): { token: string | null; organizationId: string | null } {
+  if (client?.auth) {
+    return {
+      token: client.auth.getToken?.() ?? authConfig?.getToken?.() ?? null,
+      organizationId: client.auth.getOrgId?.() ?? authConfig?.getOrgId?.() ?? null,
+    };
+  }
+  return getAuthContext();
 }
 
 // ============================================================================
@@ -341,17 +408,33 @@ async function executeRequest<T = unknown>(
     const response = await fetch(`${config.baseUrl}${endpoint}`, fetchOptions);
 
     if (!response.ok) {
-      const json = await response.json().catch(() => null);
-      throw new ArcApiError(
-        (json as { message?: string } | null)?.message || response.statusText,
-        {
-          status: response.status,
-          statusText: response.statusText,
-          json,
-          endpoint,
-          method,
+      let json: unknown = null;
+      let errorMessage = response.statusText;
+
+      try {
+        // Clone so we can fallback to text() if json() fails
+        json = await response.clone().json();
+        errorMessage = (json as { message?: string } | null)?.message || response.statusText;
+      } catch {
+        // Non-JSON error (HTML from CDN, plain text, empty body) — capture as text
+        try {
+          const text = await response.text();
+          if (text) {
+            json = { rawBody: text };
+            errorMessage = text.slice(0, 200) || response.statusText;
+          }
+        } catch {
+          // Both json and text failed — use statusText
         }
-      );
+      }
+
+      throw new ArcApiError(errorMessage, {
+        status: response.status,
+        statusText: response.statusText,
+        json,
+        endpoint,
+        method,
+      });
     }
 
     const contentType = response.headers.get('Content-Type');
@@ -373,9 +456,16 @@ async function executeRequest<T = unknown>(
       try {
         const blob = await response.clone().blob();
         data = { data: blob, response };
-      } catch {
-        const text = await response.text();
-        data = { data: text, response };
+      } catch (blobError) {
+        try {
+          const text = await response.text();
+          data = { data: text, response };
+        } catch {
+          throw new Error(
+            `Failed to parse response body from ${method} ${endpoint}: ` +
+            `blob error: ${blobError instanceof Error ? blobError.message : String(blobError)}`
+          );
+        }
       }
     }
 

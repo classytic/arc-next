@@ -307,7 +307,7 @@ export class BaseApi<
   }
 
   async create({
-    token,
+    token = null,
     organizationId = null,
     data,
     options = {},
@@ -329,7 +329,7 @@ export class BaseApi<
   }
 
   async update({
-    token,
+    token = null,
     organizationId = null,
     id,
     data,
@@ -355,7 +355,7 @@ export class BaseApi<
   }
 
   async delete({
-    token,
+    token = null,
     organizationId = null,
     id,
     options = {},
@@ -376,7 +376,7 @@ export class BaseApi<
   }
 
   async upload({
-    token,
+    token = null,
     organizationId = null,
     data,
     id,
@@ -481,13 +481,13 @@ export class BaseApi<
     method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
     endpoint: string,
     {
-      token,
+      token = null,
       organizationId = null,
       data,
       params,
       options = {},
     }: {
-      token?: string;
+      token?: string | null;
       organizationId?: string | null;
       data?: unknown;
       params?: QueryParams;
@@ -541,7 +541,7 @@ export class BaseApi<
   }
 
   async restore({
-    token,
+    token = null,
     organizationId = null,
     id,
     options = {},
@@ -565,7 +565,7 @@ export class BaseApi<
   // ==========================================================================
 
   async bulkCreate({
-    token,
+    token = null,
     organizationId = null,
     data,
     options = {},
@@ -583,7 +583,7 @@ export class BaseApi<
   }
 
   async bulkUpdate({
-    token,
+    token = null,
     organizationId = null,
     filter,
     data,
@@ -603,7 +603,7 @@ export class BaseApi<
   }
 
   async bulkDelete({
-    token,
+    token = null,
     organizationId = null,
     filter,
     options = {},

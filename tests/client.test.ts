@@ -559,7 +559,7 @@ describe('ArcApiError', () => {
     expect(error.fieldErrors).toBeNull();
   });
 
-  it('falls back to statusText when json has no message', async () => {
+  it('captures text body when json parse fails', async () => {
     fetchMock.mockResolvedValue(
       new Response('not json', {
         status: 500,
@@ -573,7 +573,9 @@ describe('ArcApiError', () => {
       expect.fail('Should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(ArcApiError);
-      expect((error as ArcApiError).message).toBe('Internal Server Error');
+      // Now captures body text instead of just statusText
+      expect((error as ArcApiError).message).toBe('not json');
+      expect(((error as ArcApiError).json as { rawBody: string }).rawBody).toBe('not json');
     }
   });
 });
@@ -1145,5 +1147,165 @@ describe('idempotency', () => {
     expect(isAutoIdempotency()).toBe(true);
 
     configureClient({ baseUrl: 'http://api.test' });
+  });
+});
+
+// ============================================================================
+// Per-client auth (createClient with getToken/getOrgId)
+// ============================================================================
+
+describe('per-client auth', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({ getToken: () => 'global-token', getOrgId: () => 'global-org' });
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    configureAuth({ getToken: () => null, getOrgId: () => null });
+  });
+
+  it('per-client getToken injects token into requests', async () => {
+    const client = createClient({
+      baseUrl: 'http://other.test',
+      getToken: () => 'client-token',
+    });
+
+    await client.request('GET', '/items');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer client-token');
+  });
+
+  it('per-client getOrgId injects org header', async () => {
+    const client = createClient({
+      baseUrl: 'http://other.test',
+      getOrgId: () => 'client-org',
+    });
+
+    await client.request('GET', '/items');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-organization-id']).toBe('client-org');
+  });
+
+  it('per-client header auth with custom headerName', async () => {
+    const client = createClient({
+      baseUrl: 'http://other.test',
+      authMode: 'header',
+      getToken: () => 'my-api-key',
+      headerName: 'x-admin-key',
+    });
+
+    await client.request('GET', '/items');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-admin-key']).toBe('my-api-key');
+    expect(headers['Authorization']).toBeUndefined();
+  });
+
+  it('explicit token in options overrides per-client getToken', async () => {
+    const client = createClient({
+      baseUrl: 'http://other.test',
+      getToken: () => 'client-default',
+    });
+
+    await client.request('GET', '/items', { token: 'explicit-override' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer explicit-override');
+  });
+
+  it('client without per-client auth does not auto-inject', async () => {
+    const client = createClient({ baseUrl: 'http://other.test' });
+
+    await client.request('GET', '/items');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Non-JSON error responses
+// ============================================================================
+
+describe('non-JSON error responses', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configureClient({ baseUrl: 'http://api.test' });
+    fetchMock = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('handles HTML error page (502 gateway)', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('<html><body>Bad Gateway</body></html>', {
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { 'Content-Type': 'text/html' },
+      })
+    );
+
+    try {
+      await handleApiRequest('GET', '/items');
+      expect.fail('Should throw');
+    } catch (error) {
+      expect(isArcApiError(error)).toBe(true);
+      expect((error as ArcApiError).status).toBe(502);
+    }
+  });
+
+  it('handles empty error body', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('', {
+        status: 500,
+        statusText: 'Internal Server Error',
+      })
+    );
+
+    try {
+      await handleApiRequest('GET', '/items');
+      expect.fail('Should throw');
+    } catch (error) {
+      expect(isArcApiError(error)).toBe(true);
+      expect((error as ArcApiError).status).toBe(500);
+      expect((error as ArcApiError).message).toBe('Internal Server Error');
+    }
+  });
+
+  it('handles plain text error', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('Service Unavailable', {
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    );
+
+    try {
+      await handleApiRequest('GET', '/items');
+      expect.fail('Should throw');
+    } catch (error) {
+      expect(isArcApiError(error)).toBe(true);
+      expect((error as ArcApiError).status).toBe(503);
+    }
   });
 });

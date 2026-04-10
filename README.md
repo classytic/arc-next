@@ -440,34 +440,55 @@ Subscribe to Arc SSE events with auto-reconnect and query invalidation:
 ```ts
 import { useEventStream } from "@classytic/arc-next/sse";
 
-const { isConnected, lastEvent } = useEventStream({
-  resource: "agents",
-  patterns: ["agents.created", "agents.updated"],
+// Global stream — all events (matches Arc's /events/stream)
+const { isConnected } = useEventStream({
   invalidateQueries: [agentKeys.lists()],
+});
+
+// Filtered by resource — auto-generates patterns: ['agents.*']
+const { lastEvent } = useEventStream({
+  resource: "agents",
+  invalidateQueries: [agentKeys.lists()],
+});
+
+// Custom SSE path or explicit patterns
+const { isConnected } = useEventStream({
+  path: "/api/v2/events",
+  patterns: ["orders.created", "orders.updated"],
 });
 ```
 
 ### Query Keys (`KEYS`)
 
 ```ts
-KEYS.all                          // ["products"]
-KEYS.lists()                      // ["products", "list"]
-KEYS.list(params)                 // ["products", "list", params]
-KEYS.details()                    // ["products", "detail"]
-KEYS.detail(id)                   // ["products", "detail", id]
-KEYS.custom("stats", orgId)       // ["products", "stats", orgId]
-KEYS.scopedList("tenant", params) // ["products", "list", { _scope: "tenant", ...params }]
+KEYS.all                              // ["products"]
+KEYS.lists()                          // ["products", "list"]
+KEYS.list(params)                     // ["products", "list", params]
+KEYS.details()                        // ["products", "detail"]
+KEYS.detail(id)                       // ["products", "detail", id]
+KEYS.scopedDetail(id, orgId)          // ["products", "detail", id, { _org: orgId }] (or bare when null)
+KEYS.custom("stats", orgId)           // ["products", "stats", orgId]
+KEYS.scopedList("tenant", params)     // ["products", "list", { _scope: "tenant", ...params }]
 ```
 
 ### Cache Utilities (`cache`)
 
 ```ts
+// Bare (single-tenant or public)
+cache.setDetail(queryClient, id, data);
+cache.getDetail(queryClient, id);
+cache.removeDetail(queryClient, id);
+await cache.invalidateDetail(queryClient, id);  // prefix-matches ALL scoped variants
+
+// Tenant-scoped (multi-tenant — isolated per org)
+cache.setScopedDetail(queryClient, id, orgId, data);
+cache.getScopedDetail(queryClient, id, orgId);
+cache.removeScopedDetail(queryClient, id, orgId);
+await cache.invalidateScopedDetail(queryClient, id, orgId);
+
+// Global
 await cache.invalidateAll(queryClient);
 await cache.invalidateLists(queryClient);
-await cache.invalidateDetail(queryClient, id);
-cache.setDetail(queryClient, id, data);
-cache.getDetail(queryClient, id);       // T | undefined
-cache.removeDetail(queryClient, id);
 ```
 
 ### `getQueryClient(overrides?)`
@@ -521,7 +542,17 @@ export default async function ProductsPage() {
 }
 ```
 
-**Methods:** `prefetchList(queryClient, params?, options?)`, `prefetchDetail(queryClient, id, options?)`
+**Methods:** `prefetchList`, `prefetchDetail`, `prefetchBySlug`, `prefetchDeleted`, `prefetchTree`
+
+All accept auth options for protected routes:
+
+```ts
+await prefetcher.prefetchList(queryClient, { limit: 20 }, {
+  token: serverToken,               // for bearer/header auth
+  organizationId: "org-1",          // for multi-tenant
+  headers: { "x-api-key": apiKey }, // for custom header auth
+});
+```
 
 ## Custom Mutations
 
@@ -620,16 +651,30 @@ By default, `configureClient()` sets a single global `baseUrl`. Use `createClien
 
 ### Create isolated clients
 
+Each client gets its own `baseUrl`, auth, and headers — fully independent from the global config:
+
 ```ts
 import { createClient } from "@classytic/arc-next/client";
-import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 
+// Bearer auth for main API
+const mainClient = createClient({
+  baseUrl: "https://api.example.com",
+  getToken: () => session.jwt,
+  getOrgId: () => currentOrg.id,
+});
+
+// API key auth for analytics (no token needed — hooks auto-enable)
 const analyticsClient = createClient({
-  baseUrl: "https://analytics.example.com",
-  internalApiKey: "analytics-key",
-  toast: { success: toast.success, error: toast.error },
-  navigation: useRouter,
+  baseUrl: "https://analytics.internal",
+  authMode: "header",
+  getToken: () => env.ANALYTICS_KEY,
+  headerName: "x-analytics-key",
+});
+
+// Cookie auth for auth service
+const authClient = createClient({
+  baseUrl: "https://auth.example.com",
+  authMode: "cookie",
 });
 ```
 
@@ -763,19 +808,20 @@ const adminApi = createCrudApi("users", {
 
 - **CRUD Factory** — `createCrudApi` + `createCrudHooks` generates typed API clients and React Query hooks
 - **Optimistic Updates** — Create, update, delete with instant UI feedback and automatic rollback
-- **Multi-Tenant Scoping** — Tenant ID sent via `x-organization-id` header + scoped list query keys. Backend controls the tenant field name and access enforcement.
+- **Multi-Tenant Scoping** — `scopedDetail(id, orgId)` + `scopedList` isolate cache per tenant. Scoped cache utils for reads/writes. Navigation prefill is tenant-aware.
 - **Pagination Normalization** — Handles `docs`/`data`/`items`/`results` + any custom key, offset/keyset/aggregate pagination
 - **Detail Cache Prefilling** — List results auto-populate detail query cache
 - **React 19 Transitions** — `useMutationWithTransition` wraps invalidation in `startTransition`
 - **Cookie, Bearer & Header Auth** — `authMode: 'cookie'` / `'bearer'` / `'header'` (custom header like `x-api-key`)
 - **Custom ID Fields** — `idField` on `createCrudHooks` for resources keyed by `sku`, `slug`, `code`, etc.
 - **Preset Hooks** — `useDeleted`, `useBulkActions`, `useDetailBySlug`, `useTree`, `useChildren`, `useFindBy`
-- **SSE Real-Time** — `useEventStream` with auto-reconnect, pattern filtering, query invalidation
+- **SSE Real-Time** — `useEventStream` with auto-reconnect, auto-pattern derivation from `resource`, query invalidation. Works with zero config or custom `path`.
 - **Infinite Scroll** — `maxPages` for memory management with automatic scroll-back support
 - **Idempotency** — `autoIdempotency` generates retry-safe keys at mutation level
 - **API Versioning** — `apiVersion` sends `Accept-Version` header
 - **SSR Prefetch** — `createCrudPrefetcher` + `prefetchBySlug` / `prefetchDeleted` / `prefetchTree`
 - **SSR Safety** — warns when `configureClient`/`configureAuth` called on the server
+- **Per-Client Auth** — `createClient({ getToken, getOrgId, headerName })` — each backend gets its own auth, queries auto-enable
 - **Multi-Client** — `createClient()` for multiple API backends side by side
 - **Pluggable Toast** — `configureToast()` — use sonner, react-hot-toast, or anything
 - **Pluggable Navigation** — `configureNavigation()` — use Next.js, React Router, or any router

@@ -117,7 +117,7 @@ describe('useEventStream', () => {
     });
 
     const es = MockEventSource.latest()!;
-    expect(es.url).toContain('/api/v1/agents/events/stream');
+    expect(es.url).toContain('http://api.test/events/stream');
     expect(es.url).toContain('token=test-token');
     expect(es.url).toContain('organizationId=org-1');
   });
@@ -385,7 +385,7 @@ describe('useEventStream', () => {
     const wrapper = createWrapper(queryClient);
 
     renderHook(
-      () => useEventStream({ resource: 'agents', basePath: '/api/v2' }),
+      () => useEventStream({ resource: 'agents', path: '/api/v2/events/stream' }),
       { wrapper }
     );
 
@@ -393,7 +393,7 @@ describe('useEventStream', () => {
       expect(MockEventSource.instances.length).toBeGreaterThan(0);
     });
 
-    expect(MockEventSource.latest()!.url).toContain('/api/v2/agents/events/stream');
+    expect(MockEventSource.latest()!.url).toContain('http://api.test/api/v2/events/stream');
   });
 
   it('stores lastEvent from most recent message', async () => {
@@ -416,5 +416,65 @@ describe('useEventStream', () => {
     });
 
     expect(result.current.lastEvent).toEqual(event);
+  });
+
+  it('reconnect() after close() creates new connection', async () => {
+    const wrapper = createWrapper(queryClient);
+
+    const { result } = renderHook(
+      () => useEventStream({ resource: 'agents' }),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(result.current.isConnected).toBe(true);
+    });
+
+    const firstEs = MockEventSource.latest()!;
+
+    // Close
+    act(() => result.current.close());
+    expect(result.current.isConnected).toBe(false);
+
+    // Reconnect
+    act(() => result.current.reconnect());
+
+    await waitFor(() => {
+      expect(result.current.isConnected).toBe(true);
+    });
+
+    // Should be a NEW EventSource instance
+    const secondEs = MockEventSource.latest()!;
+    expect(secondEs).not.toBe(firstEs);
+    expect(secondEs.url).toContain('http://api.test/events/stream');
+  });
+
+  it('events after reconnect still trigger callbacks', async () => {
+    const onEvent = vi.fn();
+    const wrapper = createWrapper(queryClient);
+
+    const { result } = renderHook(
+      () => useEventStream({ resource: 'agents', onEvent }),
+      { wrapper }
+    );
+
+    await waitFor(() => expect(result.current.isConnected).toBe(true));
+
+    // Close and reconnect
+    act(() => result.current.close());
+    act(() => result.current.reconnect());
+
+    await waitFor(() => expect(result.current.isConnected).toBe(true));
+
+    // Send event on new connection
+    act(() => {
+      MockEventSource.latest()!.simulateMessage({
+        type: 'agents.created', resource: 'agents', data: { _id: '99' }, timestamp: '',
+      });
+    });
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'agents.created' })
+    );
   });
 });

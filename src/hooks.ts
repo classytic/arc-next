@@ -31,7 +31,7 @@ import {
 } from "./api.js";
 import type { PaginatedResponse, BaseApi, FilterOperator } from "./api.js";
 import type { MutationCallbacks, TransitionMutationReturn } from "./mutation.js";
-import { getAuthMode, getAuthContext } from "./client.js";
+import { getAuthMode, getClientAuthContext } from "./client.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
 
 // ============================================================================
@@ -222,12 +222,21 @@ export function configureNavigation(hook: UseRouterHook): void {
 // Enabled Rule
 // ============================================================================
 
-function createEnabledRule(token: string | null, options: { public?: boolean; enabled?: boolean }, authMode: 'bearer' | 'cookie' | 'header' = getAuthMode()): boolean {
-  // Cookie-based auth: no token needed, queries always enabled (cookies sent via credentials: 'include')
+function createEnabledRule(
+  token: string | null,
+  options: { public?: boolean; enabled?: boolean },
+  authMode: 'bearer' | 'cookie' | 'header' = getAuthMode(),
+  hasStaticAuth = false,
+): boolean {
+  // Cookie auth or public: always enabled
   if (authMode === 'cookie' || options.public) {
     return options.enabled ?? true;
   }
-  // Bearer token auth: require token to enable queries
+  // Static auth (defaultHeaders, internalApiKey, per-client headers): always enabled
+  if (hasStaticAuth) {
+    return options.enabled ?? true;
+  }
+  // Bearer/header auth: require token
   return options.enabled !== undefined ? options.enabled && !!token : !!token;
 }
 
@@ -246,6 +255,16 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   client,
 }: CrudHooksConfig<T, TCreate, TUpdate>): CrudHooksReturn<T, TCreate, TUpdate> {
   const pluralName = plural ?? `${singular}s`;
+
+  /** Resolve auth context — per-client auth takes priority over global */
+  const resolveAuth = () => getClientAuthContext(client);
+
+  /** Whether auth is provided via static config (headers, internalApiKey, per-client auth) — no token needed for enablement */
+  const hasStaticAuth = !!(
+    client?.config?.defaultHeaders ||
+    client?.config?.internalApiKey ||
+    client?.auth
+  );
 
   /** Extract ID from an item using configured idField, falling back to _id → id */
   function resolveItemId(item: unknown): string | null {
@@ -294,13 +313,17 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     let params: Record<string, unknown>;
     let options: ListQueryOptions;
 
-    // Detect which overload: first arg is string|null = legacy, object/undefined = new
-    if (tokenOrParams === null || typeof tokenOrParams === 'string') {
-      token = tokenOrParams;
+    // Detect which overload:
+    // Legacy: useList(token: string|null, params, options) — string first arg, or null with 3 args
+    // New:    useList(params?, options?) — object/undefined first arg, or null with ≤2 args
+    const isLegacy = typeof tokenOrParams === 'string' || (tokenOrParams === null && maybeOptions !== undefined);
+
+    if (isLegacy) {
+      token = tokenOrParams as string | null;
       params = (paramsOrOptions as Record<string, unknown>) ?? {};
       options = maybeOptions ?? {};
     } else {
-      const auth = getAuthContext();
+      const auth = resolveAuth();
       token = auth.token;
       params = (tokenOrParams as Record<string, unknown>) ?? {};
       options = (paramsOrOptions as ListQueryOptions) ?? {};
@@ -316,7 +339,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useListQuery<T>({
       queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
       queryFn: ({ signal }) => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
-      enabled: createEnabledRule(token, queryOpts, resolveAuthMode()),
+      enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -326,7 +349,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         refetchIntervalInBackground: queryOpts.refetchIntervalInBackground,
       },
       prefillDetailCache: queryOpts.prefillDetailCache ?? true,
-      detailKeyBuilder: (id) => KEYS.detail(id),
+      detailKeyBuilder: (id) => KEYS.scopedDetail(id, (organizationId as string | null) ?? null),
       itemIdResolver: resolveItemId,
       select: queryOpts.select,
     });
@@ -342,12 +365,15 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     let token: string | null;
     let options: DetailQueryOptions;
 
-    // Detect which overload: second arg is string|null = legacy, object/undefined = new
-    if (tokenOrOptions === null || typeof tokenOrOptions === 'string') {
-      token = tokenOrOptions;
+    // Legacy: useDetail(id, token, options) — string/null second arg with 3rd arg present
+    // New:    useDetail(id, options?) — object/undefined second arg
+    const isLegacy = typeof tokenOrOptions === 'string' || (tokenOrOptions === null && maybeOptions !== undefined);
+
+    if (isLegacy) {
+      token = tokenOrOptions as string | null;
       options = maybeOptions ?? {};
     } else {
-      const auth = getAuthContext();
+      const auth = resolveAuth();
       token = auth.token;
       options = (tokenOrOptions as DetailQueryOptions) ?? {};
       if (auth.organizationId && !options.organizationId) {
@@ -357,10 +383,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     const { organizationId, params: queryParams, request: requestOpts, ...restOptions } = options;
 
+    const detailKey = KEYS.scopedDetail(id || "", organizationId ?? null);
+    const fullDetailKey = queryParams ? [...detailKey, queryParams] : detailKey;
+
     return useDetailQuery<T>({
-      queryKey: queryParams ? [...KEYS.detail(id || ""), queryParams] : KEYS.detail(id || ""),
+      queryKey: fullDetailKey,
       queryFn: ({ signal }) => api.getById({ id: id!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
-      enabled: !!id && createEnabledRule(token, restOptions, resolveAuthMode()),
+      enabled: !!id && createEnabledRule(token, restOptions, resolveAuthMode(), hasStaticAuth),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
@@ -417,12 +446,17 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         const updated = updateListCache(oldData, (arr: unknown[]) =>
           (arr || []).map((item) => (resolveItemId(item) === id ? { ...(item as object), ...(data as object) } : item))
         );
-        queryClient.setQueryData(KEYS.detail(id), (current: unknown) =>
-          current ? { ...(current as object), data: { ...((current as { data?: object }).data || {}), ...(data as object) } } : current
-        );
+        // Optimistic write to all matching detail queries (bare + scoped + parameterized)
+        const detailUpdater = (current: unknown) =>
+          current ? { ...(current as object), data: { ...((current as { data?: object }).data || {}), ...(data as object) } } : current;
+
+        queryClient.getQueriesData({ queryKey: KEYS.detail(id) }).forEach(([qKey, qData]) => {
+          if (qData) queryClient.setQueryData(qKey, detailUpdater);
+        });
         return updated;
       },
       onSuccess: (raw, { id, data: updateData }) => {
+        // Prefix-match invalidates bare + scoped + parameterized detail keys
         queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
         callbacks.onUpdate?.onSuccess?.(extractItem<T>(raw) as T, { id, data: updateData }, undefined);
       },
@@ -475,8 +509,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       toastHandler: instanceToast,
     });
 
-    const resolveAuth = useCallback(<P extends { token?: string | null; organizationId?: string | null }>(params: P): P => {
-      const auth = getAuthContext();
+    const resolveActionAuth = useCallback(<P extends { token?: string | null; organizationId?: string | null }>(params: P): P => {
+      const auth = resolveAuth();
       return {
         ...params,
         token: params.token ?? auth.token,
@@ -487,7 +521,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const create = useCallback(async (params: MutationParams<TCreate>, options?: CallOptions<T>): Promise<T> => {
       silentRef.current = options?.silent ?? false;
       try {
-        const raw = await createMutation.mutateAsync(resolveAuth(params));
+        const raw = await createMutation.mutateAsync(resolveActionAuth(params));
         const entity = extractItem<T>(raw) as T;
         options?.onSuccess?.(entity);
         options?.onSettled?.(entity, null);
@@ -499,12 +533,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       } finally {
         silentRef.current = false;
       }
-    }, [createMutation, resolveAuth]);
+    }, [createMutation, resolveActionAuth]);
 
     const update = useCallback(async (params: UpdateParams<TUpdate>, options?: CallOptions<T>): Promise<T> => {
       silentRef.current = options?.silent ?? false;
       try {
-        const raw = await updateMutation.mutateAsync(resolveAuth(params));
+        const raw = await updateMutation.mutateAsync(resolveActionAuth(params));
         const entity = extractItem<T>(raw) as T;
         options?.onSuccess?.(entity);
         options?.onSettled?.(entity, null);
@@ -516,12 +550,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       } finally {
         silentRef.current = false;
       }
-    }, [updateMutation, resolveAuth]);
+    }, [updateMutation, resolveActionAuth]);
 
     const remove = useCallback(async (params: DeleteParams, options?: CallOptions): Promise<unknown> => {
       silentRef.current = options?.silent ?? false;
       try {
-        const result = await deleteMutation.mutateAsync(resolveAuth(params));
+        const result = await deleteMutation.mutateAsync(resolveActionAuth(params));
         options?.onSuccess?.(result);
         options?.onSettled?.(result, null);
         return result;
@@ -532,12 +566,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       } finally {
         silentRef.current = false;
       }
-    }, [deleteMutation, resolveAuth]);
+    }, [deleteMutation, resolveActionAuth]);
 
     const restore = useCallback(async (params: DeleteParams, options?: CallOptions<T>): Promise<T> => {
       silentRef.current = options?.silent ?? false;
       try {
-        const raw = await restoreMutation.mutateAsync(resolveAuth(params));
+        const raw = await restoreMutation.mutateAsync(resolveActionAuth(params));
         const entity = extractItem<T>(raw) as T;
         options?.onSuccess?.(entity);
         options?.onSettled?.(entity, null);
@@ -549,7 +583,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       } finally {
         silentRef.current = false;
       }
-    }, [restoreMutation, resolveAuth]);
+    }, [restoreMutation, resolveActionAuth]);
 
     return {
       create,
@@ -575,12 +609,14 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     let params: Record<string, unknown>;
     let options: InfiniteListQueryOptions;
 
-    if (tokenOrParams === null || typeof tokenOrParams === 'string') {
-      token = tokenOrParams;
+    const isLegacy = typeof tokenOrParams === 'string' || (tokenOrParams === null && maybeOptions !== undefined);
+
+    if (isLegacy) {
+      token = tokenOrParams as string | null;
       params = (paramsOrOptions as Record<string, unknown>) ?? {};
       options = maybeOptions ?? {};
     } else {
-      const auth = getAuthContext();
+      const auth = resolveAuth();
       token = auth.token;
       params = (tokenOrParams as Record<string, unknown>) ?? {};
       options = (paramsOrOptions as InfiniteListQueryOptions) ?? {};
@@ -607,7 +643,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           options: { signal, ...requestOpts },
         });
       },
-      enabled: createEnabledRule(token, queryOpts, resolveAuthMode()),
+      enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
       initialPageParam: restParams.after ? restParams.after : 1,
       getNextPageParam: (lastPage) => {
         const page = lastPage as PaginatedResponse<T>;
@@ -661,7 +697,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.upload) {
           return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define an upload method`));
         }
-        const auth = getAuthContext();
+        const auth = resolveAuth();
         return api.upload({ token: auth.token, organizationId: auth.organizationId, data, id, path });
       },
       invalidateQueries: options?.invalidateQueries ?? [KEYS.lists()],
@@ -683,7 +719,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     params?: Record<string, unknown>,
     options?: ListQueryOptions<T>,
   ): ListQueryResult<T> {
-    const auth = getAuthContext();
+    const auth = resolveAuth();
     const token = params?.token as string | null ?? auth.token;
     const organizationId = params?.organizationId as string | null ?? auth.organizationId;
     const { organizationId: _, token: _t, ...restParams } = params ?? {};
@@ -700,7 +736,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.search) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a search method`));
         return api.search({ token, organizationId, params: searchParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.search && query.length > 0 && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      enabled: !!api.search && query.length > 0 && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -736,7 +772,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     params?: Record<string, unknown>,
     options?: ListQueryOptions<T>,
   ): ListQueryResult<T> {
-    const auth = getAuthContext();
+    const auth = resolveAuth();
     const token = auth.token;
     const mergedParams = params ?? {};
     const organizationId = (mergedParams.organizationId as string | null) ?? auth.organizationId;
@@ -749,7 +785,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.getDeleted) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getDeleted method`));
         return api.getDeleted({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getDeleted && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      enabled: !!api.getDeleted && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -764,7 +800,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     slug: string | null,
     options?: DetailQueryOptions<T>,
   ): DetailQueryResult<T> {
-    const auth = getAuthContext();
+    const auth = resolveAuth();
     const token = auth.token;
     const resolvedOptions = options ?? {};
     const organizationId = resolvedOptions.organizationId ?? auth.organizationId;
@@ -776,7 +812,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.getBySlug) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getBySlug method`));
         return api.getBySlug({ slug: slug!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getBySlug && !!slug && createEnabledRule(token, restOptions, resolveAuthMode()),
+      enabled: !!api.getBySlug && !!slug && createEnabledRule(token, restOptions, resolveAuthMode(), hasStaticAuth),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
@@ -793,7 +829,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     params?: Record<string, unknown>,
     options?: ListQueryOptions<T>,
   ): ListQueryResult<T> {
-    const auth = getAuthContext();
+    const auth = resolveAuth();
     const token = auth.token;
     const mergedParams = params ?? {};
     const organizationId = (mergedParams.organizationId as string | null) ?? auth.organizationId;
@@ -806,7 +842,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.getTree) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getTree method`));
         return api.getTree({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getTree && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      enabled: !!api.getTree && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -822,7 +858,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     params?: Record<string, unknown>,
     options?: ListQueryOptions<T>,
   ): ListQueryResult<T> {
-    const auth = getAuthContext();
+    const auth = resolveAuth();
     const token = auth.token;
     const mergedParams = params ?? {};
     const organizationId = (mergedParams.organizationId as string | null) ?? auth.organizationId;
@@ -835,13 +871,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.getChildren) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getChildren method`));
         return api.getChildren({ token, organizationId, parentId: parentId!, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getChildren && !!parentId && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      enabled: !!api.getChildren && !!parentId && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
       },
       prefillDetailCache: queryOpts.prefillDetailCache ?? true,
-      detailKeyBuilder: (id) => KEYS.detail(id),
+      detailKeyBuilder: (id) => KEYS.scopedDetail(id, (organizationId as string | null) ?? null),
       itemIdResolver: resolveItemId,
       select: queryOpts.select,
     });
@@ -854,24 +890,24 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     value: unknown,
     options?: ListQueryOptions<T> & { operator?: FilterOperator },
   ): ListQueryResult<T> {
-    const auth = getAuthContext();
+    const auth = resolveAuth();
     const token = auth.token;
     const organizationId = auth.organizationId;
     const { operator, request: requestOpts, ...queryOpts } = options ?? {};
 
     return useListQuery<T>({
-      queryKey: KEYS.custom('findBy', field, value, operator),
+      queryKey: KEYS.custom('findBy', { field, value, operator, organizationId }),
       queryFn: ({ signal }) => {
         if (!api.findBy) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a findBy method`));
         return api.findBy({ token, organizationId, field, value, operator, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.findBy && value !== undefined && value !== null && createEnabledRule(token, queryOpts, resolveAuthMode()),
+      enabled: !!api.findBy && value !== undefined && value !== null && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
       },
       prefillDetailCache: queryOpts.prefillDetailCache ?? true,
-      detailKeyBuilder: (id) => KEYS.detail(id),
+      detailKeyBuilder: (id) => KEYS.scopedDetail(id, (organizationId as string | null) ?? null),
       itemIdResolver: resolveItemId,
       select: queryOpts.select,
     });
@@ -885,7 +921,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.bulkCreate) {
           return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkCreate method`));
         }
-        const auth = getAuthContext();
+        const auth = resolveAuth();
         return api.bulkCreate({
           token: vars.token ?? auth.token,
           organizationId: vars.organizationId ?? auth.organizationId,
@@ -905,7 +941,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.bulkUpdate) {
           return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkUpdate method`));
         }
-        const auth = getAuthContext();
+        const auth = resolveAuth();
         return api.bulkUpdate({
           token: vars.token ?? auth.token,
           organizationId: vars.organizationId ?? auth.organizationId,
@@ -926,7 +962,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.bulkDelete) {
           return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkDelete method`));
         }
-        const auth = getAuthContext();
+        const auth = resolveAuth();
         return api.bulkDelete({
           token: vars.token ?? auth.token,
           organizationId: vars.organizationId ?? auth.organizationId,
@@ -979,7 +1015,14 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       (href: string, item: T, options: NavigationOptions = {}) => {
         const id = resolveItemId(item);
         if (id) {
-          queryClient.setQueryData(KEYS.detail(id), { data: item });
+          const auth = resolveAuth();
+          const orgId = auth.organizationId;
+          // Write to scoped key (matches useDetail's cache key)
+          queryClient.setQueryData(KEYS.scopedDetail(id, orgId), { data: item });
+          // Also write bare key as fallback (matches non-scoped useDetail, navigation from public pages)
+          if (orgId) {
+            queryClient.setQueryData(KEYS.detail(id), { data: item });
+          }
         }
 
         if (!router) return;

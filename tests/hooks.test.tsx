@@ -1350,7 +1350,7 @@ describe('createCrudHooks', () => {
 
     // ---- QUERY_CONFIGS presets integration ----
     it('QUERY_CONFIGS.realtime preset works with useList', async () => {
-      const { QUERY_CONFIGS } = await import('../src/mutation.js');
+      const { QUERY_CONFIGS } = await import('../src/query.js');
       const realtimeHooks = createCrudHooks({
         api: mockApi,
         entityKey: 'realtime-items',
@@ -1369,7 +1369,7 @@ describe('createCrudHooks', () => {
     });
 
     it('QUERY_CONFIGS.stable preset works with useDetail', async () => {
-      const { QUERY_CONFIGS } = await import('../src/mutation.js');
+      const { QUERY_CONFIGS } = await import('../src/query.js');
       const stableHooks = createCrudHooks({
         api: mockApi,
         entityKey: 'stable-items',
@@ -2774,23 +2774,6 @@ describe('createCrudHooks', () => {
     });
   });
 
-  describe('v0.2.1 deprecated aliases', () => {
-    it('createListQuery is exported as alias for useListQuery', async () => {
-      const { createListQuery, useListQuery } = await import('../src/query.js');
-      expect(createListQuery).toBe(useListQuery);
-    });
-
-    it('createDetailQuery is exported as alias for useDetailQuery', async () => {
-      const { createDetailQuery, useDetailQuery } = await import('../src/query.js');
-      expect(createDetailQuery).toBe(useDetailQuery);
-    });
-
-    it('createOptimisticMutation is exported as alias for useOptimisticMutation', async () => {
-      const { createOptimisticMutation, useOptimisticMutation } = await import('../src/mutation.js');
-      expect(createOptimisticMutation).toBe(useOptimisticMutation);
-    });
-  });
-
   // ==========================================================================
   // Type compatibility: BaseApi ↔ CrudApi (compile-time + runtime)
   //
@@ -3538,6 +3521,156 @@ describe('createCrudHooks', () => {
 
       await waitFor(() => {
         expect(mockApi.getAll).toHaveBeenCalled();
+      });
+    });
+  });
+
+  // ==========================================================================
+  // Custom idField
+  // ==========================================================================
+
+  describe('custom idField', () => {
+    it('resolveItemId uses idField for optimistic create', async () => {
+      const skuApi = createMockApi();
+      skuApi.create = vi.fn().mockResolvedValue({
+        success: true,
+        data: { _id: 'mongo-1', sku: 'SKU-001', name: 'Product' },
+      });
+
+      const skuHooks = createCrudHooks({
+        api: skuApi,
+        entityKey: 'products',
+        singular: 'Product',
+        idField: 'sku',
+      });
+
+      const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => skuHooks.useActions(), { wrapper });
+
+      await act(async () => {
+        await result.current.create({ data: { name: 'Product' } });
+      });
+
+      expect(skuApi.create).toHaveBeenCalled();
+    });
+
+    it('detail cache prefill uses idField', async () => {
+      const skuApi = createMockApi();
+      skuApi.getAll = vi.fn().mockResolvedValue({
+        success: true,
+        docs: [
+          { _id: 'mongo-1', sku: 'SKU-001', name: 'A' },
+          { _id: 'mongo-2', sku: 'SKU-002', name: 'B' },
+        ],
+        total: 2, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
+      });
+
+      const skuHooks = createCrudHooks({
+        api: skuApi,
+        entityKey: `sku-products-${Math.random()}`,
+        singular: 'Product',
+        idField: 'sku',
+      });
+
+      const localQc = createTestQueryClient();
+      const localWrapper = createWrapper(localQc);
+
+      const { result } = renderHook(
+        () => skuHooks.useList(null, {}, { public: true }),
+        { wrapper: localWrapper }
+      );
+
+      await waitFor(() => {
+        expect(result.current.items).toHaveLength(2);
+      });
+
+      // Detail cache should be keyed by SKU, not _id
+      const keys = skuHooks.KEYS;
+      const cachedBySku1 = localQc.getQueryData(keys.detail('SKU-001'));
+      const cachedBySku2 = localQc.getQueryData(keys.detail('SKU-002'));
+
+      expect(cachedBySku1).toBeDefined();
+      expect(cachedBySku2).toBeDefined();
+      expect((cachedBySku1 as { data: { name: string } }).data.name).toBe('A');
+
+      localQc.clear();
+    });
+
+    it('optimistic delete uses idField to match items', async () => {
+      const skuApi = createMockApi();
+      skuApi.delete = vi.fn().mockResolvedValue({ success: true });
+
+      const skuHooks = createCrudHooks({
+        api: skuApi,
+        entityKey: 'sku-del',
+        singular: 'Product',
+        idField: 'sku',
+      });
+
+      const wrapper = createWrapper(queryClient);
+
+      // Pre-populate list cache with SKU-keyed items
+      queryClient.setQueryData(['sku-del', 'list', { _scope: 'super-admin' }], {
+        docs: [
+          { _id: 'a', sku: 'DEL-001', name: 'Delete Me' },
+          { _id: 'b', sku: 'KEEP-001', name: 'Keep Me' },
+        ],
+        total: 2,
+      });
+
+      const { result } = renderHook(() => skuHooks.useActions(), { wrapper });
+
+      await act(async () => {
+        // Delete by SKU — optimistic update should remove by sku match
+        await result.current.remove({ id: 'DEL-001' });
+      });
+
+      expect(skuApi.delete).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'DEL-001' })
+      );
+    });
+  });
+
+  // ==========================================================================
+  // Per-client auth in hooks
+  // ==========================================================================
+
+  describe('per-client auth in hooks', () => {
+    afterEach(() => {
+      configureClient({ baseUrl: 'http://api.test' });
+      configureAuth({ getToken: () => null, getOrgId: () => null });
+    });
+
+    it('hooks use per-client auth when client has getToken', async () => {
+      configureAuth({ getToken: () => 'global-token', getOrgId: () => null });
+
+      const clientWithAuth = {
+        request: vi.fn().mockResolvedValue({
+          success: true, docs: [{ _id: '1', name: 'Item' }],
+          total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
+        }),
+        config: { baseUrl: 'http://other.test' } as const,
+        auth: { getToken: () => 'per-client-token', getOrgId: () => 'per-client-org' },
+      };
+
+      const clientApi = createMockApi();
+      const clientHooks = createCrudHooks({
+        api: clientApi,
+        entityKey: `client-auth-${Math.random()}`,
+        singular: 'ClientItem',
+        client: clientWithAuth,
+      });
+
+      const wrapper = createWrapper(queryClient);
+      renderHook(() => clientHooks.useList(), { wrapper });
+
+      await waitFor(() => {
+        expect(clientApi.getAll).toHaveBeenCalledWith(
+          expect.objectContaining({
+            token: 'per-client-token',
+            organizationId: 'per-client-org',
+          })
+        );
       });
     });
   });

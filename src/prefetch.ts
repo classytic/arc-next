@@ -8,7 +8,16 @@ export { dehydrate } from '@tanstack/react-query';
 // Types
 // ============================================================================
 
-export interface PrefetchOptions {
+export interface PrefetchAuthContext {
+  /** Auth token for protected endpoints. Required for bearer/header auth on server. */
+  token?: string | null;
+  /** Organization ID for multi-tenant prefetch. Sent as x-organization-id header. */
+  organizationId?: string | null;
+  /** Additional headers (e.g., x-api-key for header auth). */
+  headers?: Record<string, string>;
+}
+
+export interface PrefetchOptions extends PrefetchAuthContext {
   staleTime?: number;
 }
 
@@ -110,27 +119,32 @@ export function createCrudPrefetcher(
       params?: Record<string, unknown>;
       token?: string | null;
       organizationId?: string | null;
+      options?: { headerOptions?: Record<string, string> };
     }) => Promise<unknown>;
     getById: (opts: {
       id: string;
       token?: string | null;
       organizationId?: string | null;
+      options?: { headerOptions?: Record<string, string> };
     }) => Promise<unknown>;
     getBySlug?: (opts: {
       slug: string;
       token?: string | null;
       organizationId?: string | null;
       params?: Record<string, unknown>;
+      options?: { headerOptions?: Record<string, string> };
     }) => Promise<unknown>;
     getDeleted?: (opts: {
       params?: Record<string, unknown>;
       token?: string | null;
       organizationId?: string | null;
+      options?: { headerOptions?: Record<string, string> };
     }) => Promise<unknown>;
     getTree?: (opts: {
       params?: Record<string, unknown>;
       token?: string | null;
       organizationId?: string | null;
+      options?: { headerOptions?: Record<string, string> };
     }) => Promise<unknown>;
   },
   entityKey: string,
@@ -139,22 +153,25 @@ export function createCrudPrefetcher(
 
   return {
     async prefetchList(queryClient, params = {}, options = {}) {
-      const { organizationId, ...restParams } = params;
-      const scope = organizationId ? 'tenant' : 'super-admin';
-      const queryKey = KEYS.scopedList(scope, { organizationId, ...restParams });
+      const { organizationId: paramOrgId, ...restParams } = params;
+      const orgId = (paramOrgId as string | null) ?? options.organizationId ?? null;
+      const scope = orgId ? 'tenant' : 'super-admin';
+      const queryKey = KEYS.scopedList(scope, { ...(orgId ? { organizationId: orgId } : {}), ...restParams });
 
       await queryClient.prefetchQuery({
         queryKey,
         queryFn: () => api.getAll({
           params: restParams,
-          organizationId: (organizationId as string | null) ?? null,
+          token: options.token ?? null,
+          organizationId: orgId,
+          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
         }),
         staleTime: options.staleTime,
       });
     },
 
     async prefetchDetail(queryClient, id, options = {}) {
-      const { params, staleTime } = options as PrefetchDetailOptions;
+      const { params, staleTime, token, organizationId } = options as PrefetchDetailOptions;
       const baseKey = KEYS.detail(id);
       const queryKey = params ? [...baseKey, params] : baseKey;
 
@@ -162,7 +179,10 @@ export function createCrudPrefetcher(
         queryKey,
         queryFn: () => api.getById({
           id,
+          token: token ?? null,
+          organizationId: organizationId ?? null,
           ...(params ? { params } : {}),
+          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
         }),
         staleTime,
       });
@@ -172,12 +192,18 @@ export function createCrudPrefetcher(
       if (!api.getBySlug) {
         throw new Error(`[arc-next] prefetchBySlug requires an api with getBySlug (slugLookup preset)`);
       }
-      const { params, staleTime } = options as PrefetchDetailOptions;
+      const { params, staleTime, token, organizationId } = options as PrefetchDetailOptions;
       const queryKey = params ? KEYS.custom('slug', slug, params) : KEYS.custom('slug', slug);
 
       await queryClient.prefetchQuery({
         queryKey,
-        queryFn: () => api.getBySlug!({ slug, ...(params ? { params } : {}) }),
+        queryFn: () => api.getBySlug!({
+          slug,
+          token: token ?? null,
+          organizationId: organizationId ?? null,
+          ...(params ? { params } : {}),
+          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+        }),
         staleTime,
       });
     },
@@ -186,14 +212,17 @@ export function createCrudPrefetcher(
       if (!api.getDeleted) {
         throw new Error(`[arc-next] prefetchDeleted requires an api with getDeleted (softDelete preset)`);
       }
-      const { organizationId, ...restParams } = params;
-      const queryKey = KEYS.custom('deleted', { organizationId, ...restParams });
+      const { organizationId: paramOrgId, ...restParams } = params;
+      const orgId = (paramOrgId as string | null) ?? options.organizationId ?? null;
+      const queryKey = KEYS.custom('deleted', { ...(orgId ? { organizationId: orgId } : {}), ...restParams });
 
       await queryClient.prefetchQuery({
         queryKey,
         queryFn: () => api.getDeleted!({
           params: restParams,
-          organizationId: (organizationId as string | null) ?? null,
+          token: options.token ?? null,
+          organizationId: orgId,
+          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
         }),
         staleTime: options.staleTime,
       });
@@ -203,14 +232,17 @@ export function createCrudPrefetcher(
       if (!api.getTree) {
         throw new Error(`[arc-next] prefetchTree requires an api with getTree (tree preset)`);
       }
-      const { organizationId, ...restParams } = params;
-      const queryKey = KEYS.custom('tree', { organizationId, ...restParams });
+      const { organizationId: paramOrgId, ...restParams } = params;
+      const orgId = (paramOrgId as string | null) ?? options.organizationId ?? null;
+      const queryKey = KEYS.custom('tree', { ...(orgId ? { organizationId: orgId } : {}), ...restParams });
 
       await queryClient.prefetchQuery({
         queryKey,
         queryFn: () => api.getTree!({
           params: restParams,
-          organizationId: (organizationId as string | null) ?? null,
+          token: options.token ?? null,
+          organizationId: orgId,
+          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
         }),
         staleTime: options.staleTime,
       });
