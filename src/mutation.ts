@@ -54,6 +54,26 @@ export function configureToast(handler: ToastHandler): void {
   toastHandler = handler;
 }
 
+/**
+ * Get the configured toast handler. Returns the console-based default when
+ * no handler has been configured yet.
+ *
+ * Use this when domain code outside the react-query lifecycle needs to fire
+ * ad-hoc success/error toasts using the same handler the SDK uses internally
+ * — avoids the need for consumer SDKs to keep a parallel cache of the handler.
+ *
+ * @example
+ * // In a domain helper outside any mutation lifecycle:
+ * import { getToastHandler } from '@classytic/arc-next/mutation';
+ *
+ * function notifySaved(label: string) {
+ *   getToastHandler().success(`${label} saved`);
+ * }
+ */
+export function getToastHandler(): ToastHandler {
+  return toastHandler;
+}
+
 function showToast(
   type: "success" | "error",
   messages: MutationMessages | undefined,

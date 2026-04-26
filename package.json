@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -42,6 +42,10 @@
       "types": "./dist/api.d.ts",
       "default": "./dist/api.js"
     },
+    "./cache": {
+      "types": "./dist/cache.d.ts",
+      "default": "./dist/cache.js"
+    },
     "./query": {
       "types": "./dist/query.d.ts",
       "default": "./dist/query.js"
@@ -66,6 +70,34 @@
       "types": "./dist/sse.d.ts",
       "default": "./dist/sse.js"
     },
+    "./ws": {
+      "types": "./dist/ws.d.ts",
+      "default": "./dist/ws.js"
+    },
+    "./upload": {
+      "types": "./dist/upload.d.ts",
+      "default": "./dist/upload.js"
+    },
+    "./presets/soft-delete": {
+      "types": "./dist/presets/soft-delete.d.ts",
+      "default": "./dist/presets/soft-delete.js"
+    },
+    "./presets/bulk": {
+      "types": "./dist/presets/bulk.d.ts",
+      "default": "./dist/presets/bulk.js"
+    },
+    "./presets/slug": {
+      "types": "./dist/presets/slug.d.ts",
+      "default": "./dist/presets/slug.js"
+    },
+    "./presets/tree": {
+      "types": "./dist/presets/tree.d.ts",
+      "default": "./dist/presets/tree.js"
+    },
+    "./presets/search": {
+      "types": "./dist/presets/search.d.ts",
+      "default": "./dist/presets/search.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -84,6 +116,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "push": "classytic-push",
+    "release:tag": "node -e \"require('child_process').execSync('npm run push -- v'+require('./package.json').version,{stdio:'inherit'})\"",
+    "release": "npm run push -- main && npm run release:tag && npm publish",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "peerDependencies": {
@@ -91,6 +126,7 @@
     "react": ">=19.0.0"
   },
   "devDependencies": {
+    "@classytic/dev-tools": "^0.2.0",
     "@tanstack/react-query": "^5.97.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

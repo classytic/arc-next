@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import {
   configureToast,
+  getToastHandler,
   useMutationWithTransition,
   useMutationWithOptimistic,
 } from '../src/mutation.js';
@@ -44,6 +45,36 @@ describe('configureToast', () => {
       error: vi.fn(),
     };
     expect(() => configureToast(handler)).not.toThrow();
+  });
+});
+
+describe('getToastHandler', () => {
+  it('returns the configured handler so domain code can fire ad-hoc toasts', () => {
+    const success = vi.fn();
+    const error = vi.fn();
+    configureToast({ success, error });
+
+    const handler = getToastHandler();
+    handler.success('saved');
+    handler.error('boom');
+
+    expect(success).toHaveBeenCalledWith('saved');
+    expect(error).toHaveBeenCalledWith('boom');
+  });
+
+  it('returns the same instance configureToast was called with (identity preserved)', () => {
+    const handler = { success: vi.fn(), error: vi.fn() };
+    configureToast(handler);
+    expect(getToastHandler()).toBe(handler);
+  });
+
+  it('returns a non-null default handler before configureToast is ever called (no crashes in early-boot code)', () => {
+    // Module-level state — we can't fully reset it within a test run, but the
+    // contract is that getToastHandler() never returns null/undefined regardless
+    // of timing. Verify the shape.
+    const handler = getToastHandler();
+    expect(typeof handler.success).toBe('function');
+    expect(typeof handler.error).toBe('function');
   });
 });
 

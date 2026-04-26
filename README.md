@@ -1,538 +1,318 @@
 # @classytic/arc-next
 
-React + TanStack Query SDK for Arc resources. Typed CRUD hooks with optimistic updates, automatic rollback, multi-tenant scoping, pagination normalization, and detail cache prefilling. No separate state management library needed.
+React + TanStack Query SDK for the Arc backend framework. Typed CRUD hooks, optimistic updates with rollback, multi-tenant cache scoping, pagination normalization, real-time SSE.
 
-**Requires:** React 19+, TanStack React Query 5+
-
-## Install
+**Peers:** React 19+, TanStack React Query 5+
 
 ```bash
 npm install @classytic/arc-next
 ```
 
-**Peer dependencies:**
-
-```bash
-npm install react@^19 @tanstack/react-query@^5
-```
-
 ## Setup
 
-Call the configuration functions once at app init (e.g., in your root providers):
+Call once at app init from a `"use client"` provider:
 
 ```ts
-import { configureClient, configureAuth } from "@classytic/arc-next/client";
+import { configureClient, configureAuth, createAuthAwareClient } from "@classytic/arc-next/client";
 import { configureToast } from "@classytic/arc-next/mutation";
 import { configureNavigation } from "@classytic/arc-next/hooks";
-import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 
-// Required — sets the API base URL and auth mode
-configureClient({
-  baseUrl: process.env.NEXT_PUBLIC_API_URL!,
-  authMode: "cookie",        // 'cookie' | 'bearer' (default) | 'header'
-  // apiVersion: '2',        // sends Accept-Version header
-  // autoIdempotency: true,  // auto Idempotency-Key on mutations (retry-safe)
-});
-
-// Optional — auto-inject tenant context into queries/mutations
-configureAuth({
-  getOrgId: () => activeTenantId, // return current tenant/org/workspace ID
-  getToken: () => null, // null for cookie auth (token only for bearer)
-});
-
-// Optional — pluggable toast (defaults to console)
+configureClient({ baseUrl: process.env.NEXT_PUBLIC_API_URL!, authMode: "cookie" });
+configureAuth({ getToken: () => session?.token ?? null, getOrgId: () => org?.id ?? null });
 configureToast({ success: toast.success, error: toast.error });
-
-// Optional — enables useNavigation() routing (defaults to cache-only)
 configureNavigation(useRouter);
+```
+
+`getToken` **must be synchronous** — cache async tokens out-of-band. Promise returns are dropped + warned in dev.
+
+## Quick Start
+
+```ts
+import { createCrudApi } from "@classytic/arc-next/api";
+import { createCrudHooks } from "@classytic/arc-next/hooks";
+import { withSoftDelete } from "@classytic/arc-next/presets/soft-delete";
+import { withBulk } from "@classytic/arc-next/presets/bulk";
+
+interface Product { _id: string; name: string; price: number; }
+
+// Compose only the presets your backend actually mounts.
+// Vanilla `createCrudApi` ships CRUD + action + invokeRoute + upload only;
+// add presets via factory wrappers (matches arc's server-side `presets: [...]`).
+const productsApi = withBulk(withSoftDelete(
+  createCrudApi<Product>("products", { basePath: "/api" }),
+));
+
+export const {
+  KEYS, cache,
+  useList, useDetail, useActions, useNavigation,
+  useInfiniteList, useUpload, useCustomMutation,
+  useDeleted, useBulkActions, useDetailBySlug, useTree, useChildren,
+} = createCrudHooks<Product>({ api: productsApi, entityKey: "products", singular: "Product" });
+```
+
+```tsx
+"use client";
+function Products() {
+  const { items, pagination, isLoading } = useList(null, { organizationId: orgId });
+  const { create, update, remove, isCreating } = useActions();
+  // ...
+}
 ```
 
 ## Subpath Exports
 
-| Import                              | Purpose                                                                      | `"use client"` |
-| ----------------------------------- | ---------------------------------------------------------------------------- | :-------------: |
-| `@classytic/arc-next`               | Root — same as `/hooks` (`createCrudHooks`, `configureNavigation`)           |      Yes        |
-| `@classytic/arc-next/client`        | `configureClient`, `configureAuth`, `createClient`, `handleApiRequest`, `createQueryString`, `ArcApiError`, `isArcApiError`, `getAuthMode`, `getAuthContext` |       No        |
-| `@classytic/arc-next/api`           | `BaseApi`, `createCrudApi`, response types, type guards                      |       No        |
-| `@classytic/arc-next/query`         | `createQueryKeys`, `createCacheUtils`, `useListQuery`, `useDetailQuery`      |      Yes        |
-| `@classytic/arc-next/mutation`      | `configureToast`, `useMutationWithTransition`, `useOptimisticMutation`       |      Yes        |
-| `@classytic/arc-next/hooks`         | `createCrudHooks`, `configureNavigation`                                     |      Yes        |
-| `@classytic/arc-next/query-client`  | `getQueryClient` (SSR-safe singleton)                                        |       No        |
-| `@classytic/arc-next/prefetch`      | `createCrudPrefetcher`, `dehydrate` (SSR prefetch)                           |       No        |
-| `@classytic/arc-next/sse`           | `useEventStream` (Server-Sent Events for real-time cache invalidation)       |      Yes        |
+| Import | Server-safe | Exports |
+|---|:-:|---|
+| `/client` | yes | `configureClient`, `configureAuth`, `createClient`, `createAuthAwareClient`, `handleApiRequest`, `ArcApiError`, `isArcApiError`, `isAbortError`, `isArcErrorCode`, `KNOWN_TOP_LEVEL_CODES`, `KNOWN_DETAILS_CODES`, `getAuthMode`, `getAuthContext`, `getBaseUrl`, `createQueryString` |
+| `/api` | yes | `BaseApi`, `createCrudApi`, response types + type guards |
+| `/cache` | yes | `createQueryKeys`, `createCacheUtils`, `extractItem`, `extractItems`, `getItemId`, `updateListCache`, `normalizePagination`, `QUERY_CONFIGS`, `DEFAULT_QUERY_CONFIG` — server-safe utilities for RSC prefetch + Server Component imports |
+| `/query` | client | `useApiQuery`, `useListQuery`, `useDetailQuery`, `useInfiniteListQuery` — React hooks. Re-exports the cache utilities for back-compat, but new code should import server-safe utils from `/cache` directly |
+| `/mutation` | client | `configureToast`, `useMutationWithTransition`, `useMutationWithOptimistic` |
+| `/hooks` | client | `createCrudHooks`, `configureNavigation` (also default export) |
+| `/query-client` | yes | `getQueryClient` (SSR-safe singleton) |
+| `/prefetch` | yes | `createCrudPrefetcher`, `dehydrate` |
+| `/sse` | client | `useEventStream`, `buildSseUrl`, `subscribeToEvents` |
+| `/ws` | client | `useWebSocket`, `buildWsUrl`, `connectWs` |
+| `/upload` | client | `useUploadWithProgress`, `uploadWithProgress` — XHR-based uploads with native progress events |
+| `/presets/soft-delete` | yes | `withSoftDelete` — adds `getDeleted`, `restore` |
+| `/presets/bulk` | yes | `withBulk` — adds `bulkCreate`, `bulkUpdate`, `bulkDelete` |
+| `/presets/slug` | yes | `withSlugLookup` — adds `getBySlug` |
+| `/presets/tree` | yes | `withTree` — adds `getTree`, `getChildren` |
+| `/presets/search` | yes | `withSearchPreset` — adds `searchEngine`, `searchSimilar`, `embed` |
 
-No barrel index — every file is its own entry point. Tree-shakeable (`sideEffects: false`).
+`sideEffects: false`. No barrel — every file is its own entry point.
 
-## Quick Start
-
-### 1. Define API
+## Core Hooks (from `createCrudHooks`)
 
 ```ts
-import { createCrudApi } from "@classytic/arc-next/api";
+const { items, pagination, isLoading, refetch } = useList(token, params, options);
+const { item, isLoading } = useDetail(id, token, options);
+const { create, update, remove, isMutating } = useActions();
+const { items, hasNextPage, fetchNextPage } = useInfiniteList(token, params);
 
-interface Product {
-  _id: string;
-  name: string;
-  price: number;
-  organizationId: string;
-}
-
-interface CreateProduct {
-  name: string;
-  price: number;
-}
-
-export const productsApi = createCrudApi<Product, CreateProduct>(
-  "products",
-  { basePath: "/api" }
-);
+await create({ data, organizationId }, { onSuccess: (item) => navigate(...) });
 ```
 
-### 2. Create hooks
+All mutations are optimistic with automatic rollback on error. Lists prefill the detail cache. Cache keys auto-scope by `organizationId` when present.
+
+### `useApiQuery` — non-CRUD reads
+
+For reports, aggregates, RPC-style endpoints. Auto-unwraps `{ success, data }`:
 
 ```ts
-import { createCrudHooks } from "@classytic/arc-next/hooks";
-import { productsApi } from "./products-api";
+import { useApiQuery } from "@classytic/arc-next/query";
 
-export const {
-  KEYS: productKeys,
-  cache: productCache,
-  useList: useProducts,
-  useDetail: useProduct,
-  useActions: useProductActions,
-  useNavigation: useProductNavigation,
-} = createCrudHooks<Product, CreateProduct>({
-  api: productsApi,
-  entityKey: "products",
-  singular: "Product",
+const { data, isLoading } = useApiQuery<ApiResponse<DashboardStats>>({
+  queryKey: ["dashboard", "stats"],
+  queryFn: ({ signal }) => api.request("GET", "/dashboard/stats", { options: { signal } }),
+  freshness: "realtime",  // 'realtime' | 'frequent' | 'stable' | 'static'
 });
 ```
 
-### 3. Use in components
+Pass a custom `select` to override auto-unwrap.
 
-```tsx
-"use client";
+## Actions & Custom Routes
 
-export function ProductsPage() {
-  const { items, pagination, isLoading } = useProducts(null, {
-    organizationId: "org-123",
-  }, { public: true });
-
-  const { create, remove, isCreating } = useProductActions();
-
-  if (isLoading) return <div>Loading...</div>;
-
-  return (
-    <div>
-      <button
-        onClick={() => create({ data: { name: "Widget", price: 9.99 } })}
-        disabled={isCreating}
-      >
-        Add Product
-      </button>
-      {items.map((p) => (
-        <div key={p._id}>
-          {p.name} — ${p.price}
-          <button onClick={() => remove({ id: p._id })}>Delete</button>
-        </div>
-      ))}
-      {pagination && <span>{pagination.total} total</span>}
-    </div>
-  );
-}
-```
-
-## API Reference
-
-### `configureClient(config)`
+Two escape hatches when CRUD isn't enough — both `BaseApi` methods, both routed through your configured client/auth:
 
 ```ts
-configureClient({
-  baseUrl: string;                          // Required — API base URL
-  authMode?: 'bearer' | 'cookie' | 'header'; // Default: 'bearer'
-  credentials?: RequestCredentials;         // Default: derived from authMode
-  internalApiKey?: string;                  // Sent as x-internal-api-key header
-  defaultHeaders?: Record<string, string>; // Merged into every request
-  apiVersion?: string;                     // Sent as Accept-Version header
-  autoIdempotency?: boolean;               // Auto Idempotency-Key on mutations (retry-safe)
+// POST /:id/action — discriminator-style state transitions
+// Named `dispatchAction` so consumer subclasses can keep their own `action()` method.
+await api.dispatchAction({ id, action: "complete" });
+await api.dispatchAction({ id, action: "prioritize", data: { priority: 7 } });
+
+// Resource-relative custom routes (defineResource({ routes: [...] }))
+const stats = await api.invokeRoute<{ data: { total: number } }>({
+  method: "GET",
+  path: "/stats",
+});
+const recent = await api.invokeRoute<PaginatedResponse<Todo>>({
+  method: "GET",
+  path: "/recent",
+  params: { limit: 5 },
 });
 ```
 
-- `authMode: 'bearer'` (default) — requires token; queries disabled until provided
-- `authMode: 'cookie'` — HTTP-only cookies (e.g. Better Auth); queries always enabled
-- `authMode: 'header'` — custom header auth (e.g. `x-api-key`); uses `headerName` from `configureAuth`
-
-Must be called before any API requests. Warns if called on the server (SSR safety).
-
-### `configureAuth(config)`
+The `useAction` hook (returned from `createCrudHooks`) wraps `api.dispatchAction()` with toast + invalidation. For custom GETs, compose `api.invokeRoute()` with `useApiQuery` — it auto-unwraps the `{ success, data }` envelope:
 
 ```ts
-configureAuth({
-  getToken?: () => string | null;   // For bearer/header auth — return access token or API key
-  getOrgId?: () => string | null;   // Return active organization ID
-  headerName?: string;              // Custom header name for authMode: 'header' (default: 'x-api-key')
+const { data } = useApiQuery({
+  queryKey: ["todos", "stats"],
+  queryFn: ({ signal }) => api.invokeRoute({ path: "/stats", options: { signal } }),
+  freshness: "frequent",
 });
 ```
 
-Auto-injects `token` and tenant ID (sent as `x-organization-id` header) into queries/mutations. The header name is a convention — your backend controls how it's read and which field it maps to (`organizationId`, `workspaceId`, `teamId`, etc.). Hooks use the new signature (no explicit token param) — legacy signature still works.
+## Presets — Opt-In Methods
 
-### `handleApiRequest<T>(method, endpoint, options?)`
+Vanilla `createCrudApi(...)` ships only the always-on surface (CRUD + `action` + `invokeRoute` + `upload`). Backend presets — soft-delete, bulk, slug-lookup, tree, search — light up extra routes; the SDK mirrors that with **factory wrappers**, so autocomplete only shows what your resource actually exposes and unused code tree-shakes out of the bundle.
 
-Universal fetch wrapper. Handles JSON, PDF, image, CSV, and text responses.
+> No separate `search()` / `findBy()` methods — they hit the same `GET /` as `getAll()`. Pass operators directly via params: `getAll({ params: { 'title[contains]': q, 'priority[gte]': 5 } })`. Mongokit URL grammar handles all bracket operators including geo.
 
 ```ts
-const result = await handleApiRequest<ApiResponse<User>>("GET", "/api/users/me");
-const list = await handleApiRequest<PaginatedResponse<Product>>("GET", "/api/products?page=1");
+import { withSoftDelete } from "@classytic/arc-next/presets/soft-delete";
+import { withBulk } from "@classytic/arc-next/presets/bulk";
+import { withSlugLookup } from "@classytic/arc-next/presets/slug";
+import { withTree } from "@classytic/arc-next/presets/tree";
+import { withSearchPreset } from "@classytic/arc-next/presets/search";
+
+// Stack only what the backend has registered
+const todosApi = withBulk(withSoftDelete(createCrudApi<Todo>("todos")));
+const placesApi = withSearchPreset(createCrudApi<Place>("places"));
+const categoriesApi = withTree(withSlugLookup(createCrudApi<Category>("categories")));
+
+// Only categoriesApi has getBySlug + getTree + getChildren in autocomplete.
+// `placesApi.embed` won't show up. `todosApi.searchEngine` is a type error.
+await todosApi.bulkCreate({ data: [{ title: "A" }, { title: "B" }] });
+await placesApi.searchEngine({ query: "park", body: { topK: 10 } });
+await categoriesApi.getBySlug({ slug: "engineering" });
 ```
 
-**Options:**
-- `body` — request body (auto-serializes JSON, passes FormData as-is)
-- `token` — Bearer token
-- `organizationId` — sent as `x-organization-id` header
-- `headerOptions` — additional headers merged into request
-- `signal` — AbortSignal for request cancellation
-- `revalidate` / `tags` / `cache` — Next.js fetch extensions
+| Preset | Adds methods | Backend route |
+|---|---|---|
+| `withSoftDelete` | `getDeleted`, `restore` | `softDelete` preset |
+| `withBulk` | `bulkCreate`, `bulkUpdate`, `bulkDelete` | `bulk` preset |
+| `withSlugLookup` | `getBySlug` | `slugLookup` preset |
+| `withTree` | `getTree`, `getChildren` | `tree` preset |
+| `withSearchPreset` | `searchEngine`, `searchSimilar`, `embed` | `searchPreset()` |
 
-### `createQueryString(params)`
+The hook variants (`useDeleted`, `useBulkActions`, `useDetailBySlug`, `useTree`, `useChildren`, `useSearchEngine`, `useSearchSimilar`, `useEmbed`) are returned from `createCrudHooks` and gracefully throw at call time when the api wasn't wrapped with the matching preset.
 
-MongoKit-compatible query string builder:
-- Arrays → `field[in]=a,b,c`
-- `populateOptions` → `populate[path][select]=field1,field2`
-- `null` → `field=null`
+## Filter operators (mongokit URL grammar)
 
-### `createCrudApi<TDoc, TCreate, TUpdate>(entity, config?)`
-
-Creates a typed API client instance.
+Pass any operator via bracket-key params — `prepareParams` keeps operator-keyed arrays as comma-joined tuples (no `[in]` rewriting), so you get the exact wire shape mongokit's `QueryParser` expects.
 
 ```ts
-const api = createCrudApi<Product, CreateProduct>("products", {
-  basePath: "/api",       // default: "/api/v1"
-  defaultParams: { limit: 20 },
-  cache: "no-store",      // default
-  headers: {              // optional — sent with every request from this instance
-    "x-arc-scope": "platform",  // e.g. for superadmin elevation
+// Range / comparison
+await api.getAll({ params: { 'priority[gte]': 5, 'price[between]': '10,100' } });
+
+// Pattern matching
+await api.getAll({ params: { 'title[contains]': 'urgent' } });
+
+// IN list (auto-rewritten from plain array on plain field name)
+await api.getAll({ params: { status: ['active', 'pending'] } });
+//   → status[in]=active,pending
+
+// Geo — coordinate tuples preserved as-is
+await api.getAll({ params: { 'location[withinRadius]': [-73.98, 40.75, 5_000] } });
+await api.getAll({ params: { 'location[near]': [-73.98, 40.75, 4_000] } });
+await api.getAll({ params: { 'location[geoWithin]': [-74.02, 40.7, -73.93, 40.79] } });
+```
+
+Operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `contains`, `startsWith`, `endsWith`, `regex`, `like`, `exists`, `between`, `near`, `nearSphere`, `withinRadius`, `geoWithin`.
+
+## SSE — Real-Time
+
+```ts
+import { useEventStream, buildSseUrl } from "@classytic/arc-next/sse";
+
+useEventStream({
+  resource: "agents",                     // auto-derives [agents.created, agents.updated, agents.deleted]
+  invalidateQueries: [agentKeys.lists()], // refetch on every event
+});
+
+// Or explicit named events (Arc ssePlugin emits `event: <type>` frames):
+useEventStream({
+  eventTypes: ["sync-job.phase", "sync-job.completed"],
+  onEvent: (event) => { /* ... */ },
+});
+
+// Build authenticated SSE URLs for ad-hoc EventSource consumers:
+const url = buildSseUrl("/jobs/stream", { jobId });
+```
+
+## WebSocket — Real-Time + Bidirectional
+
+```ts
+import { useWebSocket, buildWsUrl } from "@classytic/arc-next/ws";
+
+const { isConnected, lastMessage, send, subscribe, unsubscribe } = useWebSocket({
+  subscribe: ["todo"],                      // sends {type:'subscribe', resource:'todo'} on open
+  invalidateQueries: [todoKeys.lists()],    // refetch on every broadcast
+  patterns: ["todo.", "order.completed"],   // filter — prefix match (`x.`) or exact
+  onMessage: (msg) => console.log(msg.type, msg.data),
+  heartbeatInterval: 30_000,                // optional app-level ping
+});
+
+// Send any JSON payload — returns false if not connected
+send({ type: "chat.message", text: "hi" });
+
+// Build the URL for a raw WebSocket consumer (Node, worker, etc.)
+const url = buildWsUrl("/ws", { roomId: "r-1" });
+```
+
+Subscriptions persist across reconnects — anything passed in `subscribe` (or via `subscribe()`) is auto-resent after the socket re-opens.
+
+## Uploads with Progress
+
+`fetch()` lacks a cross-browser upload-progress API, so arc-next ships a separate XHR-based pipeline at `/upload`. Same auth + error envelope as the fetch path:
+
+```ts
+import { useUploadWithProgress } from "@classytic/arc-next/upload";
+
+const { upload, progress, isUploading, cancel, error } = useUploadWithProgress<
+  { url: string },
+  { file: File; folder?: string }
+>({
+  url: "/api/v1/media/upload",
+  buildFormData: ({ file, folder }) => {
+    const fd = new FormData();
+    if (folder) fd.append("folder", folder);
+    fd.append("file", file);
+    return fd;
   },
-});
-```
-
-**Methods:**
-
-| Method | Signature |
-|---|---|
-| `getAll` | `({ token?, organizationId?, params? }) → PaginatedResponse<T>` |
-| `getById` | `({ id, token?, organizationId?, params? }) → ApiResponse<T>` |
-| `create` | `({ data, token?, organizationId? }) → ApiResponse<T>` |
-| `update` | `({ id, data, token?, organizationId? }) → ApiResponse<T>` |
-| `delete` | `({ id, token?, organizationId? }) → DeleteResponse` |
-| `upload` | `({ data: FormData, id?, path?, token?, organizationId? }) → ApiResponse<T>` |
-| `search` | `({ searchParams?, params?, token?, organizationId? }) → PaginatedResponse<T>` |
-| `findBy` | `({ field, value, operator?, token?, organizationId? }) → PaginatedResponse<T>` |
-| `request` | `(method, endpoint, { data?, params?, token? }) → T` |
-
-**`prepareParams(params)`** — processes query params: critical filters (`organizationId`, `ownerId`) preserved as null, arrays → `field[in]`, pagination parsed to int.
-
-### `createCrudHooks<T, TCreate, TUpdate>(config)`
-
-Factory that returns everything you need. The `api` parameter accepts any `createCrudApi()` result directly — no casts needed. Types are derived from `BaseApi` via `Pick`, so generics thread through automatically:
-
-```ts
-const {
-  KEYS, cache,
-  useList, useDetail, useInfiniteList,
-  useActions, useBulkActions,
-  useDeleted, useDetailBySlug, useTree, useChildren, useFindBy,
-  useUpload, useSearch, useCustomMutation,
-  useNavigation,
-} = createCrudHooks<Product, CreateProduct>({
-    api: productsApi,       // from createCrudApi() — types inferred, no cast
-    entityKey: "products",  // TanStack Query key prefix
-    singular: "Product",    // for toast messages
-    idField: "sku",         // optional — custom ID field for cache keys (default: _id → id)
-    defaults: {             // optional
-      staleTime: 60_000,
-      messages: { createSuccess: "Product added!" },
-    },
-    callbacks: {            // optional
-      onCreate: {
-        onSuccess: (data) => console.log("Created:", data),
-        onSettled: (data, error) => console.log("Done"),
-      },
-    },
-  });
-```
-
-**Returned hooks:**
-
-#### `useList(token, params?, options?)`
-
-```ts
-const { items, pagination, isLoading, isFetching, refetch } = useList(
-  token,
-  { organizationId: "org-123", status: "active" },
-  { public: true, staleTime: 30_000, prefillDetailCache: true }
-);
-```
-
-- Auto-scopes list query keys by tenant context (when present → `tenant` scope, otherwise → `super-admin`)
-- Normalizes pagination from `docs`/`data`/`items`/`results` formats
-- Prefills detail cache from list results (skips re-fetch on navigate)
-- `options.public: true` — enables query without token
-
-**`select` transform** — transform raw API data before it reaches your component:
-
-```ts
-const { items } = useList(token, { organizationId }, {
-  select: (data) => ({
-    ...data,
-    docs: data.docs.map((p) => ({ ...p, displayName: `${p.name} ($${p.price})` })),
-  }),
-});
-```
-
-#### `useDetail(id, token, options?)`
-
-```ts
-const { item, isLoading } = useDetail(productId, token, {
-  organizationId: "org-123",
-});
-```
-
-- Disabled when `id` is null (conditional fetching)
-- Extracts item from `{ data: T }` wrapper
-
-**`select` transform:**
-
-```ts
-const { item } = useDetail(productId, token, {
-  select: (data) => ({ ...data.data, fullName: `${data.data.firstName} ${data.data.lastName}` }),
-});
-```
-
-#### `useActions()`
-
-```ts
-const { create, update, remove, isCreating, isUpdating, isDeleting, isMutating } =
-  useActions();
-
-// All mutations have optimistic updates + automatic rollback on error
-await create({ data: { name: "New" }, organizationId: "org-123" });
-await update({ id: "123", data: { name: "Updated" } });
-await remove({ id: "123" });
-
-// Per-call callbacks
-await create(
-  { data: { name: "New" } },
-  { onSuccess: (item) => navigate(`/products/${item._id}`) }
-);
-```
-
-- **Create** — optimistic: prepends to list with temp ID
-- **Update** — optimistic: patches item in list + detail cache
-- **Delete** — optimistic: removes from list + detail cache
-- All roll back automatically on error
-
-#### `useNavigation()`
-
-```ts
-const navigate = useNavigation();
-navigate(`/products/${id}`, product);              // push + cache prefill
-navigate(`/products/${id}`, product, { replace: true }); // replace
-```
-
-Sets detail cache before navigation (instant page load, no loading spinner).
-Requires `configureNavigation(useRouter)` — without it, only sets cache (no routing).
-
-#### `useInfiniteList(token, params?, options?)`
-
-Cursor-based infinite scrolling with automatic page aggregation:
-
-```ts
-const { items, hasNextPage, fetchNextPage, isFetchingNextPage, isLoading } =
-  useInfiniteList(token, { organizationId: "org-123", limit: 20 });
-```
-
-- Supports both keyset (`hasMore`/`next`) and offset (`hasNext`/`page`) pagination
-- Returns flattened `items` across all pages
-- Auto-scopes query keys like `useList`
-
-#### `useUpload(options?)`
-
-Upload FormData with cache invalidation:
-
-```ts
-const { mutateAsync: upload, isPending } = useUpload({
-  messages: { success: "Uploaded!", error: "Upload failed" },
-  onSuccess: (data) => console.log("Uploaded:", data),
+  invalidateQueries: [mediaKeys.lists()],
+  messages: { success: "Uploaded" },
 });
 
-// Post to base collection URL
-await upload({ data: formData });
-// Post to /products/{id}/upload
-await upload({ data: formData, id: "doc-123" });
-// Post to /products/bulk-import (custom path takes precedence over id)
-await upload({ data: formData, path: "bulk-import" });
+// Bind progress.percent to a <ProgressBar /> — every tick re-renders.
 ```
 
-Requires `api.upload` to be defined. Throws if not available.
+For non-React consumers, `uploadWithProgress({ url, formData, onProgress, signal })` returns a Promise.
 
-#### `useSearch(query, params?, options?)`
+> **Divergence from the fetch path:** `ClientConfig.retry`, `beforeRequest`, and `afterResponse` do **not** propagate to uploads. Re-trying multi-MB bodies is rarely wanted (re-encoding cost, duplicate-write risk) and bridging XHR progress into the fetch interceptor pipeline would conflict with the upload-progress contract. Trace/correlation headers, latency loggers, and other interceptor logic must be passed explicitly via the `headers` option (or the `headers` factory on `useUploadWithProgress`). Auth, error parsing, `Idempotency-Key`, `x-arc-scope`, and `Accept-Version` all DO carry over.
 
-Search with automatic query key scoping:
+## Multi-Client
 
-```ts
-const { items, pagination, isLoading } = useSearch("widget", {
-  organizationId: "org-123",
-});
-```
-
-- Disabled when `query` is empty
-- Requires `api.search` to be defined
-
-#### `useCustomMutation<TData, TVariables>(config)`
-
-Build custom mutations that share the entity's toast and invalidation patterns:
+Each `createClient` call is independent — its own `baseUrl`, auth, headers:
 
 ```ts
-const { mutateAsync: publish, isPending } = useCustomMutation({
-  mutationFn: (id: string) => api.request("POST", `${api.baseUrl}/${id}/publish`),
-  invalidateQueries: [productKeys.lists()],
-  messages: { success: "Published!", error: "Failed to publish" },
-});
-```
+import { createClient } from "@classytic/arc-next/client";
 
-#### `useDeleted(params?, options?)`
-
-List soft-deleted items. Requires `softDelete` preset on the Arc resource.
-
-#### `useDetailBySlug(slug, options?)`
-
-Fetch a single item by slug (`GET /slug/:slug`). Requires `slugLookup` preset.
-
-#### `useTree(params?, options?)`
-
-Fetch hierarchical tree data (`GET /tree`). Requires `tree` preset.
-
-#### `useChildren(parentId, params?, options?)`
-
-Fetch children of a parent node (`GET /:parentId/children`). Requires `tree` preset.
-
-#### `useFindBy(field, value, options?)`
-
-Query by a single field with optional operator:
-
-```ts
-const { items } = useFindBy("status", "active");
-const { items } = useFindBy("price", 50, { operator: "gte" });
-```
-
-#### `useBulkActions()`
-
-```ts
-const { bulkCreate, bulkUpdate, bulkRemove } = useBulkActions();
-await bulkCreate({ data: [{ name: "A" }, { name: "B" }] });
-```
-
-#### `useEventStream(options)` (from `./sse`)
-
-Subscribe to Arc SSE events with auto-reconnect and query invalidation:
-
-```ts
-import { useEventStream } from "@classytic/arc-next/sse";
-
-// Global stream — all events (matches Arc's /events/stream)
-const { isConnected } = useEventStream({
-  invalidateQueries: [agentKeys.lists()],
+const analytics = createClient({
+  baseUrl: "https://analytics.example.com",
+  authMode: "header",
+  getToken: () => env.ANALYTICS_KEY,
+  headerName: "x-api-key",
 });
 
-// Filtered by resource — auto-generates patterns: ['agents.*']
-const { lastEvent } = useEventStream({
-  resource: "agents",
-  invalidateQueries: [agentKeys.lists()],
-});
-
-// Custom SSE path or explicit patterns
-const { isConnected } = useEventStream({
-  path: "/api/v2/events",
-  patterns: ["orders.created", "orders.updated"],
-});
+const eventsApi = createCrudApi("events", { client: analytics });
 ```
 
-### Query Keys (`KEYS`)
+For consumer SDKs that just need to bridge the global auth singleton:
 
 ```ts
-KEYS.all                              // ["products"]
-KEYS.lists()                          // ["products", "list"]
-KEYS.list(params)                     // ["products", "list", params]
-KEYS.details()                        // ["products", "detail"]
-KEYS.detail(id)                       // ["products", "detail", id]
-KEYS.scopedDetail(id, orgId)          // ["products", "detail", id, { _org: orgId }] (or bare when null)
-KEYS.custom("stats", orgId)           // ["products", "stats", orgId]
-KEYS.scopedList("tenant", params)     // ["products", "list", { _scope: "tenant", ...params }]
+import { createAuthAwareClient } from "@classytic/arc-next/client";
+
+const api = createCrudApi("products", { client: createAuthAwareClient() });
 ```
 
-### Cache Utilities (`cache`)
+## SSR Prefetch (Next.js App Router / Server Components)
 
-```ts
-// Bare (single-tenant or public)
-cache.setDetail(queryClient, id, data);
-cache.getDetail(queryClient, id);
-cache.removeDetail(queryClient, id);
-await cache.invalidateDetail(queryClient, id);  // prefix-matches ALL scoped variants
-
-// Tenant-scoped (multi-tenant — isolated per org)
-cache.setScopedDetail(queryClient, id, orgId, data);
-cache.getScopedDetail(queryClient, id, orgId);
-cache.removeScopedDetail(queryClient, id, orgId);
-await cache.invalidateScopedDetail(queryClient, id, orgId);
-
-// Global
-await cache.invalidateAll(queryClient);
-await cache.invalidateLists(queryClient);
-```
-
-### `getQueryClient(overrides?)`
-
-SSR-safe singleton. Server: new per request. Browser: reuses singleton.
-
-```ts
-import { getQueryClient } from "@classytic/arc-next/query-client";
-import { QueryClientProvider } from "@tanstack/react-query";
-
-function Providers({ children }) {
-  const queryClient = getQueryClient();
-  return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-    </QueryClientProvider>
-  );
-}
-```
-
-Defaults: `staleTime: 5min`, `gcTime: 30min`, `retry: 0`, `refetchOnWindowFocus: false`.
-
-## SSR Prefetch (Server Components)
-
-Pre-populate the query cache on the server to avoid loading spinners:
-
-```ts
-// products-prefetch.ts
-import { createCrudPrefetcher } from "@classytic/arc-next/prefetch";
-import { productsApi } from "@/api/products-api";
-
-export const productsPrefetcher = createCrudPrefetcher(productsApi, "products");
-```
+`createCrudPrefetcher` plus `getQueryClient` give you the canonical TanStack Query × Next.js App Router pattern: per-request `QueryClient` on the server, prefetch on the route, hydrate into a `"use client"` child via `HydrationBoundary`.
 
 ```tsx
-// app/products/page.tsx (server component)
+// app/products/page.tsx — Server Component (no "use client")
+import { createCrudPrefetcher, dehydrate, HydrationBoundary } from "@classytic/arc-next/prefetch";
 import { getQueryClient } from "@classytic/arc-next/query-client";
-import { dehydrate } from "@classytic/arc-next/prefetch";
-import { HydrationBoundary } from "@tanstack/react-query";
-import { productsPrefetcher } from "@/prefetch/products-prefetch";
+import { productsApi } from "@/api/products-api";
+import { ProductsList } from "./products-list"; // "use client"
+
+const prefetcher = createCrudPrefetcher(productsApi, "products");
 
 export default async function ProductsPage() {
-  const queryClient = getQueryClient();
-  await productsPrefetcher.prefetchList(queryClient, { limit: 20 });
+  const queryClient = getQueryClient();              // per-request on server
+  await prefetcher.prefetchList(queryClient, { limit: 20 }, { token, organizationId });
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
@@ -542,297 +322,127 @@ export default async function ProductsPage() {
 }
 ```
 
-**Methods:** `prefetchList`, `prefetchDetail`, `prefetchBySlug`, `prefetchDeleted`, `prefetchTree`
+Methods: `prefetchList`, `prefetchDetail`, `prefetchBySlug`, `prefetchDeleted`, `prefetchTree`, `prefetchInfiniteList`.
 
-All accept auth options for protected routes:
+> `prefetchInfiniteList` seeds the `{ pages, pageParams }` cache shape `useInfiniteQuery` expects — a flat `prefetchQuery` won't match and the hook would re-fetch from scratch.
+
+### Streaming with promise-pending dehydration (TanStack Query 5.40+)
+
+`getQueryClient()` ships a default `dehydrate.shouldDehydrateQuery` that includes pending queries, so you can fire-and-forget prefetches inside Suspense boundaries:
+
+```tsx
+export default function ProductsPage() {
+  const queryClient = getQueryClient();
+  // No await — prefetch streams to client when ready
+  prefetcher.prefetchList(queryClient, { limit: 20 });
+
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <Suspense fallback={<ListSkeleton />}>
+        <ProductsList />
+      </Suspense>
+    </HydrationBoundary>
+  );
+}
+```
+
+### Server-safe utilities
+
+Pure helpers (`createQueryKeys`, `extractItem`, `updateListCache`, etc.) live in `@classytic/arc-next/cache` — no `"use client"` directive, so they're safe to import from Server Components for custom prefetch flows. The matching React hooks live in `/query`.
+
+### Next.js 16 `cacheComponents` + `'use cache'`
+
+TanStack Query manages a client-side cache; data fetched through arc-next hooks should NOT be wrapped in a Server Component's `'use cache'` directive (which would bake the hook output into the static render). Use `'use cache'` for non-arc Server Component fetches (e.g., direct DB queries, third-party APIs). The two layers compose cleanly because they target different cache tiers.
+
+## Errors
 
 ```ts
-await prefetcher.prefetchList(queryClient, { limit: 20 }, {
-  token: serverToken,               // for bearer/header auth
-  organizationId: "org-1",          // for multi-tenant
-  headers: { "x-api-key": apiKey }, // for custom header auth
+import { isArcApiError, isAbortError, isArcErrorCode } from "@classytic/arc-next/client";
+
+try { await api.create({ data, options: { signal } }); }
+catch (err) {
+  if (isAbortError(err)) return;       // user navigated away — silence
+  if (isArcApiError(err)) {
+    err.status;       // 422
+    err.fieldErrors;  // { email: "already taken" } | null
+    err.endpoint;     // '/api/products'
+  }
+  if (isArcErrorCode(err, 'DUPLICATE_KEY')) showRetryUI();
+  if (isArcErrorCode(err, 'ORG_CONTEXT_REQUIRED')) promptOrgSelector();
+}
+```
+
+`fieldErrors` reads three shapes: `{ errors: { field: msg } }`, `{ details: { errors: [{ field, message }] } }`, raw AJV `{ instancePath, message }`.
+
+`KNOWN_TOP_LEVEL_CODES` and `KNOWN_DETAILS_CODES` are exported as `as const` arrays — useful for runtime iteration (i18n lookup, retry whitelist, code-mapped UI):
+
+```ts
+import { KNOWN_TOP_LEVEL_CODES } from "@classytic/arc-next/client";
+
+const ERROR_MESSAGES = Object.fromEntries(
+  KNOWN_TOP_LEVEL_CODES.map((code) => [code, t(`error.${code}`)])
+);
+```
+
+## Retry + Interceptors
+
+Network resilience for mutations + direct `handleApiRequest` calls (TanStack Query already retries reads). Off by default — opt in via `configureClient`:
+
+```ts
+configureClient({
+  baseUrl: process.env.NEXT_PUBLIC_API_URL!,
+  retry: {
+    attempts: 3,                       // 1 initial + 2 retries; default off
+    backoff: 'exponential',            // 'exponential' | 'linear' | (attempt) => ms
+    // retryOn: [502, 503, 504],       // optional whitelist; default = network failures + 5xx, never 4xx, never AbortError
+  },
+  // Mutate outgoing requests (per attempt — retries re-run this)
+  beforeRequest: (ctx) => ({
+    ...ctx,
+    headers: { ...ctx.headers, 'x-correlation-id': crypto.randomUUID() },
+  }),
+  // Inspect / transform successful responses (4xx/5xx throw before this)
+  afterResponse: (ctx) => {
+    console.log(`[arc] ${ctx.method} ${ctx.endpoint} ${ctx.status} ${ctx.durationMs}ms`);
+    return ctx;
+  },
 });
+```
+
+Interceptors are async-supported and compose with retry — `beforeRequest` re-runs each attempt (so a refreshed token mid-flight is picked up). Aborting via `AbortSignal` cancels both the pending fetch AND any in-flight backoff sleep.
+
+## Cache & Keys
+
+```ts
+KEYS.detail(id);                        // ["products", "detail", id]
+KEYS.scopedDetail(id, orgId);           // tenant-scoped variant
+
+cache.setDetail(qc, id, data);
+cache.invalidateDetail(qc, id);         // matches all scoped variants
+cache.invalidateLists(qc);
 ```
 
 ## Custom Mutations
 
-For operations beyond CRUD (publish, schedule, upload):
-
-### `useMutationWithTransition(config)`
-
-Mutation + React 19 `useTransition` for smooth cache invalidation:
-
 ```ts
 import { useMutationWithTransition } from "@classytic/arc-next/mutation";
 
-export function usePublishPost() {
-  return useMutationWithTransition({
-    mutationFn: (id: string) =>
-      postsApi.request("POST", `${postsApi.baseUrl}/${id}/publish`),
-    invalidateQueries: [postKeys.all],
-    messages: { success: "Published!", error: "Failed to publish" },
-    useTransition: true, // default
-    showToast: true, // default
-  });
-}
-```
-
-Returns: `{ mutate, mutateAsync, isPending, isSuccess, isError, error, data, reset }`
-
-### `useMutationWithOptimistic(config)`
-
-Mutation + optimistic updates + automatic rollback:
-
-```ts
-import { useMutationWithOptimistic } from "@classytic/arc-next/mutation";
-
-export function useToggleFavorite() {
-  return useMutationWithOptimistic({
-    mutationFn: ({ id, isFav }) =>
-      api.request("PATCH", `/api/products/${id}`, {
-        data: { favorite: !isFav },
-      }),
-    queryKeys: [productKeys.lists()],
-    optimisticUpdate: (old, { id, isFav }) =>
-      updateListCache(old, (items) =>
-        items.map((i) => (getItemId(i) === id ? { ...i, favorite: !isFav } : i))
-      ),
-    messages: { success: "Updated!" },
-  });
-}
-```
-
-### Query Config Presets
-
-```ts
-import { QUERY_CONFIGS } from "@classytic/arc-next/mutation";
-
-// Use in useList options:
-useProducts(token, {}, { ...QUERY_CONFIGS.realtime });
-```
-
-| Preset     | `staleTime` | `refetchInterval` |
-| ---------- | ----------- | ------------------ |
-| `realtime` | 20s         | 30s                |
-| `frequent` | 1min        | —                  |
-| `stable`   | 5min        | —                  |
-| `static`   | 10min       | —                  |
-
-## Low-Level Utilities
-
-### `updateListCache(listData, updater)`
-
-Transforms list cache regardless of format — well-known keys (`docs[]`, `data[]`, `items[]`, `results[]`), custom keys (`products[]`, `users[]`, etc.), or raw arrays.
-Automatically adjusts `total`/`totalDocs` counts when items are added or removed (optimistic add/delete).
-
-```ts
-import { updateListCache } from "@classytic/arc-next/query";
-
-queryClient.setQueryData(KEYS.lists(), (old) =>
-  updateListCache(old, (items) => items.filter((i) => i.status !== "archived"))
-);
-```
-
-### `getItemId(item)`
-
-Extracts `_id` or `id` from any item. Returns `string | null`.
-
-### `normalizePagination(data)`
-
-Converts any pagination response format to a normalized `PaginationData` object. Detects pagination method (`offset`, `keyset`, `aggregate`) and normalizes all fields: `total`/`totalDocs`, `pages`/`totalPages`, `page`/`currentPage`, `hasNext`/`hasNextPage`/`hasMore`, `hasPrev`/`hasPrevPage`, `next` (keyset cursor).
-
-### `extractItems<T>(data)`
-
-Extracts the items array from any response format. Checks well-known keys first (`docs`, `data`, `items`, `results`), then falls back to finding the first top-level array — so `{ products: [...] }` or `{ users: [...] }` works without configuration.
-
-## Multi-Client (Multiple APIs)
-
-By default, `configureClient()` sets a single global `baseUrl`. Use `createClient()` when your app talks to multiple backends.
-
-### Create isolated clients
-
-Each client gets its own `baseUrl`, auth, and headers — fully independent from the global config:
-
-```ts
-import { createClient } from "@classytic/arc-next/client";
-
-// Bearer auth for main API
-const mainClient = createClient({
-  baseUrl: "https://api.example.com",
-  getToken: () => session.jwt,
-  getOrgId: () => currentOrg.id,
-});
-
-// API key auth for analytics (no token needed — hooks auto-enable)
-const analyticsClient = createClient({
-  baseUrl: "https://analytics.internal",
-  authMode: "header",
-  getToken: () => env.ANALYTICS_KEY,
-  headerName: "x-analytics-key",
-});
-
-// Cookie auth for auth service
-const authClient = createClient({
-  baseUrl: "https://auth.example.com",
-  authMode: "cookie",
+const { mutateAsync: publish, isPending } = useMutationWithTransition({
+  mutationFn: (id: string) => api.request("POST", `${api.baseUrl}/${id}/publish`),
+  invalidateQueries: [productKeys.all],
+  messages: { success: "Published!" },
 });
 ```
 
-### Use with createCrudApi
+`useMutationWithOptimistic` adds optimistic cache updates with rollback.
 
-Pass `client` in the config — requests go through the client's `baseUrl` instead of the global one:
+## Auth Modes
 
-```ts
-const eventsApi = createCrudApi("events", {
-  basePath: "/api",
-  client: analyticsClient,
-});
-```
-
-### Use with createCrudHooks
-
-Pass `client` — toast and navigation use the client's handlers instead of globals:
-
-```ts
-const { useList, useActions } = createCrudHooks({
-  api: eventsApi,
-  entityKey: "events",
-  singular: "Event",
-  client: analyticsClient,
-});
-```
-
-### Direct requests
-
-```ts
-const data = await analyticsClient.request("GET", "/api/stats");
-const result = await analyticsClient.request("POST", "/api/events", {
-  body: { type: "page_view" },
-});
-```
-
-## Response Types
-
-```ts
-import type {
-  ApiResponse,                   // { success, data?, message? }
-  PaginatedResponse,             // OffsetPaginationResponse | KeysetPaginationResponse | AggregatePaginationResponse
-  OffsetPaginationResponse,      // { docs[], page, limit, total, pages, hasNext, hasPrev }
-  KeysetPaginationResponse,      // { docs[], limit, hasMore, next }
-  AggregatePaginationResponse,   // same shape as offset
-  DeleteResponse,                // { success, data?: { message?, id?, soft? } }
-} from "@classytic/arc-next/api";
-
-// Type guards
-import {
-  isOffsetPagination,
-  isKeysetPagination,
-  isAggregatePagination,
-} from "@classytic/arc-next/api";
-```
-
-## Error Handling
-
-All API errors throw `ArcApiError`:
-
-```ts
-import { ArcApiError, isArcApiError } from "@classytic/arc-next/client";
-
-try {
-  await productsApi.create({ data: { name: "" } });
-} catch (err) {
-  if (isArcApiError(err)) {
-    console.log(err.status);      // HTTP status code
-    console.log(err.message);     // Error message from server
-    console.log(err.fieldErrors); // { field: "message" } or null
-    console.log(err.endpoint);    // Request endpoint
-    console.log(err.method);      // HTTP method
-  }
-}
-```
-
-## Common Patterns
-
-### Multi-tenant data fetching
-
-```ts
-// Tenant ID in params → scoped query key → isolated cache per tenant
-// The param name is up to you — arc-next sends it as x-organization-id header,
-// your backend maps it to whatever tenant field your schema uses.
-const { items } = useProducts(token, { organizationId: currentTenantId });
-```
-
-### Public endpoints (no auth)
-
-```ts
-const { items } = useProducts(null, {}, { public: true });
-```
-
-### Conditional fetching
-
-```ts
-const { item } = useProduct(selectedId, token); // disabled when selectedId is null
-```
-
-### Per-call callbacks
-
-```ts
-await create(
-  { data: formData, organizationId: org },
-  {
-    onSuccess: (product) => router.push(`/products/${product._id}`),
-    onError: (err) => setFieldErrors(err),
-    onSettled: (data, error) => setSubmitting(false), // fires after success or error
-  }
-);
-```
-
-### Navigate with cache prefill
-
-```ts
-const navigate = useProductNavigation();
-// Prefills detail cache → no loading spinner on detail page
-navigate(`/products/${product._id}`, product);
-```
-
-### Per-instance headers
-
-```ts
-// All requests from this API include x-arc-scope header
-const adminApi = createCrudApi("users", {
-  headers: { "x-arc-scope": "platform" },
-});
-```
-
-## Features
-
-- **CRUD Factory** — `createCrudApi` + `createCrudHooks` generates typed API clients and React Query hooks
-- **Optimistic Updates** — Create, update, delete with instant UI feedback and automatic rollback
-- **Multi-Tenant Scoping** — `scopedDetail(id, orgId)` + `scopedList` isolate cache per tenant. Scoped cache utils for reads/writes. Navigation prefill is tenant-aware.
-- **Pagination Normalization** — Handles `docs`/`data`/`items`/`results` + any custom key, offset/keyset/aggregate pagination
-- **Detail Cache Prefilling** — List results auto-populate detail query cache
-- **React 19 Transitions** — `useMutationWithTransition` wraps invalidation in `startTransition`
-- **Cookie, Bearer & Header Auth** — `authMode: 'cookie'` / `'bearer'` / `'header'` (custom header like `x-api-key`)
-- **Custom ID Fields** — `idField` on `createCrudHooks` for resources keyed by `sku`, `slug`, `code`, etc.
-- **Preset Hooks** — `useDeleted`, `useBulkActions`, `useDetailBySlug`, `useTree`, `useChildren`, `useFindBy`
-- **SSE Real-Time** — `useEventStream` with auto-reconnect, auto-pattern derivation from `resource`, query invalidation. Works with zero config or custom `path`.
-- **Infinite Scroll** — `maxPages` for memory management with automatic scroll-back support
-- **Idempotency** — `autoIdempotency` generates retry-safe keys at mutation level
-- **API Versioning** — `apiVersion` sends `Accept-Version` header
-- **SSR Prefetch** — `createCrudPrefetcher` + `prefetchBySlug` / `prefetchDeleted` / `prefetchTree`
-- **SSR Safety** — warns when `configureClient`/`configureAuth` called on the server
-- **Per-Client Auth** — `createClient({ getToken, getOrgId, headerName })` — each backend gets its own auth, queries auto-enable
-- **Multi-Client** — `createClient()` for multiple API backends side by side
-- **Pluggable Toast** — `configureToast()` — use sonner, react-hot-toast, or anything
-- **Pluggable Navigation** — `configureNavigation()` — use Next.js, React Router, or any router
-- **SSR-Safe QueryClient** — `getQueryClient()` — singleton in browser, new per request on server
-- **Per-Instance Headers** — `config.headers` on `createCrudApi` merged into every request
-- **`select` Transform** — Transform raw API data before it reaches components (`useList`, `useDetail`)
-- **`onSettled` Lifecycle** — Callback that fires after both success and error, at factory and per-call level
-- **Automatic Request Cancellation** — AbortSignal passthrough — unmounted components cancel in-flight requests automatically
-- **Query Config Presets** — `QUERY_CONFIGS.realtime/frequent/stable/static`
-- **Framework-Agnostic** — No hard dependency on Next.js
-- **Tree-Shakeable** — `sideEffects: false`, flat files, no barrels
+| Mode | When | Notes |
+|---|---|---|
+| `bearer` (default) | JWT / opaque token | `getToken()` returns the token |
+| `cookie` | Better Auth, session cookies | No token needed; `credentials: 'include'` automatic |
+| `header` | API keys (`x-api-key`, etc.) | Set `headerName` on `configureAuth` or `createClient` |
 
 ## License
 

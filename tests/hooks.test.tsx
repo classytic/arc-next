@@ -2278,86 +2278,8 @@ describe('createCrudHooks', () => {
     });
   });
 
-  describe('useSearch', () => {
-    it('disables query when api has no search method', () => {
-      const wrapper = createWrapper(queryClient);
-      const { result } = renderHook(() => hooks.useSearch('test'), { wrapper });
-
-      // Query disabled — no fetch, no error
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.items).toHaveLength(0);
-    });
-
-    it('calls search api with query param', async () => {
-      configureAuth({ getToken: () => 'search-token', getOrgId: () => null });
-
-      const searchApi = createMockApi();
-      searchApi.search = vi.fn().mockResolvedValue({
-        success: true,
-        docs: [{ _id: '1', name: 'Found' }],
-        total: 1,
-        page: 1,
-        limit: 10,
-        pages: 1,
-        hasNext: false,
-        hasPrev: false,
-      });
-
-      const searchHooks = createCrudHooks({
-        api: searchApi,
-        entityKey: 'search-items',
-        singular: 'SearchItem',
-      });
-
-      const wrapper = createWrapper(queryClient);
-
-      const { result } = renderHook(
-        () => searchHooks.useSearch('test query'),
-        { wrapper }
-      );
-
-      await waitFor(() => {
-        expect(result.current.isLoading).toBe(false);
-      });
-
-      expect(searchApi.search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          token: 'search-token',
-          params: expect.objectContaining({ q: 'test query' }),
-        }),
-      );
-      expect(result.current.items).toHaveLength(1);
-      expect(result.current.items[0]!.name).toBe('Found');
-
-      configureAuth({ getToken: () => null, getOrgId: () => null });
-    });
-
-    it('disables query when search string is empty', async () => {
-      configureAuth({ getToken: () => 'tok', getOrgId: () => null });
-
-      const searchApi = createMockApi();
-      searchApi.search = vi.fn().mockResolvedValue({ docs: [] });
-
-      const searchHooks = createCrudHooks({
-        api: searchApi,
-        entityKey: 'search-empty-items',
-        singular: 'SearchEmptyItem',
-      });
-
-      const wrapper = createWrapper(queryClient);
-
-      renderHook(
-        () => searchHooks.useSearch(''),
-        { wrapper }
-      );
-
-      // Wait a tick — query should NOT fire
-      await new Promise((r) => setTimeout(r, 50));
-      expect(searchApi.search).not.toHaveBeenCalled();
-
-      configureAuth({ getToken: () => null, getOrgId: () => null });
-    });
-  });
+  // useSearch removed in 0.5.0 — replaced by useList({ q: query, ...filters }).
+  // Free-text search is not a backend-distinct route; arc has no /search endpoint.
 
   describe('useCustomMutation', () => {
     it('calls custom mutation fn and shows toast', async () => {
@@ -2500,128 +2422,8 @@ describe('createCrudHooks', () => {
   // Bug fix: useSearch includes organizationId in query key for cache isolation
   // ==========================================================================
 
-  describe('useSearch tenant cache isolation', () => {
-    it('includes organizationId in query key when provided', async () => {
-      configureAuth({ getToken: () => 'tok', getOrgId: () => null });
-
-      const searchApi = createMockApi();
-      searchApi.search = vi.fn().mockResolvedValue({
-        success: true,
-        docs: [{ _id: '1', name: 'Org1 Result' }],
-        total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
-      });
-
-      const searchHooks = createCrudHooks({
-        api: searchApi,
-        entityKey: 'search-org-items',
-        singular: 'SearchOrgItem',
-      });
-
-      const wrapper = createWrapper(queryClient);
-
-      // Search with org-1
-      renderHook(
-        () => searchHooks.useSearch('widget', { organizationId: 'org-1' }),
-        { wrapper }
-      );
-
-      await waitFor(() => {
-        expect(searchApi.search).toHaveBeenCalledTimes(1);
-      });
-
-      // Search with org-2 (same query text)
-      renderHook(
-        () => searchHooks.useSearch('widget', { organizationId: 'org-2' }),
-        { wrapper }
-      );
-
-      await waitFor(() => {
-        expect(searchApi.search).toHaveBeenCalledTimes(2);
-      });
-
-      // Both calls should have fired — different query keys due to different orgId
-      expect(searchApi.search).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: 'org-1' }),
-      );
-      expect(searchApi.search).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: 'org-2' }),
-      );
-
-      configureAuth({ getToken: () => null, getOrgId: () => null });
-    });
-
-    it('works without organizationId for single-tenant apps', async () => {
-      configureAuth({ getToken: () => 'tok', getOrgId: () => null });
-
-      const searchApi = createMockApi();
-      searchApi.search = vi.fn().mockResolvedValue({
-        success: true,
-        docs: [{ _id: '1', name: 'Result' }],
-        total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
-      });
-
-      const searchHooks = createCrudHooks({
-        api: searchApi,
-        entityKey: 'search-no-org-items',
-        singular: 'SearchNoOrgItem',
-      });
-
-      const wrapper = createWrapper(queryClient);
-
-      const { result } = renderHook(
-        () => searchHooks.useSearch('widget'),
-        { wrapper }
-      );
-
-      await waitFor(() => {
-        expect(result.current.isLoading).toBe(false);
-      });
-
-      expect(searchApi.search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          organizationId: null,
-          params: expect.objectContaining({ q: 'widget' }),
-        }),
-      );
-      expect(result.current.items).toHaveLength(1);
-
-      configureAuth({ getToken: () => null, getOrgId: () => null });
-    });
-
-    it('auto-injects organizationId from configureAuth into search query key', async () => {
-      configureAuth({ getToken: () => 'tok', getOrgId: () => 'auto-org' });
-
-      const searchApi = createMockApi();
-      searchApi.search = vi.fn().mockResolvedValue({
-        success: true,
-        docs: [],
-        total: 0, page: 1, limit: 10, pages: 0, hasNext: false, hasPrev: false,
-      });
-
-      const searchHooks = createCrudHooks({
-        api: searchApi,
-        entityKey: 'search-auto-org-items',
-        singular: 'SearchAutoOrgItem',
-      });
-
-      const wrapper = createWrapper(queryClient);
-
-      renderHook(
-        () => searchHooks.useSearch('test'),
-        { wrapper }
-      );
-
-      await waitFor(() => {
-        expect(searchApi.search).toHaveBeenCalledTimes(1);
-      });
-
-      expect(searchApi.search).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: 'auto-org' }),
-      );
-
-      configureAuth({ getToken: () => null, getOrgId: () => null });
-    });
-  });
+  // useSearch tenant cache isolation — removed in 0.5.0 along with useSearch.
+  // useList already scopes its cache key by organizationId from configureAuth.
 
   // ==========================================================================
   // Bug fix: onUpdate.onSuccess receives actual update payload
@@ -2836,9 +2638,13 @@ describe('createCrudHooks', () => {
       expect(typeof api.update).toBe('function');
       expect(typeof api.delete).toBe('function');
 
-      // Optional methods (available on BaseApi, optional on CrudApi)
+      // Optional method (available on BaseApi, optional on CrudApi)
       expect(typeof api.upload).toBe('function');
-      expect(typeof api.search).toBe('function');
+
+      // Universal helpers (always-on backbone)
+      expect(typeof api.dispatchAction).toBe('function');
+      expect(typeof api.invokeRoute).toBe('function');
+      expect(typeof api.request).toBe('function');
     });
 
     it('CrudApi generic defaults match CrudHooksConfig defaults (Partial<T>)', async () => {
@@ -3194,97 +3000,10 @@ describe('createCrudHooks', () => {
     });
   });
 
-  describe('useFindBy', () => {
-    it('fetches items by field and value', async () => {
-      const findByApi = {
-        ...createMockApi(),
-        findBy: vi.fn().mockResolvedValue({
-          success: true,
-          docs: [{ _id: '1', name: 'Active Item', status: 'active' }],
-          total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
-        }),
-      };
-
-      const findByHooks = createCrudHooks({
-        api: findByApi,
-        entityKey: 'items',
-        singular: 'Item',
-      });
-
-      const wrapper = createWrapper(queryClient);
-      const { result } = renderHook(
-        () => findByHooks.useFindBy('status', 'active', { public: true }),
-        { wrapper }
-      );
-
-      await waitFor(() => {
-        expect(result.current.isLoading).toBe(false);
-      });
-
-      expect(result.current.items).toHaveLength(1);
-      expect(findByApi.findBy).toHaveBeenCalledWith(
-        expect.objectContaining({ field: 'status', value: 'active' })
-      );
-    });
-
-    it('supports filter operators', async () => {
-      const findByApi = {
-        ...createMockApi(),
-        findBy: vi.fn().mockResolvedValue({
-          success: true,
-          docs: [{ _id: '1', name: 'Big Item', price: 100 }],
-          total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
-        }),
-      };
-
-      const findByHooks = createCrudHooks({
-        api: findByApi,
-        entityKey: 'items',
-        singular: 'Item',
-      });
-
-      const wrapper = createWrapper(queryClient);
-      renderHook(
-        () => findByHooks.useFindBy('price', 50, { operator: 'gte', public: true }),
-        { wrapper }
-      );
-
-      await waitFor(() => {
-        expect(findByApi.findBy).toHaveBeenCalledWith(
-          expect.objectContaining({ field: 'price', value: 50, operator: 'gte' })
-        );
-      });
-    });
-
-    it('is disabled when value is null', async () => {
-      const findByApi = {
-        ...createMockApi(),
-        findBy: vi.fn(),
-      };
-
-      const findByHooks = createCrudHooks({
-        api: findByApi,
-        entityKey: 'items',
-        singular: 'Item',
-      });
-
-      const wrapper = createWrapper(queryClient);
-      renderHook(
-        () => findByHooks.useFindBy('status', null, { public: true }),
-        { wrapper }
-      );
-
-      expect(findByApi.findBy).not.toHaveBeenCalled();
-    });
-
-    it('disables query when api lacks findBy', () => {
-      const wrapper = createWrapper(queryClient);
-      const { result } = renderHook(() => hooks.useFindBy('status', 'active', { public: true }), { wrapper });
-
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.items).toHaveLength(0);
-    });
-  });
+  // useFindBy removed in 0.5.0 — single-field filters use:
+  //   useList({ status: 'active' })                    // direct equality
+  //   useList({ 'price[gte]': 50 })                    // bracket-key operator
+  //   useList({ 'location[withinRadius]': [lng, lat, m] }) // geo
 
   // ==========================================================================
   // useActions — restore

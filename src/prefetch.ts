@@ -1,8 +1,11 @@
-import { dehydrate, type QueryClient } from '@tanstack/react-query';
-import { createQueryKeys } from './query.js';
+import { dehydrate, type QueryClient, type InfiniteData } from '@tanstack/react-query';
+import { createQueryKeys } from './cache.js';
 
-// Re-export for convenience in server components
-export { dehydrate } from '@tanstack/react-query';
+// Re-exports for convenience in Server Components.
+// `HydrationBoundary` is the canonical wrapper around the Client Component
+// child that consumes the prefetched cache — re-exporting saves callers a
+// second @tanstack/react-query import in their RSC files.
+export { dehydrate, HydrationBoundary } from '@tanstack/react-query';
 
 // ============================================================================
 // Types
@@ -78,6 +81,22 @@ export interface CrudPrefetcher {
    * Only available when the API has a `getTree` method (tree preset).
    */
   prefetchTree: (
+    queryClient: QueryClient,
+    params?: Record<string, unknown>,
+    options?: PrefetchOptions,
+  ) => Promise<void>;
+
+  /**
+   * Prefetch an infinite list query (cursor / page-based pagination). Uses the
+   * same query keys as `useInfiniteList` and seeds the `{ pages, pageParams }`
+   * shape TanStack Query expects for `useInfiniteQuery` — a flat
+   * `prefetchQuery` would NOT match the cache shape and the client hook would
+   * re-fetch from scratch, defeating the prefetch.
+   *
+   * @example
+   * await productsPrefetcher.prefetchInfiniteList(queryClient, { limit: 20 });
+   */
+  prefetchInfiniteList: (
     queryClient: QueryClient,
     params?: Record<string, unknown>,
     options?: PrefetchOptions,
@@ -247,5 +266,40 @@ export function createCrudPrefetcher(
         staleTime: options.staleTime,
       });
     },
+
+    async prefetchInfiniteList(queryClient, params = {}, options = {}) {
+      const { organizationId: paramOrgId, ...restParams } = params;
+      const orgId = (paramOrgId as string | null) ?? options.organizationId ?? null;
+      // Match useInfiniteList's scoped key so client + server share the cache.
+      const scope = orgId ? 'tenant' : 'super-admin';
+      const queryKey = [
+        ...KEYS.scopedList(scope, { ...(orgId ? { organizationId: orgId } : {}), ...restParams }),
+        'infinite',
+      ];
+
+      await queryClient.prefetchInfiniteQuery({
+        queryKey,
+        queryFn: ({ pageParam }) => api.getAll({
+          // Cursor pagination + offset both supported; the hook decides which to use.
+          params: { ...restParams, ...(pageParam ? { page: pageParam } : {}) } as Record<string, unknown>,
+          token: options.token ?? null,
+          organizationId: orgId,
+          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+        }),
+        initialPageParam: 1 as unknown,
+        // useInfiniteQuery requires getNextPageParam at runtime, but for SSR
+        // prefetch we only need the first page to seed `{ pages: [first] }`.
+        // `getNextPageParam` is purely advisory at this stage.
+        getNextPageParam: () => undefined,
+        staleTime: options.staleTime,
+      });
+    },
   };
 }
+
+// ============================================================================
+// Type guard: dehydrated state for streaming
+// ============================================================================
+
+/** Re-export for callers that build their own dehydration logic. */
+export type { InfiniteData };

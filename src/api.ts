@@ -97,7 +97,15 @@ export type FilterOperator =
   | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
   | 'in' | 'nin'
   | 'contains' | 'startsWith' | 'endsWith' | 'regex'
-  | 'like' | 'exists' | 'size' | 'type';
+  | 'like' | 'exists' | 'size' | 'type'
+  // Range — comma-separated `from,to`. Mongokit converts to $gte+$lte.
+  | 'between'
+  // Geo — coordinate-list operators. mongokit native, sqlitekit-spatialite friendly.
+  // `near` / `nearSphere`: `lng,lat[,maxDistanceMeters]` (sort by distance).
+  // `geoWithin`: `minLng,minLat,maxLng,maxLat` (bounding box).
+  // `withinRadius`: `lng,lat,radiusMeters` (count-compatible $centerSphere).
+  | 'near' | 'nearSphere' | 'geoWithin' | 'withinRadius';
+
 
 export interface QueryParams {
   page?: number;
@@ -128,6 +136,19 @@ export interface RequestOptions {
   headerOptions?: Record<string, string>;
   responseType?: 'json' | 'blob' | 'text';
   signal?: AbortSignal;
+}
+
+/**
+ * Common args every BaseApi-style method accepts: `token`, `organizationId`,
+ * and `options` (per-request RequestOptions minus the auth fields).
+ *
+ * Preset method signatures extend this so the auth-injection contract stays
+ * uniform across every call (BaseApi method, preset method, custom user wrapper).
+ */
+export interface ScopedArgs {
+  token?: string | null;
+  organizationId?: string | null;
+  options?: Omit<RequestOptions, 'token' | 'organizationId'>;
 }
 
 export interface BaseApiConfig {
@@ -237,7 +258,16 @@ export class BaseApi<
         if (['page', 'limit'].includes(key)) {
           result[key] = parseInt(String(value)) || (key === 'page' ? 1 : 10);
         } else if (Array.isArray(value)) {
-          if (value.length > 1) {
+          // Two cases:
+          // 1. Key is already operator-keyed (`status[in]`, `location[withinRadius]`,
+          //    `createdAt[between]`, etc.) — keep the comma-joined value AS-IS.
+          //    The operator was chosen by the caller; don't append another `[in]`.
+          // 2. Plain field name (`status`) — rewrite to `field[in]=a,b` (mongokit
+          //    URL grammar's default array shorthand).
+          const hasOperator = /\[([^\]]+)\]$/.test(key);
+          if (hasOperator) {
+            result[key] = value.join(',');
+          } else if (value.length > 1) {
             result[`${key}[in]`] = value.join(',');
           } else if (value.length === 1) {
             result[key] = value[0];
@@ -382,15 +412,12 @@ export class BaseApi<
     id,
     path,
     options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
+  }: ScopedArgs & {
     data: FormData;
     /** Resource ID — shorthand for path, appended as `baseUrl/{id}/upload` */
     id?: string;
     /** Custom sub-path appended as `baseUrl/{path}`. Takes precedence over `id`. */
     path?: string;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
   }): Promise<ApiResponse<TDoc>> {
     const suffix = path ?? (id ? `${id}/upload` : undefined);
     const url = suffix ? `${this.baseUrl}/${suffix}` : this.baseUrl;
@@ -406,76 +433,6 @@ export class BaseApi<
     return this.requestFn('POST', url, this.withHeaders(requestOptions));
   }
 
-  async search({
-    token = null,
-    organizationId = null,
-    searchParams = {},
-    params = {},
-    options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
-    searchParams?: Record<string, unknown>;
-    params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  } = {}): Promise<PaginatedResponse<TDoc>> {
-    const queryParams = { ...this.config.defaultParams, ...params, ...searchParams };
-    const processedParams = this.prepareParams(queryParams);
-    const queryString = this.createQueryString(processedParams);
-
-    const requestOptions: ApiRequestOptions = {
-      cache: this.config.cache,
-      ...options,
-    };
-
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
-  }
-
-  async findBy({
-    token = null,
-    organizationId = null,
-    field,
-    value,
-    operator,
-    params = {},
-    options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
-    field: string;
-    value: unknown;
-    operator?: FilterOperator;
-    params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<PaginatedResponse<TDoc>> {
-    if (!field || value === undefined) {
-      throw new Error('Field and value are required');
-    }
-
-    const queryParams: QueryParams = { ...this.config.defaultParams, ...params };
-
-    if (operator) {
-      queryParams[`${field}[${operator}]`] = Array.isArray(value) ? value.join(',') : value;
-    } else {
-      queryParams[field] = value;
-    }
-
-    const processedParams = this.prepareParams(queryParams);
-    const queryString = this.createQueryString(processedParams);
-
-    const requestOptions: ApiRequestOptions = {
-      cache: this.config.cache,
-      ...options,
-    };
-
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
-  }
 
   async request<TResponse = unknown>(
     method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
@@ -486,12 +443,9 @@ export class BaseApi<
       data,
       params,
       options = {},
-    }: {
-      token?: string | null;
-      organizationId?: string | null;
+    }: ScopedArgs & {
       data?: unknown;
       params?: QueryParams;
-      options?: Omit<RequestOptions, 'token' | 'organizationId'>;
     } = {}
   ): Promise<TResponse> {
     let url = endpoint;
@@ -514,190 +468,94 @@ export class BaseApi<
     return this.requestFn(method, url, this.withHeaders(requestOptions));
   }
 
-  // ==========================================================================
-  // Soft Delete Preset
-  // ==========================================================================
-
-  async getDeleted({
+  /**
+   * Invoke a custom route mounted on this resource (e.g. `/todos/stats`,
+   * `/todos/recent`). Resource-relative wrapper around {@link request} that
+   * prepends `this.baseUrl` so callers don't have to remember the prefix.
+   *
+   * Use this for `defineResource({ routes: [{ method, path, handler }] })` —
+   * Arc's escape hatch for endpoints that don't fit CRUD or actions.
+   *
+   * For aggregates / reports, prefer the response-aware {@link useApiQuery} hook
+   * (which auto-unwraps `{ success, data }`) and pass `invokeRoute` as the queryFn.
+   *
+   * @example
+   * // GET /todos/stats → { success, data: { total, byStatus } }
+   * const stats = await api.invokeRoute<{ total: number; byStatus: Record<string, number> }>({
+   *   method: 'GET',
+   *   path: '/stats',
+   * });
+   *
+   * // GET /todos/recent?limit=5 → paginated shape spread to root
+   * const recent = await api.invokeRoute<PaginatedResponse<Todo>>({
+   *   method: 'GET',
+   *   path: '/recent',
+   *   params: { limit: 5 },
+   * });
+   *
+   * // POST /products/import — body + path
+   * await api.invokeRoute({
+   *   method: 'POST',
+   *   path: '/import',
+   *   data: { source: 'csv', items: [...] },
+   * });
+   */
+  async invokeRoute<TResponse = unknown>({
     token = null,
     organizationId = null,
-    params = {},
+    method = 'GET',
+    path,
+    data,
+    params,
     options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
+  }: ScopedArgs & {
+    method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+    /** Path relative to the resource baseUrl. Leading slash optional. */
+    path: string;
+    data?: unknown;
     params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  } = {}): Promise<PaginatedResponse<TDoc>> {
-    const mergedParams = { ...this.config.defaultParams, ...params };
-    const processedParams = this.prepareParams(mergedParams);
-    const queryString = this.createQueryString(processedParams);
-
-    const requestOptions: ApiRequestOptions = { cache: this.config.cache, ...options };
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('GET', `${this.baseUrl}/deleted?${queryString}`, this.withHeaders(requestOptions));
+  }): Promise<TResponse> {
+    if (!path) throw new Error('path is required');
+    const normalized = path.startsWith('/') ? path : `/${path}`;
+    const endpoint = `${this.baseUrl}${normalized}`;
+    return this.request<TResponse>(method, endpoint, { token, organizationId, data, params, options });
   }
 
-  async restore({
+  // ==========================================================================
+  // Action Router (arc v2.8+)
+  //
+  // Unified action endpoint: `POST /:id/action` with body `{ action, ...payload }`.
+  // The server discriminates on `body.action` and applies per-action permissions.
+  // Always-on in arc 2.8+, so it lives on BaseApi rather than a preset wrapper.
+  //
+  // NB: named `dispatchAction` (not `action`) so consumer SDKs can keep their
+  // own `action()` methods on subclasses without inheritance collisions —
+  // `action` is a common verb on state-machine resources.
+  // ==========================================================================
+
+  async dispatchAction<TResult = unknown, TBody extends Record<string, unknown> = Record<string, unknown>>({
     token = null,
     organizationId = null,
     id,
+    action,
+    data,
     options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
+  }: ScopedArgs & {
     id: string;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<ApiResponse<TDoc>> {
+    action: string;
+    data?: TBody;
+  }): Promise<ApiResponse<TResult>> {
     if (!id) throw new Error('ID is required');
+    if (!action) throw new Error('Action name is required');
 
-    const requestOptions: ApiRequestOptions = { ...options };
+    const requestOptions: ApiRequestOptions = {
+      body: { action, ...(data ?? {}) },
+      ...options,
+    };
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('POST', `${this.baseUrl}/${id}/restore`, this.withHeaders(requestOptions));
-  }
-
-  // ==========================================================================
-  // Bulk Preset
-  // ==========================================================================
-
-  async bulkCreate({
-    token = null,
-    organizationId = null,
-    data,
-    options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
-    data: TCreate[];
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<BulkCreateResponse<TDoc>> {
-    const requestOptions: ApiRequestOptions = { body: data, ...options };
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('POST', `${this.baseUrl}/bulk`, this.withHeaders(requestOptions));
-  }
-
-  async bulkUpdate({
-    token = null,
-    organizationId = null,
-    filter,
-    data,
-    options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
-    filter: Record<string, unknown>;
-    data: TUpdate;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<BulkUpdateResponse> {
-    const requestOptions: ApiRequestOptions = { body: { filter, data }, ...options };
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('PATCH', `${this.baseUrl}/bulk`, this.withHeaders(requestOptions));
-  }
-
-  async bulkDelete({
-    token = null,
-    organizationId = null,
-    filter,
-    options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
-    filter: Record<string, unknown>;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<BulkDeleteResponse> {
-    const requestOptions: ApiRequestOptions = { body: { filter }, ...options };
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('DELETE', `${this.baseUrl}/bulk`, this.withHeaders(requestOptions));
-  }
-
-  // ==========================================================================
-  // Slug Lookup Preset
-  // ==========================================================================
-
-  async getBySlug({
-    token = null,
-    organizationId = null,
-    slug,
-    params = {},
-    options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
-    slug: string;
-    params?: { select?: string; populate?: string | string[] };
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<ApiResponse<TDoc>> {
-    if (!slug) throw new Error('Slug is required');
-
-    const queryString = this.createQueryString(params);
-    const url = queryString ? `${this.baseUrl}/slug/${slug}?${queryString}` : `${this.baseUrl}/slug/${slug}`;
-
-    const requestOptions: ApiRequestOptions = { cache: this.config.cache, ...options };
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('GET', url, this.withHeaders(requestOptions));
-  }
-
-  // ==========================================================================
-  // Tree Preset
-  // ==========================================================================
-
-  async getTree({
-    token = null,
-    organizationId = null,
-    params = {},
-    options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
-    params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  } = {}): Promise<ApiResponse<TDoc[]>> {
-    const processedParams = this.prepareParams(params);
-    const queryString = this.createQueryString(processedParams);
-
-    const requestOptions: ApiRequestOptions = { cache: this.config.cache, ...options };
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('GET', `${this.baseUrl}/tree?${queryString}`, this.withHeaders(requestOptions));
-  }
-
-  async getChildren({
-    token = null,
-    organizationId = null,
-    parentId,
-    params = {},
-    options = {},
-  }: {
-    token?: string | null;
-    organizationId?: string | null;
-    parentId: string;
-    params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<PaginatedResponse<TDoc>> {
-    if (!parentId) throw new Error('Parent ID is required');
-
-    const mergedParams = { ...this.config.defaultParams, ...params };
-    const processedParams = this.prepareParams(mergedParams);
-    const queryString = this.createQueryString(processedParams);
-
-    const requestOptions: ApiRequestOptions = { cache: this.config.cache, ...options };
-    if (token) requestOptions.token = token;
-    if (organizationId) requestOptions.organizationId = organizationId;
-
-    return this.requestFn('GET', `${this.baseUrl}/${parentId}/children?${queryString}`, this.withHeaders(requestOptions));
+    return this.requestFn('POST', `${this.baseUrl}/${id}/action`, this.withHeaders(requestOptions));
   }
 }
 

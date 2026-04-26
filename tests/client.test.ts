@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { configureClient, configureAuth, getAuthContext, getAuthMode, handleApiRequest, createQueryString, createClient, ArcApiError, isArcApiError } from '../src/client.js';
+import {
+  configureClient, configureAuth, getAuthContext, getAuthMode, handleApiRequest,
+  createQueryString, createClient, createAuthAwareClient, _resetAuthWarnings,
+  ArcApiError, isArcApiError, isAbortError,
+  KNOWN_TOP_LEVEL_CODES, KNOWN_DETAILS_CODES,
+} from '../src/client.js';
 
 // ============================================================================
 // configureClient
@@ -1307,5 +1312,624 @@ describe('non-JSON error responses', () => {
       expect(isArcApiError(error)).toBe(true);
       expect((error as ArcApiError).status).toBe(503);
     }
+  });
+});
+
+// ============================================================================
+// createAuthAwareClient
+// ============================================================================
+
+describe('createAuthAwareClient', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    // Reset global auth between tests
+    configureAuth({});
+    _resetAuthWarnings();
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('inherits baseUrl from configureClient when no override', async () => {
+    configureClient({ baseUrl: 'http://global.test' });
+    const client = createAuthAwareClient();
+
+    await client.request('GET', '/users');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://global.test/users',
+      expect.any(Object),
+    );
+  });
+
+  it('overrides baseUrl when supplied', async () => {
+    configureClient({ baseUrl: 'http://global.test' });
+    const client = createAuthAwareClient({ baseUrl: 'http://override.test' });
+
+    await client.request('GET', '/test');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://override.test/test',
+      expect.any(Object),
+    );
+  });
+
+  it('injects token from global configureAuth', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({ getToken: () => 'token-abc' });
+    const client = createAuthAwareClient();
+
+    await client.request('GET', '/secure');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer token-abc');
+  });
+
+  it('injects organizationId from global configureAuth', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({ getOrgId: () => 'org-123' });
+    const client = createAuthAwareClient();
+
+    await client.request('GET', '/items');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-organization-id']).toBe('org-123');
+  });
+
+  it('reads token lazily on every request (rotation)', async () => {
+    let token = 'first';
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({ getToken: () => token });
+    const client = createAuthAwareClient();
+
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })),
+    );
+
+    await client.request('GET', '/a');
+    token = 'second';
+    await client.request('GET', '/b');
+
+    const headersA = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    const headersB = (fetchMock.mock.calls[1]![1] as RequestInit).headers as Record<string, string>;
+    expect(headersA['Authorization']).toBe('Bearer first');
+    expect(headersB['Authorization']).toBe('Bearer second');
+  });
+
+  it('inherits authMode from configureClient (cookie → include credentials)', async () => {
+    configureClient({ baseUrl: 'http://api.test', authMode: 'cookie' });
+    const client = createAuthAwareClient();
+
+    await client.request('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    expect((options as RequestInit).credentials).toBe('include');
+  });
+
+  it('header authMode injects token as custom header', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({ getToken: () => 'api-key-xyz', headerName: 'x-api-key' });
+    const client = createAuthAwareClient({ authMode: 'header' });
+
+    await client.request('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['x-api-key']).toBe('api-key-xyz');
+    expect(headers['Authorization']).toBeUndefined();
+  });
+
+  it('explicit getToken override wins over global', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({ getToken: () => 'global-token' });
+    const client = createAuthAwareClient({ getToken: () => 'override-token' });
+
+    await client.request('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer override-token');
+  });
+
+  it('returns null token when global auth is unconfigured', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({}); // no getToken
+    const client = createAuthAwareClient();
+
+    await client.request('GET', '/test');
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBeUndefined();
+  });
+
+  it('explicit options.token wins over auto-injection', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+    configureAuth({ getToken: () => 'global-token' });
+    const client = createAuthAwareClient();
+
+    await client.request('GET', '/test', { token: 'explicit-token' });
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    const headers = (options as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer explicit-token');
+  });
+});
+
+// ============================================================================
+// configureAuth — async getToken guard
+// ============================================================================
+
+describe('configureAuth async-token guard', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    _resetAuthWarnings();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('returns null and warns when getToken returns a Promise', () => {
+    configureAuth({
+      getToken: () => Promise.resolve('async-token') as unknown as string | null,
+    });
+
+    const ctx = getAuthContext();
+
+    expect(ctx.token).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('returned a Promise'),
+    );
+  });
+
+  it('warns only once across multiple calls', () => {
+    configureAuth({
+      getToken: () => Promise.resolve('x') as unknown as string | null,
+    });
+
+    getAuthContext();
+    getAuthContext();
+    getAuthContext();
+
+    // Server-warning from configureAuth (jsdom has window so this should NOT fire)
+    // We only count the async-token warnings
+    const asyncWarnCount = warnSpy.mock.calls.filter(c =>
+      typeof c[0] === 'string' && c[0].includes('returned a Promise'),
+    ).length;
+    expect(asyncWarnCount).toBe(1);
+  });
+
+  it('resets dedup flag on reconfigure', () => {
+    configureAuth({
+      getToken: () => Promise.resolve('x') as unknown as string | null,
+    });
+    getAuthContext();
+
+    configureAuth({
+      getToken: () => Promise.resolve('y') as unknown as string | null,
+    });
+    getAuthContext();
+
+    const asyncWarnCount = warnSpy.mock.calls.filter(c =>
+      typeof c[0] === 'string' && c[0].includes('returned a Promise'),
+    ).length;
+    expect(asyncWarnCount).toBe(2);
+  });
+
+  it('passes through synchronous tokens', () => {
+    configureAuth({ getToken: () => 'sync-token' });
+
+    const ctx = getAuthContext();
+
+    expect(ctx.token).toBe('sync-token');
+    const asyncWarnCount = warnSpy.mock.calls.filter(c =>
+      typeof c[0] === 'string' && c[0].includes('returned a Promise'),
+    ).length;
+    expect(asyncWarnCount).toBe(0);
+  });
+
+  it('handles thenable (non-Promise) returns as async', () => {
+    const thenable = { then: () => {} };
+    configureAuth({ getToken: () => thenable as unknown as string });
+
+    const ctx = getAuthContext();
+
+    expect(ctx.token).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('returned a Promise'),
+    );
+  });
+});
+
+// ============================================================================
+// isAbortError
+// ============================================================================
+
+describe('isAbortError', () => {
+  it('detects DOMException AbortError (browser)', () => {
+    const err = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    expect(isAbortError(err)).toBe(true);
+  });
+
+  it('detects Error with name=AbortError (Node 18+ undici)', () => {
+    const err = new Error('Request aborted');
+    err.name = 'AbortError';
+    expect(isAbortError(err)).toBe(true);
+  });
+
+  it('detects code: ERR_ABORTED', () => {
+    const err = Object.assign(new Error('cancelled'), { code: 'ERR_ABORTED' });
+    expect(isAbortError(err)).toBe(true);
+  });
+
+  it('returns false for ArcApiError', () => {
+    const err = new ArcApiError('boom', { status: 500, statusText: 'x', json: null, endpoint: '/a', method: 'GET' });
+    expect(isAbortError(err)).toBe(false);
+  });
+
+  it('returns false for plain TypeError (network failure)', () => {
+    expect(isAbortError(new TypeError('fetch failed'))).toBe(false);
+  });
+
+  it('returns false for null / undefined / primitives', () => {
+    expect(isAbortError(null)).toBe(false);
+    expect(isAbortError(undefined)).toBe(false);
+    expect(isAbortError('AbortError')).toBe(false);
+    expect(isAbortError(0)).toBe(false);
+  });
+});
+
+// ============================================================================
+// Known error code arrays — runtime / type-level consistency
+// ============================================================================
+
+describe('KNOWN_TOP_LEVEL_CODES / KNOWN_DETAILS_CODES', () => {
+  it('top-level codes are non-empty + unique', () => {
+    expect(KNOWN_TOP_LEVEL_CODES.length).toBeGreaterThan(10);
+    expect(new Set(KNOWN_TOP_LEVEL_CODES).size).toBe(KNOWN_TOP_LEVEL_CODES.length);
+  });
+
+  it('details codes are non-empty + unique', () => {
+    expect(KNOWN_DETAILS_CODES.length).toBeGreaterThan(0);
+    expect(new Set(KNOWN_DETAILS_CODES).size).toBe(KNOWN_DETAILS_CODES.length);
+  });
+
+  it('top-level + details are disjoint (no shared codes)', () => {
+    const overlap = KNOWN_TOP_LEVEL_CODES.filter((c) => (KNOWN_DETAILS_CODES as readonly string[]).includes(c));
+    expect(overlap).toEqual([]);
+  });
+
+  it('arrays expose the documented codes (smoke check)', () => {
+    expect(KNOWN_TOP_LEVEL_CODES).toContain('VALIDATION_ERROR');
+    expect(KNOWN_TOP_LEVEL_CODES).toContain('DUPLICATE_KEY');
+    expect(KNOWN_DETAILS_CODES).toContain('ORG_CONTEXT_REQUIRED');
+  });
+
+  it('arrays are readonly (frozen by `as const`)', () => {
+    // `as const` arrays can be mutated at runtime (TS-only readonly), but the
+    // types should reject push/pop in consumer code. Smoke-test the symbol exists.
+    expect(Array.isArray(KNOWN_TOP_LEVEL_CODES)).toBe(true);
+    expect(Array.isArray(KNOWN_DETAILS_CODES)).toBe(true);
+  });
+});
+
+// ============================================================================
+// ClientConfig.retry
+// ============================================================================
+
+describe('ClientConfig.retry', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
+
+  it('retries on 500 and succeeds on second attempt', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: { attempts: 2, backoff: () => 0 }, // zero backoff for test speed
+    });
+
+    fetchMock
+      .mockResolvedValueOnce(new Response('boom', { status: 500, statusText: 'Internal Server Error' }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    const result = await handleApiRequest<{ ok: boolean }>('GET', '/test');
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry on 4xx (client error)', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: { attempts: 5, backoff: () => 0 },
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: 'bad input' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    await expect(handleApiRequest('POST', '/test', { body: { x: 1 } })).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries on network failure (TypeError from fetch)', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: { attempts: 3, backoff: () => 0 },
+    });
+
+    fetchMock
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    const result = await handleApiRequest<{ ok: boolean }>('GET', '/test');
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does NOT retry on AbortError', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: { attempts: 5, backoff: () => 0 },
+    });
+
+    const abortErr = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    fetchMock.mockRejectedValue(abortErr);
+
+    await expect(handleApiRequest('GET', '/test')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('exhausts retries and throws the last error', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: { attempts: 3, backoff: () => 0 },
+    });
+
+    fetchMock.mockResolvedValue(new Response('boom', { status: 503, statusText: 'Service Unavailable' }));
+
+    try {
+      await handleApiRequest('GET', '/test');
+      expect.fail('should have thrown');
+    } catch (error) {
+      expect(isArcApiError(error)).toBe(true);
+      if (isArcApiError(error)) expect(error.status).toBe(503);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('respects explicit retryOn whitelist (numbers)', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: { attempts: 3, backoff: () => 0, retryOn: [502, 503] },
+    });
+
+    // 504 is NOT in whitelist — should not retry
+    fetchMock.mockResolvedValue(new Response('boom', { status: 504, statusText: 'Gateway Timeout' }));
+
+    await expect(handleApiRequest('GET', '/test')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('custom backoff function receives 0-indexed attempt', async () => {
+    const delays: number[] = [];
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: {
+        attempts: 3,
+        backoff: (attempt) => {
+          delays.push(attempt);
+          return 0;
+        },
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response('boom', { status: 500 }));
+
+    await expect(handleApiRequest('GET', '/test')).rejects.toThrow();
+    // attempts:3 means 1 initial + 2 retries → backoff called twice (after attempt 0 and 1)
+    expect(delays).toEqual([0, 1]);
+  });
+
+  it('default behavior (no retry config) is one attempt', async () => {
+    configureClient({ baseUrl: 'http://api.test' });
+
+    fetchMock.mockResolvedValue(new Response('boom', { status: 500 }));
+
+    await expect(handleApiRequest('GET', '/test')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('signal abort during backoff cancels subsequent retries', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: { attempts: 5, backoff: () => 100 },
+    });
+
+    fetchMock.mockResolvedValue(new Response('boom', { status: 500 }));
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 30); // abort during the backoff sleep
+
+    await expect(
+      handleApiRequest('GET', '/test', { signal: controller.signal }),
+    ).rejects.toThrow();
+
+    // First fetch happened; backoff was interrupted before second
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ============================================================================
+// ClientConfig.beforeRequest / afterResponse interceptors
+// ============================================================================
+
+describe('ClientConfig.beforeRequest', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+  });
+
+  afterEach(() => fetchMock.mockRestore());
+
+  it('runs before fetch and can mutate headers', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      beforeRequest: (ctx) => ({
+        ...ctx,
+        headers: { ...ctx.headers, 'x-trace-id': 'abc-123' },
+      }),
+    });
+
+    await handleApiRequest('GET', '/test');
+
+    const headers = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(headers['x-trace-id']).toBe('abc-123');
+  });
+
+  it('supports async interceptors', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      beforeRequest: async (ctx) => {
+        await Promise.resolve();
+        return { ...ctx, headers: { ...ctx.headers, 'x-async': 'yes' } };
+      },
+    });
+
+    await handleApiRequest('GET', '/test');
+
+    const headers = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(headers['x-async']).toBe('yes');
+  });
+
+  it('receives the attempt counter (0 on first, 1+ on retry)', async () => {
+    const attempts: number[] = [];
+    configureClient({
+      baseUrl: 'http://api.test',
+      retry: { attempts: 2, backoff: () => 0 },
+      beforeRequest: (ctx) => {
+        attempts.push(ctx.attempt);
+        return ctx;
+      },
+    });
+
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(new Response('boom', { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    await handleApiRequest('GET', '/test');
+    expect(attempts).toEqual([0, 1]);
+  });
+
+  it('can replace body before fetch', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      beforeRequest: (ctx) => ({
+        ...ctx,
+        body: JSON.stringify({ ...JSON.parse(ctx.body as string), injected: true }),
+      }),
+    });
+
+    await handleApiRequest('POST', '/test', { body: { x: 1 } });
+
+    const sentBody = (fetchMock.mock.calls[0]![1] as RequestInit).body as string;
+    expect(JSON.parse(sentBody)).toEqual({ x: 1, injected: true });
+  });
+});
+
+describe('ClientConfig.afterResponse', () => {
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ value: 42 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+  });
+
+  afterEach(() => fetchMock.mockRestore());
+
+  it('receives parsed body + status + duration', async () => {
+    let captured: { status: number; body: unknown; durationMs: number } | null = null;
+    configureClient({
+      baseUrl: 'http://api.test',
+      afterResponse: (ctx) => {
+        captured = { status: ctx.status, body: ctx.body, durationMs: ctx.durationMs };
+        return ctx;
+      },
+    });
+
+    await handleApiRequest('GET', '/test');
+
+    expect(captured).not.toBeNull();
+    expect(captured!.status).toBe(200);
+    expect(captured!.body).toEqual({ value: 42 });
+    expect(captured!.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('can transform body', async () => {
+    configureClient({
+      baseUrl: 'http://api.test',
+      afterResponse: (ctx) => ({
+        ...ctx,
+        body: { wrapped: ctx.body },
+      }),
+    });
+
+    const result = await handleApiRequest('GET', '/test');
+    expect(result).toEqual({ wrapped: { value: 42 } });
+  });
+
+  it('does NOT run on error responses (ArcApiError thrown first)', async () => {
+    const after = vi.fn((ctx) => ctx);
+    configureClient({
+      baseUrl: 'http://api.test',
+      afterResponse: after,
+    });
+
+    fetchMock.mockResolvedValue(new Response('boom', { status: 500 }));
+
+    await expect(handleApiRequest('GET', '/test')).rejects.toThrow();
+    expect(after).not.toHaveBeenCalled();
   });
 });

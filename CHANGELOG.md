@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.5.0
+
+Targets Arc 2.11.x. Closes the surface gaps for the action router, search preset, and mongokit-style geo queries.
+
+### New Features
+
+- **Geo + range operators in `FilterOperator`** — `near`, `nearSphere`, `geoWithin`, `withinRadius`, `between`. Coordinate-list values (`[lng, lat, maxDistanceMeters]`, `[minLng, minLat, maxLng, maxLat]`, `[from, to]`) round-trip through `prepareParams` / `findBy` as comma-joined strings instead of being rewritten to `[in]`. Matches mongokit's URL grammar and works against any backend that accepts that grammar (mongokit native, sqlitekit-spatialite friendly).
+- **`api.dispatchAction({ id, action, data })`** — POSTs to arc's unified action router (`POST /:id/action`) with `{ action, ...data }` body. Server discriminates on `body.action` and applies per-action permissions (arc v2.8+). Named `dispatchAction` (not `action`) so consumer SDKs can keep their own `action()` methods on subclasses without inheritance collisions — `action` is a common verb on state-machine resources.
+- **`useAction()` hook** — typed mutation companion to `api.dispatchAction()`. Default-invalidates `lists()` + `details()` + the specific detail key; default action name on factory + per-call override via `mutate({ action })`.
+- **`api.searchEngine()` / `api.searchSimilar()` / `api.embed()`** — POST routes mounted by `searchPreset()` (arc v2.9+). Distinct from `api.search()` which is the legacy GET-against-list. Custom `path` overrides supported per-call. Auto-wires from mongokit's `elasticSearchPlugin` / `vectorPlugin` when wired into `searchPreset({ repository })`.
+- **`useSearchEngine()` / `useSearchSimilar()` / `useEmbed()` hooks** — mutation companions for the search preset routes.
+- **`elevated: true` shorthand** — sends `x-arc-scope: platform` to trigger arc's elevated-scope upgrade (arc v2.9+). Configurable on `ClientConfig` (every request) or per-request via `RequestOptions.elevated` (which can override the client-level setting with `false` to suppress).
+
+### Real-time additions
+
+- **`subscribeToEvents()` plain function** — non-hook SSE client. Works in Node, Bun, tests, and non-React UIs. Returns a stable handle: `{ close, reconnect, isConnected }`. Auto-reconnect with ×1.5 exponential backoff (capped 30s), pattern filtering, named-event subscription via `addEventListener`. The `useEventStream()` hook now delegates to this — same wire behavior, smaller hook.
+- **`connectWs()` plain function** — non-hook WebSocket client mirroring `subscribeToEvents()`. Returns `{ send, subscribe, unsubscribe, on, close, reconnect, isConnected }`. The `on(eventType, handler)` API registers per-type listeners alongside the global `onMessage` callback (use `'*'` for wildcard); returns an unsubscribe function. Subscriptions persist across reconnects. The `useWebSocket()` hook delegates to this.
+- **`CrudEvent<TDoc>` generic type** — narrowed envelope for arc's `<resource>.<operation>` broadcasts. `CrudEvent<Todo>` types `data: Todo` and `operation: 'created' | 'updated' | 'deleted'`. `ArcServerEvent<TData>` is now generic (was `data: unknown`); `ArcWsMessage<TData>` was already generic. Pass through `subscribeToEvents<CrudEvent<Todo>>(...)` / `connectWs<CrudEvent<Todo>>(...)` for inference.
+- **`useResourceSync()` hook on `createCrudHooks`** — turnkey "real-time by default" wiring. `useResourceSync({ source: 'ws' })` (or `'sse'`) subscribes to `<entityKey>` and auto-invalidates `KEYS.lists()` on every CRUD broadcast plus `KEYS.detail(id)` on `updated` / `deleted`. Honors the factory's `idField` so custom-id resources (`'sku'`, `'slug'`) resolve correctly. Optional `onEvent({ operation, id, data })` callback; `enabled: false` to opt out.
+- **`getToastHandler()` companion to `configureToast()`** — returns the currently-configured `ToastHandler` (or the console-based default before `configureToast()` is called). Lets domain code outside the react-query lifecycle fire ad-hoc success/error toasts using the same handler the SDK uses internally — consumer SDKs no longer need to keep a parallel cache of the handler.
+
+### Typed arc error codes
+
+- **`ArcApiError.code` + `ArcApiError.detailsCode` getters** — surface arc's response codes from both slots of the wire envelope. `code` reads top-level `json.code` (set by arc's `errorHandlerPlugin` for thrown errors → `BAD_REQUEST` / `VALIDATION_ERROR` / `DUPLICATE_KEY` / etc.). `detailsCode` reads `json.details.code` (the canonical slot for controller-emitted business codes — `ORG_CONTEXT_REQUIRED`, `OWNERSHIP_DENIED`, `MIXED_UPDATE_SHAPE`, `ALL_FIELDS_STRIPPED`, `BEFORE_RESTORE_HOOK_ERROR`). Open-ended `string & {}` types so custom `errorMappers` codes still satisfy the union.
+- **`isArcErrorCode(error, code)` predicate** — generic check that matches whichever slot the code lives in. Saves call sites from having to know whether arc emitted the code at the root or under `details`.
+- **Specific predicates** — `isOrgContextRequiredError(error)` (the bulk-preset + orgGuard safety code — hosts hitting this need to call `configureAuth({ getOrgId })`), `isValidationError(error)`, `isDuplicateKeyError(error)`. All narrow `unknown → ArcApiError` for fluent guards.
+
+### Upload with real progress events
+
+- **`uploadWithProgress()` plain function** ([`./upload`](./src/upload.ts)) — XHR-based file upload with native `xhr.upload.onprogress` events. Returns a Promise that resolves with the parsed body or rejects with `ArcApiError` on non-2xx (same envelope as the fetch path — `code` / `detailsCode` / `fieldErrors` getters all work). Reuses arc-next's auth pipeline (`getClientAuthContext`), the same `Authorization` / `x-api-key` / cookie-mode `withCredentials` decisions, plus `elevated` / `idempotencyKey` / per-request headers / per-client config. Supports `responseType: 'json' | 'text' | 'blob'`. AbortSignal-driven cancellation, signal `reason` preserved verbatim. Closes the gap left by `useUpload()` (fetch-based, no progress).
+- **`useUploadWithProgress()` React hook** — TanStack-Query-flavored mutation companion. Tracks `progress` as React state (every progress tick re-renders), exposes `{ upload, progress, isUploading, isPending, isSuccess, isError, data, error, cancel, reset }`. Auto-invalidates `invalidateQueries` on success, fires `messages.success` / `messages.error` through the configured `getToastHandler()`, supports dynamic `url` / `headers` / `idempotencyKey` / `elevated` callbacks that receive the call's vars. Last-call-wins semantics: starting a new upload while one is in-flight cancels the previous (matches `useMutation` behavior). New `./upload` subpath export.
+
+Why XHR and not fetch+ReadableStream: as of 2026, Safari and Firefox still don't ship the `fetch()` + ReadableStream upload-body combination consumers need. XHR's `upload.onprogress` is universal. The hook surface is identical to what consumers would write on top of axios — no caveats per browser.
+
+### Wire-shape bug fixes
+
+- **`withBulk.bulkCreate()` now sends `{ items: data }` body** — arc's bulk handler (`POST /:resource/bulk`) reads `req.body.items`. Pre-fix, the SDK sent the raw array, which arc rejected with `400 Bulk create requires a non-empty items array` — masking the genuine `403 ORG_CONTEXT_REQUIRED` tenant-scope errors hosts actually need to see. The bulk integration test in `arc-next-test-api/tests/v050-error-codes-integration.test.ts` locks the corrected wire shape.
+- **`ArcApiError.message` reads `json.error` first, then `json.message`** — arc's `errorHandlerPlugin` and `IControllerResponse` both emit `{ error: <human msg> }`, but the SDK was only reading `json.message`, falling back to bare `statusText` ("Forbidden", "Bad Request"). Now `message` carries arc's actual message ("Organization context required to bulk-create resources").
+
+### Tests
+
+- 7 new unit tests in `tests/v050.test.ts` covering `code` / `detailsCode` getters, `isArcErrorCode` cross-slot matching, and the four specific predicates.
+- 3 new integration tests in `arc-next-test-api/tests/v050-error-codes-integration.test.ts` driving real bulk + 404 calls against arc 2.11.x — locks the controller-path wire convention (codes at `details.code`, not top-level `code`) and verifies `isOrgContextRequiredError(error)` fires on the bulk safety path.
+- 31 new unit tests in `tests/upload.test.tsx` covering `uploadWithProgress()` (open/send/headers, progress events, abort with + without reason, ArcApiError on non-2xx, network/timeout failure, auth-mode parity bearer/cookie/header, explicit-token override + null-suppression, elevated, idempotencyKey, custom + Content-Type-stripping headers, absolute-URL passthrough, json/text/blob response types) and `useUploadWithProgress()` (data + isSuccess flow, progress mirror, query invalidation, error capture, cancel(), last-call-wins overlap, reset(), dynamic url/headers/idempotencyKey/elevated functions, toast handler integration).
+
+### Tests
+
+- 26 new unit tests in `tests/v050.test.ts` covering geo operators, action router, search preset, fieldErrors shape compatibility, and the `elevated` header.
+- 29 new unit tests in `tests/v050-realtime.test.tsx` covering `subscribeToEvents()`, `connectWs()` (including `.on()` per-type listeners and wildcard catch-all), `useResourceSync()` invalidation behavior across WS + SSE transports, custom-`idField` propagation, and the `CrudEvent<TDoc>` compile-time generic.
+- 16 new integration tests in `arc-next-test-api/tests/v050-integration.test.ts` covering action router (`complete` / `archive` / `prioritize`), search preset (`POST /search` regex backend, `searchSimilar` vector stub, `embed` deterministic stub), and live geo queries against a `2dsphere`-indexed `Place` resource (`[near]` distance sort, `[withinRadius]` 4 km radius, `[geoWithin]` bounding box, invalid-coord drop).
+- 5 new integration tests in `arc-next-test-api/tests/v050-realtime-integration.test.ts` driving `connectWs()` against a real `websocketPlugin` — subscribe handshake, broadcast on create, `.on(eventType)` listeners + `off()` detach, `'*'` wildcard, `close()` idempotence, `send()` after-OPEN.
+
+### Breaking Bug Fixes
+
+- **`ArcApiError.fieldErrors` reads arc's actual error shape**. Pre-v0.5.0 the getter only read `json.errors` as `Record<string, string>`, but arc's `errorHandler` plugin emits `{ details: { errors: [{ field, message, keyword }] } }` (Fastify AJV pass-through) — so `fieldErrors` was effectively always `null` for real validation failures. v0.5.0 reads three shapes: legacy `{ errors: { field: msg } }` record form, arc's `details.errors[]` array form (`field` / `message`), and raw AJV `instancePath` / `params.missingProperty` form. Behavior change for callers who relied on the always-null result; matches the documented contract.
+
+### Repo-core peer dep — declined
+
+We considered adding `@classytic/repo-core` as a (type-only) peer dep to share `OffsetPaginationResult` / `KeysetPaginationResult` / `HttpError` shapes. We didn't:
+
+- arc-next is a browser SDK; repo-core ships server primitives (hook engine, Filter IR, query parser, cache adapter) that are useless on the frontend.
+- The HTTP envelope arc-next consumes is a strict superset of repo-core's pagination shape (adds `success: boolean`). arc-next's `OffsetPaginationResponse` / `KeysetPaginationResponse` / `AggregatePaginationResponse` types stay wire-correct without inheriting from repo-core.
+- arc-next's `FilterOperator` union is intentionally larger than repo-core's URL grammar (`near` / `withinRadius` / `geoWithin` are mongokit conventions, not in repo-core). Centralizing on repo-core's grammar would force a regression for mongokit-backed consumers.
+
 ## 0.4.1
 
 ### Breaking Bug Fixes (from 0.4.0)

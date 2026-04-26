@@ -1,25 +1,40 @@
 "use client";
 
 import { useQuery, useInfiniteQuery, useQueryClient, keepPreviousData, type QueryKey, type InfiniteData } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
-import type { QueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+
+// Server-safe utilities live in ./cache.ts (no "use client") so Server Components
+// can import + call them during RSC prefetch. We re-export them here for callers
+// already pointing at @classytic/arc-next/query — the import path is the
+// boundary, not the directive — but new code SHOULD prefer @classytic/arc-next/cache.
+export {
+  getItemId,
+  extractItem,
+  extractItems,
+  updateListCache,
+  normalizePagination,
+  createQueryKeys,
+  createCacheUtils,
+  DEFAULT_QUERY_CONFIG,
+  QUERY_CONFIGS,
+  type QueryKeys,
+  type CacheUtils,
+  type PaginationData,
+} from "./cache.js";
+
+import {
+  extractItems,
+  normalizePagination,
+  getItemId,
+  extractItem,
+  DEFAULT_QUERY_CONFIG,
+  QUERY_CONFIGS,
+  type PaginationData,
+} from "./cache.js";
 
 // ============================================================================
 // Types
 // ============================================================================
-
-export interface PaginationData {
-  /** Pagination method detected from response (offset | keyset | aggregate) */
-  method: 'offset' | 'keyset' | 'aggregate' | null;
-  total: number;
-  pages: number;
-  page: number;
-  limit: number;
-  hasNext: boolean;
-  hasPrev: boolean;
-  /** Keyset cursor for next page (keyset pagination only) */
-  next?: string | null;
-}
 
 /** Request-level options passed through to the fetch call */
 export interface RequestPassthrough {
@@ -88,222 +103,6 @@ export interface DetailQueryResult<T> {
   error: Error | null;
   refetch: () => Promise<unknown>;
   data: unknown;
-}
-
-export interface QueryKeys {
-  all: string[];
-  lists: () => QueryKey;
-  list: (params?: unknown) => QueryKey;
-  details: () => QueryKey;
-  detail: (id: string) => QueryKey;
-  /** Tenant-scoped detail key. Use when IDs are only unique within an org. */
-  scopedDetail: (id: string, organizationId: string | null) => QueryKey;
-  custom: (key: string, ...args: unknown[]) => QueryKey;
-  scopedList: (scope: string, params?: unknown) => QueryKey;
-}
-
-export interface CacheUtils<T> {
-  invalidateAll: (client: QueryClient) => Promise<void>;
-  invalidateLists: (client: QueryClient) => Promise<void>;
-  /** Invalidate detail by ID (prefix-matches all scoped/parameterized variants). */
-  invalidateDetail: (client: QueryClient, id: string) => Promise<void>;
-  setDetail: (client: QueryClient, id: string, data: T) => void;
-  getDetail: (client: QueryClient, id: string) => T | undefined;
-  removeDetail: (client: QueryClient, id: string) => void;
-  /** Invalidate tenant-scoped detail (prefix-matches parameterized variants within org). */
-  invalidateScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => Promise<void>;
-  /** Set tenant-scoped detail cache. */
-  setScopedDetail: (client: QueryClient, id: string, organizationId: string | null, data: T) => void;
-  /** Get tenant-scoped detail from cache. */
-  getScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => T | undefined;
-  /** Remove tenant-scoped detail from cache. */
-  removeScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => void;
-}
-
-// ============================================================================
-// Default Config
-// ============================================================================
-
-export const DEFAULT_QUERY_CONFIG = {
-  staleTime: 5 * 60 * 1000,
-  gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: false,
-  retry: 0,
-} as const;
-
-/** Pre-built query config presets for common data freshness patterns. */
-export const QUERY_CONFIGS = {
-  /** Live data: 20s stale, 30s polling */
-  realtime: { staleTime: 20_000, refetchInterval: 30_000 },
-  /** Frequently updated: 60s stale */
-  frequent: { staleTime: 60_000 },
-  /** Stable data: 5min stale (same as default) */
-  stable: { staleTime: 300_000 },
-  /** Rarely changes: 10min stale */
-  static: { staleTime: 600_000 },
-} as const;
-
-// ============================================================================
-// Utilities
-// ============================================================================
-
-export function getItemId(item: unknown): string | null {
-  if (!item || typeof item !== "object") return null;
-  const obj = item as Record<string, unknown>;
-  const id = obj._id ?? obj.id;
-  return typeof id === "string" ? id : id ? String(id) : null;
-}
-
-function normalizePagination(data: unknown): PaginationData | null {
-  if (!data || typeof data !== "object") return null;
-  const d = data as Record<string, unknown>;
-
-  // Detect pagination method from response
-  const method = (d.method as PaginationData['method']) ?? null;
-
-  // Keyset pagination: has hasMore but no total/pages
-  const isKeyset = method === 'keyset' || (d.hasMore != null && d.total == null && d.pages == null);
-
-  const hasTotal = d.total != null || d.totalDocs != null;
-  const hasPages = d.pages != null || d.totalPages != null;
-
-  // Return null only when no pagination signal exists at all
-  if (!hasTotal && !hasPages && !isKeyset) return null;
-
-  return {
-    method,
-    total: Number(d.total ?? d.totalDocs ?? 0),
-    pages: Number(d.pages ?? d.totalPages ?? (isKeyset ? 0 : 1)),
-    page: Number(d.page ?? d.currentPage ?? (isKeyset ? 0 : 1)),
-    limit: Number(d.limit ?? 10),
-    hasNext: Boolean(d.hasNext ?? d.hasNextPage ?? d.hasMore ?? false),
-    hasPrev: Boolean(d.hasPrev ?? d.hasPrevPage ?? false),
-    ...(isKeyset ? { next: (d.next as string | null) ?? null } : {}),
-  };
-}
-
-/** Well-known keys checked in order for list responses. */
-const LIST_KEYS = ['docs', 'data', 'items', 'results'] as const;
-/** Well-known keys checked in order for detail responses. */
-const DETAIL_KEYS = ['data', 'doc', 'item', 'result'] as const;
-
-function extractItems<T>(data: unknown): T[] {
-  if (!data) return [];
-  if (Array.isArray(data)) return data as T[];
-  if (typeof data !== "object") return [];
-
-  const d = data as Record<string, unknown>;
-
-  // 1. Check well-known keys first
-  for (const key of LIST_KEYS) {
-    if (Array.isArray(d[key])) return d[key] as T[];
-  }
-
-  // 2. Fallback: find the first top-level array (handles { products: [...] } etc.)
-  for (const value of Object.values(d)) {
-    if (Array.isArray(value)) return value as T[];
-  }
-
-  return [];
-}
-
-export function extractItem<T>(data: unknown): T | null {
-  if (data == null) return null;
-  // Primitive response (string, number, boolean) — return directly
-  if (typeof data !== "object") return data as T;
-
-  const d = data as Record<string, unknown>;
-
-  // 1. Check well-known keys first (accept any non-null value, including primitives)
-  for (const key of DETAIL_KEYS) {
-    if (d[key] != null) return d[key] as T;
-  }
-
-  // 2. Fallback: return the response itself (direct object)
-  return d as T;
-}
-
-export function updateListCache<T>(listData: unknown, updater: (items: T[]) => T[]): unknown {
-  if (!listData) return listData;
-
-  if (Array.isArray(listData)) {
-    return updater(listData as T[]);
-  }
-
-  if (typeof listData !== "object") return listData;
-  const d = listData as Record<string, unknown>;
-
-  // Detect the items array field: well-known keys first, then first array found
-  let arrayField: string | null = null;
-  for (const key of LIST_KEYS) {
-    if (Array.isArray(d[key])) { arrayField = key; break; }
-  }
-  if (!arrayField) {
-    for (const [key, value] of Object.entries(d)) {
-      if (Array.isArray(value)) { arrayField = key; break; }
-    }
-  }
-
-  if (!arrayField) return listData;
-
-  const updated = updater(d[arrayField] as T[]);
-  const original = d[arrayField] as T[];
-  const delta = updated.length - original.length;
-
-  // Update total/totalDocs when item count changes (optimistic add/delete)
-  const result: Record<string, unknown> = { ...d, [arrayField]: updated };
-  if (delta !== 0) {
-    if (d.total != null) result.total = Math.max(0, Number(d.total) + delta);
-    if (d.totalDocs != null) result.totalDocs = Math.max(0, Number(d.totalDocs) + delta);
-  }
-
-  return result;
-}
-
-// ============================================================================
-// Query Keys Factory
-// ============================================================================
-
-export function createQueryKeys(entityKey: string): QueryKeys {
-  return {
-    all: [entityKey],
-    lists: () => [entityKey, "list"],
-    list: (params) => [entityKey, "list", params],
-    details: () => [entityKey, "detail"],
-    detail: (id) => [entityKey, "detail", id],
-    scopedDetail: (id, organizationId) =>
-      organizationId ? [entityKey, "detail", id, { _org: organizationId }] : [entityKey, "detail", id],
-    custom: (key, ...args) => [entityKey, key, ...args],
-    scopedList: (scope, params) => [entityKey, "list", { _scope: scope, ...(params as object) }],
-  };
-}
-
-// ============================================================================
-// Cache Utilities Factory
-// ============================================================================
-
-export function createCacheUtils<T>(KEYS: QueryKeys): CacheUtils<T> {
-  return {
-    invalidateAll: (client) => client.invalidateQueries({ queryKey: KEYS.all }),
-    invalidateLists: (client) => client.invalidateQueries({ queryKey: KEYS.lists() }),
-    invalidateDetail: (client, id) => client.invalidateQueries({ queryKey: KEYS.detail(id) }),
-    setDetail: (client, id, data) => client.setQueryData(KEYS.detail(id), { data }),
-    getDetail: (client, id) => {
-      const cached = client.getQueryData(KEYS.detail(id)) as { data?: T } | undefined;
-      return cached?.data;
-    },
-    removeDetail: (client, id) => client.removeQueries({ queryKey: KEYS.detail(id) }),
-    invalidateScopedDetail: (client, id, organizationId) =>
-      client.invalidateQueries({ queryKey: KEYS.scopedDetail(id, organizationId) }),
-    setScopedDetail: (client, id, organizationId, data) =>
-      client.setQueryData(KEYS.scopedDetail(id, organizationId), { data }),
-    getScopedDetail: (client, id, organizationId) => {
-      const cached = client.getQueryData(KEYS.scopedDetail(id, organizationId)) as { data?: T } | undefined;
-      return cached?.data;
-    },
-    removeScopedDetail: (client, id, organizationId) =>
-      client.removeQueries({ queryKey: KEYS.scopedDetail(id, organizationId) }),
-  };
 }
 
 // ============================================================================
@@ -509,6 +308,147 @@ export function useInfiniteListQuery<T>({
     error: query.error,
     refetch: query.refetch,
     data: query.data,
+  };
+}
+
+// ============================================================================
+// Generic API Query Hook (non-CRUD reads)
+// ============================================================================
+
+/** Recognized data-freshness presets. Maps to QUERY_CONFIGS. */
+export type QueryFreshness = keyof typeof QUERY_CONFIGS;
+
+/**
+ * Extracts the inner type of an Arc envelope `{ success, data: T }`.
+ * Falls through to `T` itself when the response isn't an envelope.
+ */
+export type ExtractData<T> = T extends { success: unknown; data: infer D } ? D : T;
+
+/**
+ * Strict Arc envelope detector — requires BOTH `success` and `data` keys.
+ *
+ * Stricter than checking only `data` so we don't mis-unwrap responses that happen
+ * to use a `data` field for unrelated semantics (e.g. a chart that returns
+ * `{ data: number[], labels: [] }`).
+ */
+function isArcEnvelope(value: unknown): value is { success: unknown; data: unknown } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "success" in value &&
+    "data" in value
+  );
+}
+
+/** Per-call request pass-through and TanStack Query overrides. */
+export interface UseApiQueryOptions {
+  staleTime?: number;
+  gcTime?: number;
+  refetchOnWindowFocus?: boolean;
+  refetchInterval?: number | false;
+  refetchIntervalInBackground?: boolean;
+  retry?: boolean | number;
+  /** Limit re-renders to changes in these specific fields (perf optimization). */
+  notifyOnChangeProps?: ('data' | 'error' | 'isLoading' | 'isFetching' | 'isError' | 'isSuccess' | 'isStale')[];
+}
+
+export interface UseApiQueryConfig<TResponse, TData> {
+  queryKey: QueryKey;
+  queryFn: (context: { signal: AbortSignal }) => Promise<TResponse>;
+  enabled?: boolean;
+  /** Freshness preset name (`realtime` | `frequent` | `stable` | `static`). */
+  freshness?: QueryFreshness;
+  /**
+   * Custom projection from the raw response. When omitted, the hook auto-unwraps
+   * Arc envelopes (`{ success, data }`) and returns `data`. Non-envelope responses
+   * pass through unchanged.
+   */
+  select?: (response: TResponse) => TData;
+  /** TanStack Query overrides (staleTime, refetchInterval, retry, etc.). */
+  options?: UseApiQueryOptions;
+}
+
+export interface UseApiQueryResult<TData> {
+  data: TData | null;
+  isLoading: boolean;
+  isFetching: boolean;
+  isError: boolean;
+  isSuccess: boolean;
+  isStale: boolean;
+  error: Error | null;
+  refetch: () => Promise<unknown>;
+}
+
+/**
+ * Generic query hook for non-CRUD reads (reports, aggregates, lookups, RPC-style
+ * endpoints). Wraps TanStack Query with three ergonomics on top:
+ *
+ * 1. **Envelope auto-unwrap.** `{ success, data: T }` responses are projected to
+ *    `T` automatically. Override with a custom `select` for shape changes or
+ *    multi-field projections.
+ * 2. **Freshness presets.** Pass `freshness: 'realtime' | 'frequent' | 'stable' |
+ *    'static'` to map onto `QUERY_CONFIGS`. Per-option overrides still win.
+ * 3. **Standardized result shape.** `{ data, isLoading, isFetching, isError,
+ *    isSuccess, isStale, error, refetch }` — same contract as the CRUD hooks.
+ *
+ * @example
+ * // Auto-unwrap envelope
+ * const { data } = useApiQuery<ApiResponse<DashboardStats>>({
+ *   queryKey: ['dashboard', 'stats'],
+ *   queryFn: ({ signal }) => api.request('GET', '/dashboard/stats', { options: { signal } }),
+ *   freshness: 'realtime',
+ * });
+ *
+ * // Custom projection
+ * const { data } = useApiQuery({
+ *   queryKey: ['ledger', accountId],
+ *   queryFn: ({ signal }) => api.request('GET', `/ledger/${accountId}`, { options: { signal } }),
+ *   select: (res) => res.data?.entries ?? [],
+ * });
+ */
+export function useApiQuery<TResponse = unknown, TData = ExtractData<TResponse>>({
+  queryKey,
+  queryFn,
+  enabled = true,
+  freshness,
+  select,
+  options = {},
+}: UseApiQueryConfig<TResponse, TData>): UseApiQueryResult<TData> {
+  // Stable projection: stash `select` in a ref so an inline arrow at the call
+  // site (`select: (r) => r.data`) doesn't change projection identity on every
+  // render. TanStack treats a new `select` reference as cause to re-run the
+  // projection (structural sharing only saves on equal *output*, not equal
+  // *function*); the ref pattern keeps `select` always resolvable to the latest
+  // closure while the wrapper stays referentially stable.
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  const projection = useCallback((response: TResponse): TData => {
+    const fn = selectRef.current;
+    if (fn) return fn(response);
+    return (isArcEnvelope(response) ? response.data : response) as TData;
+  }, []);
+
+  const preset = freshness ? QUERY_CONFIGS[freshness] : undefined;
+
+  const query = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => queryFn({ signal }),
+    enabled,
+    ...DEFAULT_QUERY_CONFIG,
+    ...preset,
+    ...options,
+    select: projection,
+  });
+
+  return {
+    data: (query.data ?? null) as TData | null,
+    isLoading: query.isLoading,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    isSuccess: query.isSuccess,
+    isStale: query.isStale,
+    error: query.error,
+    refetch: query.refetch,
   };
 }
 

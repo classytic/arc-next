@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test *)",
+      "Bash(npm run *)",
+      "Bash(xargs grep *)",
+      "Skill(nextjs-data-fetching)",
+      "Skill(nextjs-data-fetching:*)"
+    ],
+    "additionalDirectories": [
+      "D:\\projects\\classytic\\arc-next-test-api"
+    ]
+  }
+}

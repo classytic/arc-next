@@ -10,6 +10,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { configureClient, configureAuth, handleApiRequest, isArcApiError, createClient } from '../src/client.js';
 import { createCrudApi } from '../src/api.js';
+import { withSoftDelete } from '../src/presets/soft-delete.js';
+import { withBulk } from '../src/presets/bulk.js';
 import { createCrudHooks } from '../src/hooks.js';
 import { configureToast } from '../src/mutation.js';
 import { useEventStream } from '../src/sse.js';
@@ -97,13 +99,13 @@ describe('Fix #1: token optional in mutation methods', () => {
   });
 
   it('restore() works without token', async () => {
-    const api = createCrudApi('items', { basePath: '/api' });
+    const api = withSoftDelete(createCrudApi('items', { basePath: '/api' }));
     await api.restore({ id: '1' });
     expect(fetchMock).toHaveBeenCalled();
   });
 
   it('bulkCreate() works without token', async () => {
-    const api = createCrudApi('items', { basePath: '/api' });
+    const api = withBulk(createCrudApi('items', { basePath: '/api' }));
     await api.bulkCreate({ data: [{ name: 'A' }] });
     expect(fetchMock).toHaveBeenCalled();
   });
@@ -132,6 +134,8 @@ describe('Fix #2: SSE close → reconnect', () => {
         if (!this.closed) { this.readyState = 1; this.onopen?.(new Event('open')); }
       });
     }
+    addEventListener() { /* named-event subscriptions are tested elsewhere */ }
+    removeEventListener() { /* same */ }
     close() { this.closed = true; this.readyState = 2; }
     static reset() { MockES.instances = []; }
     static latest() { return MockES.instances[MockES.instances.length - 1]; }

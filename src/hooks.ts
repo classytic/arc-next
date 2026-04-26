@@ -1,23 +1,15 @@
 "use client";
 
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptimisticMutation, useMutationWithTransition } from "./mutation.js";
 import type { MutationMessages } from "./mutation.js";
 import {
   useListQuery,
   useDetailQuery,
   useInfiniteListQuery,
-  updateListCache,
-  getItemId,
-  createQueryKeys,
-  createCacheUtils,
-  DEFAULT_QUERY_CONFIG,
-  extractItem,
 } from "./query.js";
 import type {
-  QueryKeys,
-  CacheUtils,
   ListQueryOptions,
   DetailQueryOptions,
   ListQueryResult,
@@ -25,14 +17,32 @@ import type {
   InfiniteListQueryOptions,
   InfiniteListQueryResult,
 } from "./query.js";
+// Utilities live in the server-safe cache module — import directly so this
+// hook layer doesn't accidentally take a dependency on a client-marked path.
+import {
+  updateListCache,
+  getItemId,
+  createQueryKeys,
+  createCacheUtils,
+  DEFAULT_QUERY_CONFIG,
+  extractItem,
+} from "./cache.js";
+import type { QueryKeys, CacheUtils } from "./cache.js";
 import {
   isOffsetPagination,
   isKeysetPagination,
 } from "./api.js";
-import type { PaginatedResponse, BaseApi, FilterOperator } from "./api.js";
+import type { PaginatedResponse, BaseApi, ApiResponse } from "./api.js";
+import type { SoftDeleteMethods } from "./presets/soft-delete.js";
+import type { BulkMethods } from "./presets/bulk.js";
+import type { SlugLookupMethods } from "./presets/slug.js";
+import type { TreeMethods } from "./presets/tree.js";
+import type { SearchPresetMethods } from "./presets/search.js";
 import type { MutationCallbacks, TransitionMutationReturn } from "./mutation.js";
 import { getAuthMode, getClientAuthContext } from "./client.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
+import { subscribeToEvents, type CrudOperation } from "./sse.js";
+import { connectWs } from "./ws.js";
 
 // ============================================================================
 // Types
@@ -41,26 +51,25 @@ import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
 /**
  * CRUD API interface accepted by createCrudHooks.
  *
- * Derived from BaseApi via Pick so the types are always in sync.
- * BaseApi instances satisfy this exactly (same source of truth).
- * Custom implementations just need to match BaseApi's method signatures.
+ * Always-on surface (CRUD + universal helpers) is derived from BaseApi via Pick
+ * so types stay in sync. Preset surfaces are optional intersections of the
+ * corresponding `XxxMethods` interfaces, so a `withSearchPreset(api)` result
+ * satisfies CrudApi & gets `searchEngine`/`searchSimilar`/`embed` typed without
+ * any cast — yet a vanilla `createCrudApi('todos')` instance has none of them
+ * in autocomplete unless you opt in.
  */
 export type CrudApi<T = unknown, TCreate = Partial<T>, TUpdate = Partial<T>> = Pick<
   BaseApi<T, TCreate, TUpdate>,
   'getAll' | 'getById' | 'create' | 'update' | 'delete'
 > & {
   upload?: BaseApi<T, TCreate, TUpdate>['upload'];
-  search?: BaseApi<T, TCreate, TUpdate>['search'];
-  getDeleted?: BaseApi<T, TCreate, TUpdate>['getDeleted'];
-  restore?: BaseApi<T, TCreate, TUpdate>['restore'];
-  bulkCreate?: BaseApi<T, TCreate, TUpdate>['bulkCreate'];
-  bulkUpdate?: BaseApi<T, TCreate, TUpdate>['bulkUpdate'];
-  bulkDelete?: BaseApi<T, TCreate, TUpdate>['bulkDelete'];
-  getBySlug?: BaseApi<T, TCreate, TUpdate>['getBySlug'];
-  getTree?: BaseApi<T, TCreate, TUpdate>['getTree'];
-  getChildren?: BaseApi<T, TCreate, TUpdate>['getChildren'];
-  findBy?: BaseApi<T, TCreate, TUpdate>['findBy'];
-};
+  dispatchAction?: BaseApi<T, TCreate, TUpdate>['dispatchAction'];
+  invokeRoute?: BaseApi<T, TCreate, TUpdate>['invokeRoute'];
+} & Partial<SoftDeleteMethods<T>>
+  & Partial<BulkMethods<T, TCreate, TUpdate>>
+  & Partial<SlugLookupMethods<T>>
+  & Partial<TreeMethods<T>>
+  & Partial<SearchPresetMethods<T>>;
 
 export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
   api: CrudApi<T, TCreate, TUpdate>;
@@ -179,7 +188,38 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
   useDetailBySlug: (slug: string | null, options?: DetailQueryOptions<T>) => DetailQueryResult<T>;
   useTree: (params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
   useChildren: (parentId: string | null, params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
-  useFindBy: (field: string, value: unknown, options?: ListQueryOptions<T> & { operator?: FilterOperator }) => ListQueryResult<T>;
+  /**
+   * Mutation against arc's unified action router (`POST /:id/action`).
+   * Server discriminates on `body.action`. Use for state transitions
+   * (approve/cancel/dispatch) instead of bespoke routes.
+   */
+  useAction: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+    invalidateQueries?: QueryKey[];
+    /** Default action name. Can be overridden per-call via `mutate({ action })`. */
+    action?: string;
+    messages?: MutationMessages;
+    onSuccess?: (data: ApiResponse<TResult>, variables: { id: string; action: string; data?: TBody }) => void;
+    onError?: (error: Error, variables: { id: string; action: string; data?: TBody }) => void;
+    onSettled?: (data: ApiResponse<TResult> | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
+  }) => TransitionMutationReturn<ApiResponse<TResult>, { id: string; action?: string; data?: TBody }>;
+  /** Mutation against the search-preset POST `/search` route. */
+  useSearchEngine: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+    path?: string;
+    messages?: MutationMessages;
+    invalidateQueries?: QueryKey[];
+  }) => TransitionMutationReturn<unknown, { query?: string; body?: TBody }>;
+  /** Mutation against the search-preset POST `/search-similar` route. */
+  useSearchSimilar: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+    path?: string;
+    messages?: MutationMessages;
+    invalidateQueries?: QueryKey[];
+  }) => TransitionMutationReturn<unknown, { query?: string; vector?: number[]; body?: TBody }>;
+  /** Mutation against the search-preset POST `/embed` route. */
+  useEmbed: (options?: {
+    path?: string;
+    messages?: MutationMessages;
+    invalidateQueries?: QueryKey[];
+  }) => TransitionMutationReturn<unknown, { input: string | string[]; body?: Record<string, unknown> }>;
   useUpload: (options?: {
     invalidateQueries?: QueryKey[];
     messages?: MutationMessages;
@@ -187,7 +227,6 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     onError?: (error: Error) => void;
     onSettled?: (data: unknown | undefined, error: Error | null) => void;
   }) => TransitionMutationReturn<unknown, { data: FormData; id?: string; path?: string }>;
-  useSearch: (query: string, params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
   useCustomMutation: <TData = unknown, TVariables = unknown>(config: {
     mutationFn: (variables: TVariables) => Promise<TData>;
     invalidateQueries?: QueryKey[];
@@ -196,6 +235,27 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     onError?: (error: Error, variables: TVariables) => void;
     onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
   }) => TransitionMutationReturn<TData, TVariables>;
+  /**
+   * Subscribe to live CRUD broadcasts and auto-invalidate this resource's
+   * cache. Drop in alongside `createCrudHooks` and every `useList` /
+   * `useDetail` rerenders when the backend emits `<resource>.<op>`.
+   *
+   * `source: 'ws'` uses arc's `websocketPlugin` (`/ws`); `source: 'sse'` uses
+   * `ssePlugin` (`/events/stream`). Pass `enabled: false` to opt out.
+   */
+  useResourceSync: (options?: {
+    source?: 'ws' | 'sse';
+    /** Override resource name. Defaults to the factory's `entityKey`. */
+    resource?: string;
+    /** Override path (default: `/ws` or `/events/stream`). */
+    path?: string;
+    /** Whether the connection is active. Default: true. */
+    enabled?: boolean;
+    /** Per-event hook fired AFTER cache invalidation. */
+    onEvent?: (event: { operation: 'created' | 'updated' | 'deleted'; id?: string; data: unknown }) => void;
+    /** Connection-state listener. */
+    onConnectionChange?: (connected: boolean) => void;
+  }) => { isConnected: boolean };
   useNavigation: () => NavigateFn<T>;
 }
 
@@ -712,39 +772,6 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     });
   }
 
-  // ========== useSearch ==========
-
-  function useSearch(
-    query: string,
-    params?: Record<string, unknown>,
-    options?: ListQueryOptions<T>,
-  ): ListQueryResult<T> {
-    const auth = resolveAuth();
-    const token = params?.token as string | null ?? auth.token;
-    const organizationId = params?.organizationId as string | null ?? auth.organizationId;
-    const { organizationId: _, token: _t, ...restParams } = params ?? {};
-    const searchParams = { q: query, ...restParams };
-    const { request: requestOpts, ...queryOpts } = options ?? {};
-
-    const searchKeyParams = organizationId
-      ? { organizationId, ...searchParams }
-      : searchParams;
-
-    return useListQuery<T>({
-      queryKey: [...KEYS.lists(), 'search', searchKeyParams],
-      queryFn: ({ signal }) => {
-        if (!api.search) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a search method`));
-        return api.search({ token, organizationId, params: searchParams, options: { signal, ...requestOpts } });
-      },
-      enabled: !!api.search && query.length > 0 && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
-      options: {
-        staleTime: queryOpts.staleTime ?? config.staleTime,
-        gcTime: queryOpts.gcTime ?? config.gcTime,
-      },
-      select: queryOpts.select,
-    });
-  }
-
   // ========== useCustomMutation ==========
 
   function useCustomMutation<TData = unknown, TVariables = unknown>(mutationConfig: {
@@ -883,36 +910,6 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     });
   }
 
-  // ========== useFindBy ==========
-
-  function useFindBy(
-    field: string,
-    value: unknown,
-    options?: ListQueryOptions<T> & { operator?: FilterOperator },
-  ): ListQueryResult<T> {
-    const auth = resolveAuth();
-    const token = auth.token;
-    const organizationId = auth.organizationId;
-    const { operator, request: requestOpts, ...queryOpts } = options ?? {};
-
-    return useListQuery<T>({
-      queryKey: KEYS.custom('findBy', { field, value, operator, organizationId }),
-      queryFn: ({ signal }) => {
-        if (!api.findBy) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a findBy method`));
-        return api.findBy({ token, organizationId, field, value, operator, options: { signal, ...requestOpts } });
-      },
-      enabled: !!api.findBy && value !== undefined && value !== null && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
-      options: {
-        staleTime: queryOpts.staleTime ?? config.staleTime,
-        gcTime: queryOpts.gcTime ?? config.gcTime,
-      },
-      prefillDetailCache: queryOpts.prefillDetailCache ?? true,
-      detailKeyBuilder: (id) => KEYS.scopedDetail(id, (organizationId as string | null) ?? null),
-      itemIdResolver: resolveItemId,
-      select: queryOpts.select,
-    });
-  }
-
   // ========== useBulkActions ==========
 
   function useBulkActions(): BulkActions<T, TCreate> {
@@ -1000,6 +997,253 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     };
   }
 
+  // ========== useAction (unified action router, arc v2.8+) ==========
+
+  function useAction<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+    invalidateQueries?: QueryKey[];
+    action?: string;
+    messages?: MutationMessages;
+    onSuccess?: (data: ApiResponse<TResult>, variables: { id: string; action: string; data?: TBody }) => void;
+    onError?: (error: Error, variables: { id: string; action: string; data?: TBody }) => void;
+    onSettled?: (data: ApiResponse<TResult> | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
+  }) {
+    const queryClient = useQueryClient();
+
+    return useMutationWithTransition<ApiResponse<TResult>, { id: string; action?: string; data?: TBody }>({
+      mutationFn: (vars) => {
+        if (!api.dispatchAction) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a dispatchAction method`));
+        }
+        const action = vars.action ?? options?.action;
+        if (!action) {
+          return Promise.reject(new Error(`[arc-next] useAction: action name required (pass via mutate({ action }) or factory options)`));
+        }
+        const auth = resolveAuth();
+        return api.dispatchAction<TResult, TBody>({
+          token: auth.token,
+          organizationId: auth.organizationId,
+          id: vars.id,
+          action,
+          data: vars.data,
+        });
+      },
+      // Default: invalidate the resource's lists + the specific detail so the action's
+      // state mutation propagates without each consumer having to wire it.
+      invalidateQueries: options?.invalidateQueries ?? [KEYS.lists(), KEYS.details()],
+      // Pass typed variables (with action resolved) through to user callbacks.
+      onSuccess: (data, vars) => {
+        const action = vars.action ?? options?.action ?? '';
+        // Also invalidate the specific detail in case `details()` filter doesn't catch it.
+        if (vars.id) {
+          queryClient.invalidateQueries({ queryKey: KEYS.detail(vars.id) });
+        }
+        options?.onSuccess?.(data, { id: vars.id, action, data: vars.data });
+      },
+      onError: (error, vars) => {
+        const action = vars.action ?? options?.action ?? '';
+        options?.onError?.(error, { id: vars.id, action, data: vars.data });
+      },
+      onSettled: (data, error, vars) => {
+        const action = vars.action ?? options?.action ?? '';
+        options?.onSettled?.(data, error, { id: vars.id, action, data: vars.data });
+      },
+      messages: options?.messages,
+      toastHandler: instanceToast,
+    });
+  }
+
+  // ========== useSearchEngine / useSearchSimilar / useEmbed (search preset, arc v2.9+) ==========
+
+  function useSearchEngine<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+    path?: string;
+    messages?: MutationMessages;
+    invalidateQueries?: QueryKey[];
+  }) {
+    return useMutationWithTransition<unknown, { query?: string; body?: TBody }>({
+      mutationFn: (vars) => {
+        if (!api.searchEngine) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a searchEngine method`));
+        }
+        const auth = resolveAuth();
+        return api.searchEngine<TResult, TBody>({
+          token: auth.token,
+          organizationId: auth.organizationId,
+          query: vars.query,
+          body: vars.body,
+          path: options?.path,
+        });
+      },
+      invalidateQueries: options?.invalidateQueries ?? [],
+      messages: options?.messages,
+      toastHandler: instanceToast,
+    });
+  }
+
+  function useSearchSimilar<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+    path?: string;
+    messages?: MutationMessages;
+    invalidateQueries?: QueryKey[];
+  }) {
+    return useMutationWithTransition<unknown, { query?: string; vector?: number[]; body?: TBody }>({
+      mutationFn: (vars) => {
+        if (!api.searchSimilar) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a searchSimilar method`));
+        }
+        const auth = resolveAuth();
+        return api.searchSimilar<TResult, TBody>({
+          token: auth.token,
+          organizationId: auth.organizationId,
+          query: vars.query,
+          vector: vars.vector,
+          body: vars.body,
+          path: options?.path,
+        });
+      },
+      invalidateQueries: options?.invalidateQueries ?? [],
+      messages: options?.messages,
+      toastHandler: instanceToast,
+    });
+  }
+
+  function useEmbed(options?: {
+    path?: string;
+    messages?: MutationMessages;
+    invalidateQueries?: QueryKey[];
+  }) {
+    return useMutationWithTransition<unknown, { input: string | string[]; body?: Record<string, unknown> }>({
+      mutationFn: (vars) => {
+        if (!api.embed) {
+          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define an embed method`));
+        }
+        const auth = resolveAuth();
+        return api.embed({
+          token: auth.token,
+          organizationId: auth.organizationId,
+          input: vars.input,
+          body: vars.body,
+          path: options?.path,
+        });
+      },
+      invalidateQueries: options?.invalidateQueries ?? [],
+      messages: options?.messages,
+      toastHandler: instanceToast,
+    });
+  }
+
+  // ========== useResourceSync (real-time auto-invalidation) ==========
+
+  /**
+   * Subscribe to live `<resource>.<operation>` broadcasts from arc and
+   * auto-invalidate this entity's TanStack Query cache.
+   *
+   * - `source: 'ws'` (default) → arc's `websocketPlugin` at `/ws`. Sends a
+   *   `{ type: 'subscribe', resource }` handshake on connect.
+   * - `source: 'sse'` → arc's `ssePlugin` at `/events/stream`. Auto-derives
+   *   patterns from the resource name.
+   *
+   * Both transports invalidate `KEYS.lists()` on `<resource>.created` and
+   * `<resource>.deleted`, and `KEYS.detail(id)` (prefix-matches scoped /
+   * parameterized variants) on `<resource>.updated` / `.deleted`.
+   */
+  function useResourceSync(options?: {
+    source?: 'ws' | 'sse';
+    resource?: string;
+    path?: string;
+    enabled?: boolean;
+    onEvent?: (event: { operation: CrudOperation; id?: string; data: unknown }) => void;
+    onConnectionChange?: (connected: boolean) => void;
+  }): { isConnected: boolean } {
+    const queryClient = useQueryClient();
+    const [isConnected, setIsConnected] = useState(false);
+
+    const source = options?.source ?? 'ws';
+    const resource = options?.resource ?? entityKey;
+    const enabled = options?.enabled ?? true;
+    const path = options?.path;
+
+    // Refs so callback churn doesn't reconnect.
+    const onEventRef = useRef(options?.onEvent);
+    onEventRef.current = options?.onEvent;
+    const onConnRef = useRef(options?.onConnectionChange);
+    onConnRef.current = options?.onConnectionChange;
+
+    useEffect(() => {
+      if (!enabled) return;
+
+      // Drive cache invalidation from the parsed `<resource>.<operation>` type.
+      // Handles both shapes arc broadcasts:
+      //   1. WS: { type: 'todo.created', data: { resource, operation, data: doc, ... } }
+      //   2. SSE: { type, resource, data: doc, timestamp } (CrudEvent shape)
+      const handleBroadcast = (incomingType: string, payload: unknown): void => {
+        // Type can be `<resource>.<operation>` or just `<operation>`.
+        const dot = incomingType.lastIndexOf('.');
+        const operation = (dot >= 0 ? incomingType.slice(dot + 1) : incomingType) as CrudOperation;
+        if (operation !== 'created' && operation !== 'updated' && operation !== 'deleted') return;
+
+        // Unwrap WS broadcast envelope (`data.data` is the doc).
+        let doc: unknown = payload;
+        if (
+          payload && typeof payload === 'object' && !Array.isArray(payload) &&
+          'data' in (payload as Record<string, unknown>)
+        ) {
+          const inner = (payload as { data: unknown }).data;
+          if (inner !== undefined) doc = inner;
+        }
+
+        const id = typeof doc === 'object' && doc !== null
+          ? (() => {
+              const o = doc as Record<string, unknown>;
+              const raw = idField ? o[idField] : (o._id ?? o.id);
+              return raw != null ? String(raw) : undefined;
+            })()
+          : undefined;
+
+        // Lists always invalidate — count/order can shift on any op.
+        queryClient.invalidateQueries({ queryKey: KEYS.lists() });
+        // Detail invalidates on update/delete (prefix-match scoped variants).
+        if (id && (operation === 'updated' || operation === 'deleted')) {
+          queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
+        }
+
+        onEventRef.current?.({ operation, id, data: doc });
+      };
+
+      if (source === 'sse') {
+        const handle = subscribeToEvents({
+          resource,
+          path,
+          onConnectionChange: (c) => {
+            setIsConnected(c);
+            onConnRef.current?.(c);
+          },
+          onEvent: (event) => {
+            handleBroadcast(event.type, event.data);
+          },
+        });
+        return () => handle.close();
+      }
+
+      // WebSocket: subscribe to the resource channel; arc broadcasts
+      // `<resource>.created|updated|deleted` after the handshake.
+      const handle = connectWs({
+        path,
+        subscribe: [resource],
+        // Arc sends `<resource>.<op>` types — pattern-filter to skip non-CRUD.
+        patterns: [`${resource}.`],
+        onConnectionChange: (c) => {
+          setIsConnected(c);
+          onConnRef.current?.(c);
+        },
+        onMessage: (message) => {
+          handleBroadcast(message.type, message.data);
+        },
+      });
+      return () => handle.close();
+    }, [enabled, source, resource, path, queryClient]);
+
+    return { isConnected };
+  }
+
   // ========== useNavigation ==========
 
   // Resolve router hook once at factory time — stable identity for Rules of Hooks.
@@ -1050,10 +1294,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     useDetailBySlug,
     useTree,
     useChildren,
-    useFindBy,
     useUpload,
-    useSearch,
     useCustomMutation,
+    useAction,
+    useSearchEngine,
+    useSearchSimilar,
+    useEmbed,
+    useResourceSync,
     useNavigation,
   };
 }
