@@ -22,7 +22,7 @@ describe('createCrudPrefetcher', () => {
     mockApi = {
       getAll: vi.fn().mockResolvedValue({
         success: true,
-        docs: [{ _id: '1', name: 'Item 1' }],
+        data: [{ _id: '1', name: 'Item 1' }],
         total: 1,
       }),
       getById: vi.fn().mockResolvedValue({
@@ -172,7 +172,7 @@ describe('createCrudPrefetcher', () => {
     const superAdminKey = KEYS.scopedList('super-admin', { limit: 20 });
     const cached = queryClient.getQueryData(superAdminKey);
     expect(cached).toBeDefined();
-    expect((cached as { docs: unknown[] }).docs).toHaveLength(1);
+    expect((cached as { data: unknown[] }).data).toHaveLength(1);
   });
 
   it('dehydrate produces serializable state', async () => {
@@ -237,7 +237,7 @@ describe('createCrudPrefetcher', () => {
   // ========== prefetchDeleted ==========
 
   it('prefetchDeleted stores under correct key', async () => {
-    const deletedApi = { ...mockApi, getDeleted: vi.fn().mockResolvedValue({ success: true, docs: [] }) };
+    const deletedApi = { ...mockApi, getDeleted: vi.fn().mockResolvedValue({ success: true, data: [] }) };
     const prefetcher = createCrudPrefetcher(deletedApi, 'products');
 
     await prefetcher.prefetchDeleted(queryClient, { limit: 10 });
@@ -251,7 +251,7 @@ describe('createCrudPrefetcher', () => {
   });
 
   it('prefetchDeleted scopes by organizationId', async () => {
-    const deletedApi = { ...mockApi, getDeleted: vi.fn().mockResolvedValue({ success: true, docs: [] }) };
+    const deletedApi = { ...mockApi, getDeleted: vi.fn().mockResolvedValue({ success: true, data: [] }) };
     const prefetcher = createCrudPrefetcher(deletedApi, 'products');
 
     await prefetcher.prefetchDeleted(queryClient, { organizationId: 'org-1' });

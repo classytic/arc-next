@@ -1,7 +1,6 @@
+import type { PaginatedResult } from '@classytic/repo-core/pagination';
 import type {
   BaseApi,
-  ApiResponse,
-  PaginatedResponse,
   ScopedArgs,
 } from '../api.js';
 
@@ -23,7 +22,7 @@ export interface SearchPresetMethods<TDoc> {
       /** Override path (default `/search`). */
       path?: string;
     },
-  ): Promise<ApiResponse<TResult[]> | PaginatedResponse<TResult>>;
+  ): Promise<TResult[] | PaginatedResult<TResult>>;
 
   /**
    * Vector / semantic similarity (Atlas, Pinecone, Qdrant...).
@@ -40,7 +39,7 @@ export interface SearchPresetMethods<TDoc> {
       /** Override path (default `/search-similar`). */
       path?: string;
     },
-  ): Promise<ApiResponse<TResult[]>>;
+  ): Promise<TResult[]>;
 
   /**
    * Convert text/media to a vector embedding via the engine the resource is wired to.
@@ -53,7 +52,7 @@ export interface SearchPresetMethods<TDoc> {
     body?: Record<string, unknown>;
     /** Override path (default `/embed`). */
     path?: string;
-  }): Promise<ApiResponse<number[] | number[][]>>;
+  }): Promise<number[] | number[][]>;
 }
 
 // ============================================================================

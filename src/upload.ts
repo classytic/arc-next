@@ -283,9 +283,10 @@ export function uploadWithProgress<TResult = unknown>(
         return;
       }
 
-      // Mirror the fetch path: prefer json.error, fall back to json.message,
-      // then statusText. ArcApiError.json carries the raw envelope so the
-      // existing code/detailsCode/fieldErrors getters keep working.
+      // Mirror the fetch path: prefer json.message (canonical ErrorContract),
+      // fall back to json.error (legacy backends), then statusText.
+      // ArcApiError.json carries the raw envelope so `code` / `details` /
+      // `fieldErrors` getters parse it on demand.
       const message = extractErrorMessage(body, statusText);
       reject(
         new ArcApiError(message, {

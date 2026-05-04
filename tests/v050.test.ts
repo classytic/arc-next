@@ -24,7 +24,7 @@ describe('v0.5.0 — geo / between operators', () => {
   beforeEach(() => {
     configureClient({ baseUrl: 'http://api.test' });
     fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ success: true, docs: [] }), {
+      new Response(JSON.stringify({ success: true, data: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -302,7 +302,7 @@ describe('v0.5.0 — elevated header (x-arc-scope: platform)', () => {
 
   beforeEach(() => {
     fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ success: true, docs: [] }), {
+      new Response(JSON.stringify({ success: true, data: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -351,16 +351,16 @@ describe('v0.5.0 — elevated header (x-arc-scope: platform)', () => {
   });
 });
 
-describe('v0.5.0 — typed arc error codes (ArcApiError.code / detailsCode)', () => {
-  // Wire shape from arc's errorHandlerPlugin (top-level `code`) and bulk
-  // mixin / orgGuard (`details.code`). Locked in by 184 integration tests.
+describe('typed arc error codes — unified ErrorContract (arc 2.13 / repo-core 0.4)', () => {
+  // Wire shape: arc 2.13's `createError` lifts business codes to top-level
+  // `code`. `repo-core`'s `toErrorContract` round-trips the canonical shape
+  // `{ code, message, status, details? }`. There is no `details.code` slot —
+  // every code lives at top level.
   const orgContextRequiredJson = {
-    success: false,
-    error: 'Bulk create requires an organization context. Configure auth before calling bulk endpoints.',
-    code: 'FORBIDDEN',
-    timestamp: '2026-04-26T00:00:00.000Z',
-    requestId: 'r-1',
-    details: { code: 'ORG_CONTEXT_REQUIRED' },
+    code: 'ORG_CONTEXT_REQUIRED',
+    message: 'Organization context required to bulk-create resources',
+    status: 403,
+    correlationId: 'r-1',
   };
 
   it('exposes top-level `code` from json.code', () => {
@@ -371,21 +371,10 @@ describe('v0.5.0 — typed arc error codes (ArcApiError.code / detailsCode)', ()
       endpoint: '/todos/bulk',
       method: 'POST',
     });
-    expect(err.code).toBe('FORBIDDEN');
+    expect(err.code).toBe('ORG_CONTEXT_REQUIRED');
   });
 
-  it('exposes nested business `detailsCode` from json.details.code', () => {
-    const err = new ArcApiError('Forbidden', {
-      status: 403,
-      statusText: 'Forbidden',
-      json: orgContextRequiredJson,
-      endpoint: '/todos/bulk',
-      method: 'POST',
-    });
-    expect(err.detailsCode).toBe('ORG_CONTEXT_REQUIRED');
-  });
-
-  it('returns null for code/detailsCode when json carries neither', () => {
+  it('returns null for code when json carries no envelope', () => {
     const err = new ArcApiError('Crash', {
       status: 500,
       statusText: 'Internal Server Error',
@@ -394,29 +383,52 @@ describe('v0.5.0 — typed arc error codes (ArcApiError.code / detailsCode)', ()
       method: 'GET',
     });
     expect(err.code).toBeNull();
-    expect(err.detailsCode).toBeNull();
+    expect(err.details).toBeNull();
   });
 
-  it('isArcErrorCode matches whichever slot the code lives in', () => {
+  it('exposes canonical details[] (validation / duplicate-key shape)', () => {
+    const err = new ArcApiError('Validation failed', {
+      status: 400,
+      statusText: 'Bad Request',
+      json: {
+        code: 'arc.validation_error',
+        message: 'Validation failed',
+        status: 400,
+        details: [
+          { path: 'email', code: 'format', message: 'must be email' },
+          { path: 'age', code: 'minimum', message: 'must be >= 18' },
+        ],
+      },
+      endpoint: '/users',
+      method: 'POST',
+    });
+    expect(err.details).toEqual([
+      { path: 'email', code: 'format', message: 'must be email' },
+      { path: 'age', code: 'minimum', message: 'must be >= 18' },
+    ]);
+  });
+
+  it('isArcErrorCode matches the single top-level code', () => {
     const orgErr = new ArcApiError('forbidden', {
       status: 403, statusText: 'Forbidden', json: orgContextRequiredJson,
       endpoint: '/x', method: 'POST',
     });
-    const dupErr = new ArcApiError('dup', {
+    const dupErr = new ArcApiError('conflict', {
       status: 409, statusText: 'Conflict',
-      json: { success: false, code: 'DUPLICATE_KEY', error: 'duplicate' },
+      json: {
+        code: 'arc.conflict',
+        message: 'Duplicate value',
+        status: 409,
+        details: [{ path: 'email', code: 'duplicate_key', message: 'Duplicate value for "email"' }],
+      },
       endpoint: '/x', method: 'POST',
     });
 
-    // Nested-only code matches via detailsCode.
     expect(isArcErrorCode(orgErr, 'ORG_CONTEXT_REQUIRED')).toBe(true);
-    // Top-level code matches via code.
-    expect(isArcErrorCode(dupErr, 'DUPLICATE_KEY')).toBe(true);
-    // Cross-slot misses are misses.
-    expect(isArcErrorCode(orgErr, 'DUPLICATE_KEY')).toBe(false);
+    expect(isArcErrorCode(dupErr, 'arc.conflict')).toBe(true);
+    expect(isArcErrorCode(orgErr, 'arc.conflict')).toBe(false);
     expect(isArcErrorCode(dupErr, 'ORG_CONTEXT_REQUIRED')).toBe(false);
-    // Non-ArcApiError gets a clean false.
-    expect(isArcErrorCode(new Error('x'), 'DUPLICATE_KEY')).toBe(false);
+    expect(isArcErrorCode(new Error('x'), 'arc.conflict')).toBe(false);
   });
 
   it('isOrgContextRequiredError fires on the bulk safety code', () => {
@@ -429,28 +441,52 @@ describe('v0.5.0 — typed arc error codes (ArcApiError.code / detailsCode)', ()
     expect(isOrgContextRequiredError(null)).toBe(false);
   });
 
-  it('isValidationError fires on VALIDATION_ERROR', () => {
-    const err = new ArcApiError('Validation failed', {
+  it('isValidationError fires on arc.validation_error and validation_error', () => {
+    const arcShape = new ArcApiError('Validation failed', {
       status: 400, statusText: 'Bad Request',
       json: {
-        success: false,
-        code: 'VALIDATION_ERROR',
-        details: { errors: [{ field: 'email', message: 'must be email' }] },
+        code: 'arc.validation_error',
+        message: 'Validation failed',
+        status: 400,
+        details: [{ path: 'email', code: 'format', message: 'must be email' }],
       },
       endpoint: '/users', method: 'POST',
     });
-    expect(isValidationError(err)).toBe(true);
-    // fieldErrors is co-populated — the predicate + the existing getter compose.
-    expect(err.fieldErrors).toEqual({ email: 'must be email' });
-  });
-
-  it('isDuplicateKeyError fires on DUPLICATE_KEY', () => {
-    const err = new ArcApiError('Conflict', {
-      status: 409, statusText: 'Conflict',
-      json: { success: false, code: 'DUPLICATE_KEY' },
+    const canonicalShape = new ArcApiError('Validation failed', {
+      status: 400, statusText: 'Bad Request',
+      json: {
+        code: 'validation_error',
+        message: 'Validation failed',
+        status: 400,
+        details: [{ path: 'email', code: 'format', message: 'must be email' }],
+      },
       endpoint: '/users', method: 'POST',
     });
-    expect(isDuplicateKeyError(err)).toBe(true);
+    expect(isValidationError(arcShape)).toBe(true);
+    expect(isValidationError(canonicalShape)).toBe(true);
+    expect(arcShape.fieldErrors).toEqual({ email: 'must be email' });
+  });
+
+  it('isDuplicateKeyError narrows arc.conflict via details[].code', () => {
+    const dupErr = new ArcApiError('Conflict', {
+      status: 409, statusText: 'Conflict',
+      json: {
+        code: 'arc.conflict',
+        message: 'Duplicate value',
+        status: 409,
+        details: [{ path: 'email', code: 'duplicate_key', message: 'Duplicate value for "email"' }],
+      },
+      endpoint: '/users', method: 'POST',
+    });
+    const leaseConflict = new ArcApiError('Conflict', {
+      status: 409, statusText: 'Conflict',
+      json: { code: 'arc.conflict', message: 'Lease held', status: 409 },
+      endpoint: '/x', method: 'POST',
+    });
+    expect(isDuplicateKeyError(dupErr)).toBe(true);
+    // Bare `arc.conflict` (no duplicate_key in details) does NOT match —
+    // the predicate disambiguates real duplicates from other 409s.
+    expect(isDuplicateKeyError(leaseConflict)).toBe(false);
     expect(isDuplicateKeyError(new Error('x'))).toBe(false);
   });
 
@@ -460,8 +496,8 @@ describe('v0.5.0 — typed arc error codes (ArcApiError.code / detailsCode)', ()
       endpoint: '/x', method: 'POST',
     });
     if (isArcApiError(err)) expect(err.endpoint).toBe('/x');
-    if (isOrgContextRequiredError(err)) expect(err.detailsCode).toBe('ORG_CONTEXT_REQUIRED');
+    if (isOrgContextRequiredError(err)) expect(err.code).toBe('ORG_CONTEXT_REQUIRED');
     if (isValidationError(err)) expect(err.fieldErrors).toBeDefined();
-    if (isDuplicateKeyError(err)) expect(err.code).toBe('DUPLICATE_KEY');
+    if (isDuplicateKeyError(err)) expect(err.code).toBe('arc.conflict');
   });
 });

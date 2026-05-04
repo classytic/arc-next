@@ -7,7 +7,7 @@ description: |
   paginated lists, detail cache prefilling, or multi-tenant data fetching.
   Triggers: arc-next, createCrudApi, createCrudHooks, tanstack query hooks, crud hooks, optimistic updates,
   react query factory, api client hooks, pagination normalization, configureClient, configureToast.
-version: "1.0.0"
+version: "0.6.0"
 tags: [react, tanstack-query, crud, api-client, hooks, optimistic-updates]
 metadata:
   author: Classytic
@@ -183,8 +183,10 @@ Auto-injects `token` and `organizationId` into queries/mutations. Hooks use the 
 Universal fetch wrapper. Handles JSON, PDF, image, CSV, and text responses.
 
 ```ts
+import type { OffsetPaginationResult } from "@classytic/repo-core/pagination";
+
 const result = await handleApiRequest<ApiResponse<User>>("GET", "/api/users/me");
-const list = await handleApiRequest<PaginatedResponse<Product>>("GET", "/api/products?page=1");
+const list = await handleApiRequest<OffsetPaginationResult<Product>>("GET", "/api/products?page=1");
 ```
 
 **Options:**
@@ -220,15 +222,15 @@ const api = createCrudApi<Product, CreateProduct>("products", {
 **Methods:**
 | Method | Signature |
 |---|---|
-| `getAll` | `({ token?, organizationId?, params? }) → PaginatedResponse<T>` |
+| `getAll` | `({ token?, organizationId?, params? }) → PaginationResult<T>` |
 | `getById` | `({ id, token?, organizationId?, params? }) → ApiResponse<T>` |
 | `create` | `({ data, token?, organizationId? }) → ApiResponse<T>` |
 | `update` | `({ id, data, token?, organizationId? }) → ApiResponse<T>` |
 | `delete` | `({ id, token?, organizationId? }) → DeleteResponse` |
 | `upload` | `({ data: FormData, id?, path?, token?, organizationId? }) → ApiResponse<T>` |
-| `search` | `({ searchParams?, params?, token?, organizationId? }) → PaginatedResponse<T>` |
-| `findBy` | `({ field, value, operator?, token?, organizationId? }) → PaginatedResponse<T>` |
 | `request` | `(method, endpoint, { data?, params?, token? }) → T` |
+
+`search()` and `findBy()` were removed — both routed to `GET /` with operators; pass operators directly via `getAll({ params: { 'title[contains]': q } })`. Pagination result types are discriminated on `method` ('offset' | 'keyset' | 'aggregate') and live in `@classytic/repo-core/pagination`.
 
 **`prepareParams(params)`** — processes query params: critical filters (`organizationId`, `ownerId`) preserved as null, arrays → `field[in]`, pagination parsed to int.
 
@@ -240,7 +242,7 @@ Factory that returns everything you need:
 const {
   KEYS, cache,
   useList, useDetail, useInfiniteList,
-  useActions, useUpload, useSearch, useCustomMutation,
+  useActions, useUpload, useCustomMutation,
   useNavigation,
 } = createCrudHooks<Product, CreateProduct>({
     api: productsApi,       // from createCrudApi()
@@ -373,18 +375,16 @@ await upload({ data: formData, path: "bulk-import" });
 
 Requires `api.upload` to be defined. Throws if not available.
 
-#### `useSearch(query, params?, options?)`
+#### Searching with `useList`
 
-Search with automatic query key scoping:
+`useSearch` was removed — both `search()` and `findBy()` routed to `GET /` with bracket-key operators. Use `useList` with operator params:
 
 ```ts
-const { items, pagination, isLoading } = useSearch("widget", {
+const { items, pagination, isLoading } = useList(token, {
   organizationId: "org-123",
+  'name[contains]': "widget",
 });
 ```
-
-- Disabled when `query` is empty
-- Requires `api.search` to be defined
 
 #### `useCustomMutation<TData, TVariables>(config)`
 
@@ -558,15 +558,26 @@ Extracts `_id` or `id` from any item. Returns `string | null`.
 
 ## Response Types
 
+arc 2.13+ has no wire envelope — handlers receive the raw payload directly. CRUD responses are the entity (`TDoc`), bulk/delete responses are repo-core result shapes, and errors throw `ArcApiError` carrying the canonical `ErrorContract`.
+
 ```ts
 import type {
-  ApiResponse,             // { success, data?, message? }
-  PaginatedResponse,       // OffsetPaginationResponse | KeysetPaginationResponse | AggregatePaginationResponse
-  OffsetPaginationResponse,// { docs[], page, limit, total, pages, hasNext, hasPrev }
-  KeysetPaginationResponse,// { docs[], limit, hasMore, next }
-  AggregatePaginationResponse, // same shape as offset
-  DeleteResponse,          // { success, data?: { message?, id?, soft? } }
+  BulkCreateResult,
+  DeleteResult,           // { message?, id?, soft? }
+  DeleteManyResult,
+  UpdateManyResult,
 } from "@classytic/arc-next/api";
+
+import type {
+  OffsetPaginationResult,    // { method: 'offset', data: TDoc[], page, limit, total, pages, hasNext, hasPrev }
+  KeysetPaginationResult,    // { method: 'keyset', data: TDoc[], limit, hasMore, next }
+  AggregatePaginationResult, // { method: 'aggregate', data: TDoc[], ... }
+  BareListResult,            // { data: TDoc[] } — non-paginated list endpoints
+  PaginatedResult,           // discriminated union on `method` (includes BareListResult)
+} from "@classytic/repo-core/pagination";
+
+import type { ErrorContract } from "@classytic/repo-core/errors";
+//   { code, message, status, details?, meta?, correlationId? }
 
 // Type guards
 import { isOffsetPagination, isKeysetPagination, isAggregatePagination } from "@classytic/arc-next/api";

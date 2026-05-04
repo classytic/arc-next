@@ -1,3 +1,17 @@
+import type {
+  AggregatePaginationResult,
+  KeysetPaginationResult,
+  OffsetPaginationResult,
+  PaginatedResult,
+} from '@classytic/repo-core/pagination';
+import type {
+  AggResult,
+  AggRow,
+  BulkCreateResult,
+  DeleteManyResult,
+  DeleteResult,
+  UpdateManyResult,
+} from '@classytic/repo-core/repository';
 import { handleApiRequest, createQueryString } from './client.js';
 import type { ApiRequestOptions, ArcClient } from './client.js';
 
@@ -14,77 +28,38 @@ export interface PopulateOption {
 // ============================================================================
 // Response Types
 // ============================================================================
+//
+// Pagination shapes (`OffsetPaginationResult`, `KeysetPaginationResult`,
+// `AggregatePaginationResult`, `BareListResult`, `PaginatedResult`) come
+// from `@classytic/repo-core/pagination` — the same module arc's
+// server-side `fastifyAdapter` emits through `toCanonicalList()`. Data
+// shape and wire shape are intentionally identical (no envelope; HTTP
+// status discriminates success vs error). Consumers should import these
+// types from `@classytic/repo-core/pagination` directly rather than from
+// `@classytic/arc-next/api` (no re-exports here).
 
-export interface ApiResponse<T = unknown> {
-  success: boolean;
-  data?: T;
-  message?: string;
-}
+// CRUD response shapes flow from `@classytic/repo-core/repository`:
+//
+//   getById/create/update/upload/restore/dispatchAction → TDoc directly
+//   delete → DeleteResult (or thrown ArcApiError on error)
+//   bulkCreate → BulkCreateResult<TDoc>
+//   bulkUpdate → UpdateManyResult
+//   bulkDelete → DeleteManyResult
+//
+// HTTP status discriminates success (2xx) vs error (4xx/5xx). Errors come
+// back as `ErrorContract` from `@classytic/repo-core/errors`, surfaced as
+// a thrown `ArcApiError` by the client.
 
-export interface OffsetPaginationResponse<T = unknown> {
-  success: boolean;
-  method: 'offset';
-  docs: T[];
-  page: number;
-  limit: number;
-  total: number;
-  pages: number;
-  hasNext: boolean;
-  hasPrev: boolean;
-  warning?: string;
-}
-
-export interface KeysetPaginationResponse<T = unknown> {
-  success: boolean;
-  method: 'keyset';
-  docs: T[];
-  limit: number;
-  hasMore: boolean;
-  next: string | null;
-}
-
-export interface AggregatePaginationResponse<T = unknown> {
-  success: boolean;
-  method: 'aggregate';
-  docs: T[];
-  page: number;
-  limit: number;
-  total: number;
-  pages: number;
-  hasNext: boolean;
-  hasPrev: boolean;
-  warning?: string;
-}
-
-export type PaginatedResponse<T = unknown> =
-  | OffsetPaginationResponse<T>
-  | KeysetPaginationResponse<T>
-  | AggregatePaginationResponse<T>;
-
-export interface DeleteResponse {
-  success: boolean;
-  data?: {
-    message?: string;
-    id?: string;
-    soft?: boolean;
-  };
-}
-
-export interface BulkCreateResponse<T = unknown> {
-  success: boolean;
-  data?: T[];
-  count?: number;
-}
-
-export interface BulkUpdateResponse {
-  success: boolean;
-  modifiedCount?: number;
-}
-
-export interface BulkDeleteResponse {
-  success: boolean;
-  deletedCount?: number;
-}
+// Re-export the canonical wire types so consumers that prefer importing
+// from `@classytic/arc-next/api` (single-import ergonomics) keep working.
+export type {
+  AggResult,
+  AggRow,
+  BulkCreateResult,
+  DeleteManyResult,
+  DeleteResult,
+  UpdateManyResult,
+};
 
 // ============================================================================
 // Request Types
@@ -93,18 +68,44 @@ export interface BulkDeleteResponse {
 export type SortDirection = 1 | -1 | 'asc' | 'desc';
 export type SortSpec = Record<string, SortDirection> | string;
 
+// Re-export the canonical bracket operator union from `@classytic/repo-core/query-parser`
+// so arc-next's URL-emission grammar stays locked to what the server-side
+// parser accepts. Adding a new bracket operator now requires a repo-core
+// release — prevents silent grammar drift between the SDK encoder and the
+// kit decoders (mongokit's QueryParser, sqlitekit's parse, etc.).
+export type { BracketOperator } from '@classytic/repo-core/query-parser';
+import type { BracketOperator } from '@classytic/repo-core/query-parser';
+
+/**
+ * Filter operators supported by arc-next URL emission.
+ *
+ * Composes:
+ *  - **Canonical** ({@link BracketOperator}) — every operator repo-core's
+ *    `parseUrl` reverses. Cross-kit portable: mongokit, sqlitekit, prismakit,
+ *    and any future kit that consumes the canonical Filter IR all support
+ *    these out of the box.
+ *  - **Driver-specific extensions** — operators that require kit-native
+ *    support. Geo (`near`, `nearSphere`, `geoWithin`, `withinRadius`) is
+ *    mongokit + sqlitekit-spatialite. `size` / `type` are mongokit
+ *    array/BSON helpers. Hosts using kits without these features just
+ *    don't emit them; the union stays open with `(string & {})` so custom
+ *    domain operators still satisfy the type.
+ */
 export type FilterOperator =
-  | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
-  | 'in' | 'nin'
-  | 'contains' | 'startsWith' | 'endsWith' | 'regex'
-  | 'like' | 'exists' | 'size' | 'type'
-  // Range — comma-separated `from,to`. Mongokit converts to $gte+$lte.
-  | 'between'
+  | BracketOperator
+  // mongokit array/BSON helpers
+  | 'size'
+  | 'type'
   // Geo — coordinate-list operators. mongokit native, sqlitekit-spatialite friendly.
   // `near` / `nearSphere`: `lng,lat[,maxDistanceMeters]` (sort by distance).
   // `geoWithin`: `minLng,minLat,maxLng,maxLat` (bounding box).
   // `withinRadius`: `lng,lat,radiusMeters` (count-compatible $centerSphere).
-  | 'near' | 'nearSphere' | 'geoWithin' | 'withinRadius';
+  | 'near'
+  | 'nearSphere'
+  | 'geoWithin'
+  | 'withinRadius'
+  // Domain extensions / future operators.
+  | (string & {});
 
 
 export interface QueryParams {
@@ -291,7 +292,7 @@ export class BaseApi<
     organizationId?: string | null;
     params?: QueryParams;
     options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  } = {}): Promise<PaginatedResponse<TDoc>> {
+  } = {}): Promise<PaginatedResult<TDoc>> {
     const mergedParams = { ...this.config.defaultParams, ...params };
     const processedParams = this.prepareParams(mergedParams);
     const queryString = this.createQueryString(processedParams);
@@ -319,7 +320,7 @@ export class BaseApi<
     id: string;
     params?: { select?: string; populate?: string | string[] };
     options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<ApiResponse<TDoc>> {
+  }): Promise<TDoc> {
     if (!id) throw new Error('ID is required');
 
     const queryString = this.createQueryString(params);
@@ -346,7 +347,7 @@ export class BaseApi<
     organizationId?: string | null;
     data: TCreate;
     options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<ApiResponse<TDoc>> {
+  }): Promise<TDoc> {
     const requestOptions: ApiRequestOptions = {
       body: data,
       ...options,
@@ -370,7 +371,7 @@ export class BaseApi<
     id: string;
     data: TUpdate;
     options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<ApiResponse<TDoc>> {
+  }): Promise<TDoc> {
     if (!id) throw new Error('ID is required');
 
     const requestOptions: ApiRequestOptions = {
@@ -394,7 +395,7 @@ export class BaseApi<
     organizationId?: string | null;
     id: string;
     options?: Omit<RequestOptions, 'token' | 'organizationId'>;
-  }): Promise<DeleteResponse> {
+  }): Promise<DeleteResult> {
     if (!id) throw new Error('ID is required');
 
     const requestOptions: ApiRequestOptions = { ...options };
@@ -418,7 +419,7 @@ export class BaseApi<
     id?: string;
     /** Custom sub-path appended as `baseUrl/{path}`. Takes precedence over `id`. */
     path?: string;
-  }): Promise<ApiResponse<TDoc>> {
+  }): Promise<TDoc> {
     const suffix = path ?? (id ? `${id}/upload` : undefined);
     const url = suffix ? `${this.baseUrl}/${suffix}` : this.baseUrl;
 
@@ -477,17 +478,18 @@ export class BaseApi<
    * Arc's escape hatch for endpoints that don't fit CRUD or actions.
    *
    * For aggregates / reports, prefer the response-aware {@link useApiQuery} hook
-   * (which auto-unwraps `{ success, data }`) and pass `invokeRoute` as the queryFn.
+   * and pass `invokeRoute` as the queryFn — arc 2.13+ emits raw payloads, so
+   * the response IS the data.
    *
    * @example
-   * // GET /todos/stats → { success, data: { total, byStatus } }
+   * // GET /todos/stats → { total, byStatus }
    * const stats = await api.invokeRoute<{ total: number; byStatus: Record<string, number> }>({
    *   method: 'GET',
    *   path: '/stats',
    * });
    *
    * // GET /todos/recent?limit=5 → paginated shape spread to root
-   * const recent = await api.invokeRoute<PaginatedResponse<Todo>>({
+   * const recent = await api.invokeRoute<PaginatedResult<Todo>>({
    *   method: 'GET',
    *   path: '/recent',
    *   params: { limit: 5 },
@@ -522,6 +524,57 @@ export class BaseApi<
   }
 
   // ==========================================================================
+  // Aggregations (arc v2.13+)
+  //
+  // Hosts declare `aggregations: { [name]: AggregationConfig }` on the arc
+  // resource and arc generates `GET /:resource/aggregations/:name` per entry.
+  // The wire shape is `AggResult<TRow> = { rows: TRow[] }` — the same canonical
+  // envelope every kit emits, so dashboards switch backends without touching
+  // consumer code. Filters from the URL query string shallow-merge with the
+  // host's base filter + tenant scope on the server.
+  //
+  // For dynamic / one-off aggregations (no resource declaration) callers can
+  // hit any custom route via `invokeRoute` and type the response themselves.
+  // This method is the canonical path for **declared** aggregations — the
+  // query-key-friendly arg shape (`{ name, filter }`) maps cleanly onto a
+  // TanStack Query factory in `useAggregation`.
+  // ==========================================================================
+
+  /**
+   * Fetch a declared aggregation by name.
+   *
+   * @example
+   * const { rows } = await api.aggregate<{ day: string; total: number }>({
+   *   name: 'salesByDay',
+   *   filter: { from: '2025-01-01', to: '2025-12-31' },
+   * });
+   */
+  async aggregate<TRow extends AggRow = AggRow>({
+    token = null,
+    organizationId = null,
+    name,
+    filter,
+    options = {},
+  }: ScopedArgs & {
+    /** Aggregation name as declared on the resource. */
+    name: string;
+    /**
+     * URL-encoded filter narrows + dimension args. Reserved keys (`page`,
+     * `limit`, etc.) are stripped server-side; everything else flows into
+     * the AggRequest filter via shallow merge with the host's base filter.
+     */
+    filter?: Record<string, unknown>;
+  }): Promise<AggResult<TRow>> {
+    if (!name) throw new Error('Aggregation name is required');
+    const queryString = filter ? this.createQueryString(filter) : '';
+    const endpoint = `${this.baseUrl}/aggregations/${name}${queryString ? `?${queryString}` : ''}`;
+    const requestOptions: ApiRequestOptions = { ...options };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+    return this.requestFn('GET', endpoint, this.withHeaders(requestOptions));
+  }
+
+  // ==========================================================================
   // Action Router (arc v2.8+)
   //
   // Unified action endpoint: `POST /:id/action` with body `{ action, ...payload }`.
@@ -544,7 +597,7 @@ export class BaseApi<
     id: string;
     action: string;
     data?: TBody;
-  }): Promise<ApiResponse<TResult>> {
+  }): Promise<TResult> {
     if (!id) throw new Error('ID is required');
     if (!action) throw new Error('Action name is required');
 
@@ -575,22 +628,27 @@ export function createCrudApi<
 // Type Helpers
 // ============================================================================
 
-export type ExtractDoc<T> = T extends PaginatedResponse<infer D> ? D : never;
+export type ExtractDoc<T> = T extends PaginatedResult<infer D> ? D : never;
+
+// `PaginatedResult` includes a `BareListResult<T>` branch (no `method`
+// field — for endpoints that don't paginate). The predicates below narrow
+// against the full union, so they `'method' in response &&` first to
+// satisfy TypeScript before comparing the literal.
 
 export function isOffsetPagination<T>(
-  response: PaginatedResponse<T>
-): response is OffsetPaginationResponse<T> {
-  return response.method === 'offset';
+  response: PaginatedResult<T>,
+): response is OffsetPaginationResult<T> {
+  return 'method' in response && response.method === 'offset';
 }
 
 export function isKeysetPagination<T>(
-  response: PaginatedResponse<T>
-): response is KeysetPaginationResponse<T> {
-  return response.method === 'keyset';
+  response: PaginatedResult<T>,
+): response is KeysetPaginationResult<T> {
+  return 'method' in response && response.method === 'keyset';
 }
 
 export function isAggregatePagination<T>(
-  response: PaginatedResponse<T>
-): response is AggregatePaginationResponse<T> {
-  return response.method === 'aggregate';
+  response: PaginatedResult<T>,
+): response is AggregatePaginationResult<T> {
+  return 'method' in response && response.method === 'aggregate';
 }

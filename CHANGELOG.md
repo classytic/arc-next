@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.6.0
+
+Targets Arc 2.12.x. Aligns pagination response shapes with `@classytic/repo-core/pagination` — server (arc 2.12 `fastifyAdapter` via `toCanonicalList()`) and client (arc-next typed responses) now share **one** declaration, eliminating the `method` discriminant drift that bit during the cross-package review.
+
+### Breaking — pagination response types
+
+Removed from `@classytic/arc-next/api`:
+- `OffsetPaginationResponse<T>`
+- `KeysetPaginationResponse<T>`
+- `AggregatePaginationResponse<T>`
+- `PaginatedResponse<T>`
+
+These were re-declared in `src/api.ts` with subtle name/field divergence from arc's server-side equivalents. They now live in **`@classytic/repo-core/pagination`** — the same module arc's server emits these envelopes through. Server and client narrow on the same union; the `method` discriminant cannot drift.
+
+#### Migration
+
+```diff
+- import type {
+-   OffsetPaginationResponse,
+-   KeysetPaginationResponse,
+-   AggregatePaginationResponse,
+-   PaginatedResponse,
+- } from '@classytic/arc-next/api';
++ import type {
++   OffsetPaginationResponse,
++   KeysetPaginationResponse,
++   AggregatePaginationResponse,
++   PaginatedResponse,
++ } from '@classytic/repo-core/pagination';
+```
+
+Field shapes on the offset / keyset / aggregate branches are unchanged. The repo-core union additionally includes a `BareListResponse<T>` branch (`{ success: true; docs: T[] }`) for endpoints that don't paginate — predicates (`isOffsetPagination`, `isKeysetPagination`, `isAggregatePagination`) still ship from `@classytic/arc-next/api` and handle the new branch via `'method' in response &&` guards.
+
+### Added — `@classytic/repo-core` peer dependency
+
+```jsonc
+"peerDependencies": {
+  "@classytic/repo-core": ">=0.3.0",
+  // ...
+}
+```
+
+Hosts must install `@classytic/repo-core` alongside arc-next. (npm 7+ auto-installs peer deps; explicit on older clients.) Same model as `react` / `@tanstack/react-query`.
+
+### Why the alignment matters
+
+Before 0.6.0 / arc 2.12.0, three pagination-shape layers drifted across the org: arc-next's local response types, arc's inline server flatten (which silently dropped the `method` field), and mongokit's local result types. Repo-core 0.3.0 ships the canonical types and a `toCanonicalList()` runtime normaliser that arc's `fastifyAdapter` now routes every paginated response through — server and client narrow on the matching union by construction.
+
 ## 0.5.0
 
 Targets Arc 2.11.x. Closes the surface gaps for the action router, search preset, and mongokit-style geo queries.

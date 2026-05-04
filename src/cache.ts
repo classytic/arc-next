@@ -54,10 +54,16 @@ export const QUERY_CONFIGS = {
 // Response-shape utilities
 // ============================================================================
 
-/** Well-known keys checked in order for list responses. */
-const LIST_KEYS = ['docs', 'data', 'items', 'results'] as const;
-/** Well-known keys checked in order for detail responses. */
-const DETAIL_KEYS = ['data', 'doc', 'item', 'result'] as const;
+/**
+ * Well-known keys checked in order for list responses.
+ *
+ * Arc emits `{data: T[]}` for both paginated and bare-list endpoints, so
+ * `docs` is the canonical key. `items` / `results` cover non-arc backends
+ * the permissive detector still supports — the any-array fallback below
+ * keeps `{products: [...]}` / `{users: [...]}` working without per-resource
+ * configuration.
+ */
+const LIST_KEYS = ['data', 'items', 'results'] as const;
 
 /**
  * Extract `_id` or `id` from any item. Returns `null` if neither exists.
@@ -121,20 +127,14 @@ export function extractItems<T>(data: unknown): T[] {
 }
 
 /**
- * Strict detail extractor. Checks well-known keys (`data`, `doc`, `item`,
- * `result`); falls back to returning the response as-is. Primitive responses
- * (string/number/boolean) pass through.
+ * Detail extractor. Arc emits the doc directly (no envelope wrapper) — this
+ * function is identity-with-null-guard. Kept as a named helper so callers
+ * have a stable seam if a future backend ever ships an envelope, and so
+ * `null` / `undefined` responses normalize to `null` consistently.
  */
 export function extractItem<T>(data: unknown): T | null {
   if (data == null) return null;
-  if (typeof data !== "object") return data as T;
-
-  const d = data as Record<string, unknown>;
-
-  for (const key of DETAIL_KEYS) {
-    if (d[key] != null) return d[key] as T;
-  }
-  return d as T;
+  return data as T;
 }
 
 /**
@@ -191,6 +191,14 @@ export interface QueryKeys {
   scopedDetail: (id: string, organizationId: string | null) => QueryKey;
   custom: (key: string, ...args: unknown[]) => QueryKey;
   scopedList: (scope: string, params?: unknown) => QueryKey;
+  /** Prefix for every aggregation on this resource — invalidate all at once. */
+  aggregations: () => QueryKey;
+  /**
+   * Aggregation key (`arc 2.13+ /aggregations/:name`). The `filter` arg is
+   * structurally hashed by TanStack — pass the same object identity (or
+   * structurally identical) you pass to `useAggregation` so the cache hits.
+   */
+  aggregation: (name: string, filter?: unknown) => QueryKey;
 }
 
 /**
@@ -209,6 +217,9 @@ export function createQueryKeys(entityKey: string): QueryKeys {
       organizationId ? [entityKey, "detail", id, { _org: organizationId }] : [entityKey, "detail", id],
     custom: (key, ...args) => [entityKey, key, ...args],
     scopedList: (scope, params) => [entityKey, "list", { _scope: scope, ...(params as object) }],
+    aggregations: () => [entityKey, "aggregation"],
+    aggregation: (name, filter) =>
+      filter !== undefined ? [entityKey, "aggregation", name, filter] : [entityKey, "aggregation", name],
   };
 }
 
@@ -232,6 +243,14 @@ export interface CacheUtils<T> {
   getScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => T | undefined;
   /** Remove tenant-scoped detail from cache. */
   removeScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => void;
+  /**
+   * Invalidate every aggregation for this resource. Call from mutation
+   * `onSuccess` so dashboards refresh after CRUD writes.
+   *
+   * For targeted invalidation of a single aggregation pass the name —
+   * prefix-matches every parameterized variant.
+   */
+  invalidateAggregations: (client: QueryClient, name?: string) => Promise<void>;
 }
 
 /**
@@ -260,5 +279,9 @@ export function createCacheUtils<T>(KEYS: QueryKeys): CacheUtils<T> {
     },
     removeScopedDetail: (client, id, organizationId) =>
       client.removeQueries({ queryKey: KEYS.scopedDetail(id, organizationId) }),
+    invalidateAggregations: (client, name) =>
+      client.invalidateQueries({
+        queryKey: name ? KEYS.aggregation(name) : KEYS.aggregations(),
+      }),
   };
 }

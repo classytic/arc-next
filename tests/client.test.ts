@@ -3,7 +3,7 @@ import {
   configureClient, configureAuth, getAuthContext, getAuthMode, handleApiRequest,
   createQueryString, createClient, createAuthAwareClient, _resetAuthWarnings,
   ArcApiError, isArcApiError, isAbortError,
-  KNOWN_TOP_LEVEL_CODES, KNOWN_DETAILS_CODES,
+  KNOWN_ARC_ERROR_CODES,
 } from '../src/client.js';
 
 // ============================================================================
@@ -1599,33 +1599,27 @@ describe('isAbortError', () => {
 // Known error code arrays — runtime / type-level consistency
 // ============================================================================
 
-describe('KNOWN_TOP_LEVEL_CODES / KNOWN_DETAILS_CODES', () => {
-  it('top-level codes are non-empty + unique', () => {
-    expect(KNOWN_TOP_LEVEL_CODES.length).toBeGreaterThan(10);
-    expect(new Set(KNOWN_TOP_LEVEL_CODES).size).toBe(KNOWN_TOP_LEVEL_CODES.length);
+describe('KNOWN_ARC_ERROR_CODES', () => {
+  it('is non-empty + unique', () => {
+    expect(KNOWN_ARC_ERROR_CODES.length).toBeGreaterThan(10);
+    expect(new Set(KNOWN_ARC_ERROR_CODES).size).toBe(KNOWN_ARC_ERROR_CODES.length);
   });
 
-  it('details codes are non-empty + unique', () => {
-    expect(KNOWN_DETAILS_CODES.length).toBeGreaterThan(0);
-    expect(new Set(KNOWN_DETAILS_CODES).size).toBe(KNOWN_DETAILS_CODES.length);
+  it('exposes the canonical and arc business codes', () => {
+    // repo-core canonical (lowercase, RFC 7807).
+    expect(KNOWN_ARC_ERROR_CODES).toContain('validation_error');
+    expect(KNOWN_ARC_ERROR_CODES).toContain('not_found');
+    expect(KNOWN_ARC_ERROR_CODES).toContain('duplicate_key');
+    // arc hierarchical.
+    expect(KNOWN_ARC_ERROR_CODES).toContain('arc.forbidden');
+    expect(KNOWN_ARC_ERROR_CODES).toContain('arc.validation_error');
+    // arc business (UPPER_SNAKE).
+    expect(KNOWN_ARC_ERROR_CODES).toContain('ORG_CONTEXT_REQUIRED');
+    expect(KNOWN_ARC_ERROR_CODES).toContain('ALL_FIELDS_STRIPPED');
   });
 
-  it('top-level + details are disjoint (no shared codes)', () => {
-    const overlap = KNOWN_TOP_LEVEL_CODES.filter((c) => (KNOWN_DETAILS_CODES as readonly string[]).includes(c));
-    expect(overlap).toEqual([]);
-  });
-
-  it('arrays expose the documented codes (smoke check)', () => {
-    expect(KNOWN_TOP_LEVEL_CODES).toContain('VALIDATION_ERROR');
-    expect(KNOWN_TOP_LEVEL_CODES).toContain('DUPLICATE_KEY');
-    expect(KNOWN_DETAILS_CODES).toContain('ORG_CONTEXT_REQUIRED');
-  });
-
-  it('arrays are readonly (frozen by `as const`)', () => {
-    // `as const` arrays can be mutated at runtime (TS-only readonly), but the
-    // types should reject push/pop in consumer code. Smoke-test the symbol exists.
-    expect(Array.isArray(KNOWN_TOP_LEVEL_CODES)).toBe(true);
-    expect(Array.isArray(KNOWN_DETAILS_CODES)).toBe(true);
+  it('is array-shaped', () => {
+    expect(Array.isArray(KNOWN_ARC_ERROR_CODES)).toBe(true);
   });
 });
 

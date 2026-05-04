@@ -39,7 +39,7 @@ function createMockApi(): CrudApi<{ _id: string; name: string }, { name: string 
   return {
     getAll: vi.fn().mockResolvedValue({
       success: true,
-      docs: [{ _id: '1', name: 'Item 1' }, { _id: '2', name: 'Item 2' }],
+      data: [{ _id: '1', name: 'Item 1' }, { _id: '2', name: 'Item 2' }],
       total: 2, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
     }),
     getById: vi.fn().mockResolvedValue({ success: true, data: { _id: '1', name: 'Item 1' } }),
@@ -408,7 +408,7 @@ describe('optimistic update targets scoped detail keys', () => {
 
     // Also a list cache so the optimistic update matcher works
     qc.setQueryData(KEYS.scopedList('tenant', { organizationId: 'org-1' }), {
-      docs: [{ _id: '1', name: 'InList' }], total: 1,
+      data: [{ _id: '1', name: 'InList' }], total: 1,
     });
 
     const wrapper = createWrapper(qc);

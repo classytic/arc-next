@@ -251,7 +251,7 @@ describe('useEventStream', () => {
 
   it('invalidates queries on event', async () => {
     const listKey = ['agents', 'list'];
-    queryClient.setQueryData(listKey, { docs: [] });
+    queryClient.setQueryData(listKey, { data: [] });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const wrapper = createWrapper(queryClient);
@@ -644,7 +644,7 @@ describe('useEventStream', () => {
 
     it('named events still trigger invalidateQueries', async () => {
       const listKey = ['agents', 'list'];
-      queryClient.setQueryData(listKey, { docs: [] });
+      queryClient.setQueryData(listKey, { data: [] });
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
       const wrapper = createWrapper(queryClient);

@@ -8,7 +8,7 @@ let fetchMock: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   configureClient({ baseUrl: 'http://api.test' });
   fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-    new Response(JSON.stringify({ success: true, docs: [], total: 0 }), {
+    new Response(JSON.stringify({ success: true, data: [], total: 0 }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     }),

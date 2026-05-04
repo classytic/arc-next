@@ -185,7 +185,7 @@ describe('useMutationWithTransition', () => {
 
   it('invalidates queries on success', async () => {
     const listKey = ['items', 'list'];
-    queryClient.setQueryData(listKey, { docs: [] });
+    queryClient.setQueryData(listKey, { data: [] });
     const spy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const mutationFn = vi.fn().mockResolvedValue({ id: '1' });
@@ -480,7 +480,7 @@ describe('useMutationWithOptimistic', () => {
 
   it('applies optimistic update before mutation resolves', async () => {
     const listKey = ['items', 'list'];
-    queryClient.setQueryData(listKey, { docs: [{ _id: '1', name: 'Old' }] });
+    queryClient.setQueryData(listKey, { data: [{ _id: '1', name: 'Old' }] });
 
     let resolve: (v: unknown) => void;
     const mutationFn = vi.fn().mockReturnValue(new Promise(r => { resolve = r; }));
@@ -490,8 +490,8 @@ describe('useMutationWithOptimistic', () => {
         mutationFn,
         queryKeys: [listKey],
         optimisticUpdate: (old, variables) => {
-          const d = old as { docs: unknown[] };
-          return { docs: [...d.docs, variables] };
+          const d = old as { data: unknown[] };
+          return { data: [...d.data, variables] };
         },
         messages: { success: 'Added' },
       }),
@@ -505,8 +505,8 @@ describe('useMutationWithOptimistic', () => {
 
     // Optimistic update should be applied immediately
     await waitFor(() => {
-      const data = queryClient.getQueryData(listKey) as { docs: unknown[] };
-      expect(data.docs).toHaveLength(2);
+      const data = queryClient.getQueryData(listKey) as { data: unknown[] };
+      expect(data.data).toHaveLength(2);
     });
 
     await act(async () => {
@@ -517,7 +517,7 @@ describe('useMutationWithOptimistic', () => {
 
   it('rolls back optimistic update on error', async () => {
     const listKey = ['items', 'list'];
-    const original = { docs: [{ _id: '1', name: 'Item 1' }] };
+    const original = { data: [{ _id: '1', name: 'Item 1' }] };
     queryClient.setQueryData(listKey, original);
 
     const mutationFn = vi.fn().mockRejectedValue(new Error('Server error'));
@@ -527,8 +527,8 @@ describe('useMutationWithOptimistic', () => {
         mutationFn,
         queryKeys: [listKey],
         optimisticUpdate: (old) => {
-          const d = old as { docs: unknown[] };
-          return { docs: [...d.docs, { _id: '2', name: 'Optimistic' }] };
+          const d = old as { data: unknown[] };
+          return { data: [...d.data, { _id: '2', name: 'Optimistic' }] };
         },
       }),
       { wrapper: createWrapper(queryClient) }
@@ -541,14 +541,14 @@ describe('useMutationWithOptimistic', () => {
     });
 
     // Should be rolled back to original
-    const data = queryClient.getQueryData(listKey) as { docs: unknown[] };
-    expect(data.docs).toHaveLength(1);
-    expect(data.docs[0]).toEqual({ _id: '1', name: 'Item 1' });
+    const data = queryClient.getQueryData(listKey) as { data: unknown[] };
+    expect(data.data).toHaveLength(1);
+    expect(data.data[0]).toEqual({ _id: '1', name: 'Item 1' });
   });
 
   it('cancels in-flight queries before optimistic update', async () => {
     const listKey = ['items', 'list'];
-    queryClient.setQueryData(listKey, { docs: [] });
+    queryClient.setQueryData(listKey, { data: [] });
     const cancelSpy = vi.spyOn(queryClient, 'cancelQueries');
 
     const mutationFn = vi.fn().mockResolvedValue({});
@@ -570,7 +570,7 @@ describe('useMutationWithOptimistic', () => {
 
   it('invalidates queries on success', async () => {
     const listKey = ['items', 'list'];
-    queryClient.setQueryData(listKey, { docs: [] });
+    queryClient.setQueryData(listKey, { data: [] });
     const spy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const mutationFn = vi.fn().mockResolvedValue({});
@@ -610,7 +610,7 @@ describe('useMutationWithOptimistic', () => {
 
   it('works without optimisticUpdate (just invalidates)', async () => {
     const listKey = ['items', 'list'];
-    const original = { docs: [{ _id: '1' }] };
+    const original = { data: [{ _id: '1' }] };
     queryClient.setQueryData(listKey, original);
 
     const mutationFn = vi.fn().mockResolvedValue({});
@@ -635,7 +635,7 @@ describe('useMutationWithOptimistic', () => {
   it('handles multiple query keys', async () => {
     const listKey = ['items', 'list'];
     const detailKey = ['items', 'detail', '1'];
-    queryClient.setQueryData(listKey, { docs: [] });
+    queryClient.setQueryData(listKey, { data: [] });
     queryClient.setQueryData(detailKey, { data: { _id: '1' } });
     const cancelSpy = vi.spyOn(queryClient, 'cancelQueries');
 

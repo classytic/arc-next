@@ -1,7 +1,6 @@
+import type { PaginatedResult } from '@classytic/repo-core/pagination';
 import type {
   BaseApi,
-  ApiResponse,
-  PaginatedResponse,
   QueryParams,
   ScopedArgs,
 } from '../api.js';
@@ -12,10 +11,10 @@ import type {
 
 export interface SoftDeleteMethods<TDoc> {
   /** List soft-deleted docs. Backend mounts `GET /:resource/deleted`. */
-  getDeleted(args?: ScopedArgs & { params?: QueryParams }): Promise<PaginatedResponse<TDoc>>;
+  getDeleted(args?: ScopedArgs & { params?: QueryParams }): Promise<PaginatedResult<TDoc>>;
 
   /** Undo a soft-delete. Backend mounts `POST /:resource/:id/restore`. */
-  restore(args: ScopedArgs & { id: string }): Promise<ApiResponse<TDoc>>;
+  restore(args: ScopedArgs & { id: string }): Promise<TDoc>;
 }
 
 // ============================================================================
@@ -45,7 +44,7 @@ export function withSoftDelete<TDoc, TCreate, TUpdate>(
   const ext: SoftDeleteMethods<TDoc> = {
     async getDeleted({ token = null, organizationId = null, params = {}, options = {} } = {}) {
       const merged = { ...api.config.defaultParams, ...params };
-      return api.request<PaginatedResponse<TDoc>>('GET', `${api.baseUrl}/deleted`, {
+      return api.request<PaginatedResult<TDoc>>('GET', `${api.baseUrl}/deleted`, {
         token,
         organizationId,
         params: merged,
@@ -54,7 +53,7 @@ export function withSoftDelete<TDoc, TCreate, TUpdate>(
     },
     async restore({ token = null, organizationId = null, id, options = {} }) {
       if (!id) throw new Error('ID is required');
-      return api.request<ApiResponse<TDoc>>('POST', `${api.baseUrl}/${id}/restore`, {
+      return api.request<TDoc>('POST', `${api.baseUrl}/${id}/restore`, {
         token,
         organizationId,
         options,

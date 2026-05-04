@@ -1,10 +1,9 @@
 import type {
-  BaseApi,
-  BulkCreateResponse,
-  BulkUpdateResponse,
-  BulkDeleteResponse,
-  ScopedArgs,
-} from '../api.js';
+  BulkCreateResult,
+  DeleteManyResult,
+  UpdateManyResult,
+} from '@classytic/repo-core/repository';
+import type { BaseApi, ScopedArgs } from '../api.js';
 
 // ============================================================================
 // Methods added by the bulk preset
@@ -12,7 +11,7 @@ import type {
 
 export interface BulkMethods<TDoc, TCreate = Partial<TDoc>, TUpdate = Partial<TDoc>> {
   /** Insert many docs in one round-trip. Backend mounts `POST /:resource/bulk`. */
-  bulkCreate(args: ScopedArgs & { data: TCreate[] }): Promise<BulkCreateResponse<TDoc>>;
+  bulkCreate(args: ScopedArgs & { data: TCreate[] }): Promise<BulkCreateResult<TDoc>>;
 
   /**
    * Update all docs matching `filter` with `data`.
@@ -21,7 +20,7 @@ export interface BulkMethods<TDoc, TCreate = Partial<TDoc>, TUpdate = Partial<TD
   bulkUpdate(args: ScopedArgs & {
     filter: Record<string, unknown>;
     data: TUpdate;
-  }): Promise<BulkUpdateResponse>;
+  }): Promise<UpdateManyResult>;
 
   /**
    * Delete all docs matching `filter`.
@@ -29,7 +28,7 @@ export interface BulkMethods<TDoc, TCreate = Partial<TDoc>, TUpdate = Partial<TD
    */
   bulkDelete(args: ScopedArgs & {
     filter: Record<string, unknown>;
-  }): Promise<BulkDeleteResponse>;
+  }): Promise<DeleteManyResult>;
 }
 
 // ============================================================================
@@ -60,7 +59,7 @@ export function withBulk<TDoc, TCreate, TUpdate>(
       // Sending the raw array is rejected with `400 Bulk create requires a
       // non-empty items array`, masking the genuine `ORG_CONTEXT_REQUIRED`
       // tenant-scope error hosts actually need to see.
-      return api.request<BulkCreateResponse<TDoc>>('POST', `${api.baseUrl}/bulk`, {
+      return api.request<BulkCreateResult<TDoc>>('POST', `${api.baseUrl}/bulk`, {
         token,
         organizationId,
         data: { items: data },
@@ -68,7 +67,7 @@ export function withBulk<TDoc, TCreate, TUpdate>(
       });
     },
     async bulkUpdate({ token = null, organizationId = null, filter, data, options = {} }) {
-      return api.request<BulkUpdateResponse>('PATCH', `${api.baseUrl}/bulk`, {
+      return api.request<UpdateManyResult>('PATCH', `${api.baseUrl}/bulk`, {
         token,
         organizationId,
         data: { filter, data },
@@ -76,7 +75,7 @@ export function withBulk<TDoc, TCreate, TUpdate>(
       });
     },
     async bulkDelete({ token = null, organizationId = null, filter, options = {} }) {
-      return api.request<BulkDeleteResponse>('DELETE', `${api.baseUrl}/bulk`, {
+      return api.request<DeleteManyResult>('DELETE', `${api.baseUrl}/bulk`, {
         token,
         organizationId,
         data: { filter },

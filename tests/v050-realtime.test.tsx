@@ -511,6 +511,47 @@ describe('useResourceSync (WS source)', () => {
     expect(keys).toContainEqual(KEYS.detail('t9'));
   });
 
+  it('invalidates KEYS.aggregations() on every CRUD broadcast (dashboard freshness)', async () => {
+    const { KEYS, useResourceSync } = buildHooks();
+    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    const wrapper = createWrapper(queryClient);
+
+    renderHook(() => useResourceSync(), { wrapper });
+    await new Promise<void>((r) => queueMicrotask(r));
+
+    // Created event — should invalidate aggregations.
+    act(() => {
+      MockWebSocket.latest().inject({
+        type: 'todo.created',
+        data: { resource: 'todo', operation: 'created', data: { _id: 'a1' }, timestamp: '' },
+      });
+    });
+    let keys = spy.mock.calls.map(([arg]) => (arg as { queryKey: unknown }).queryKey);
+    expect(keys).toContainEqual(KEYS.aggregations());
+
+    // Reset and try updated.
+    spy.mockClear();
+    act(() => {
+      MockWebSocket.latest().inject({
+        type: 'todo.updated',
+        data: { resource: 'todo', operation: 'updated', data: { _id: 'a2' }, timestamp: '' },
+      });
+    });
+    keys = spy.mock.calls.map(([arg]) => (arg as { queryKey: unknown }).queryKey);
+    expect(keys).toContainEqual(KEYS.aggregations());
+
+    // Reset and try deleted.
+    spy.mockClear();
+    act(() => {
+      MockWebSocket.latest().inject({
+        type: 'todo.deleted',
+        data: { resource: 'todo', operation: 'deleted', data: { _id: 'a3' }, timestamp: '' },
+      });
+    });
+    keys = spy.mock.calls.map(([arg]) => (arg as { queryKey: unknown }).queryKey);
+    expect(keys).toContainEqual(KEYS.aggregations());
+  });
+
   it('forwards parsed event to onEvent callback (operation + id + data)', async () => {
     const { useResourceSync } = buildHooks();
     const seen: Array<{ operation: string; id?: string }> = [];

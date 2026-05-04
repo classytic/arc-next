@@ -42,16 +42,14 @@ describe('useApiQuery', () => {
     queryClient.clear();
   });
 
-  it('auto-unwraps Arc envelope { success, data }', async () => {
+  it('passes response through identity (no envelope unwrap)', async () => {
     const wrapper = createWrapper(queryClient);
-    const queryFn = vi.fn().mockResolvedValue({
-      success: true,
-      data: { totalRevenue: 9999, customers: 42 },
-    });
+    const response = { totalRevenue: 100, customers: 5 };
+    const queryFn = vi.fn().mockResolvedValue(response);
 
     const { result } = renderHook(
       () =>
-        useApiQuery<{ success: true; data: { totalRevenue: number; customers: number } }>({
+        useApiQuery<{ totalRevenue: number; customers: number }>({
           queryKey: ['dashboard', 'stats'],
           queryFn,
         }),
@@ -60,7 +58,7 @@ describe('useApiQuery', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.data).toEqual({ totalRevenue: 9999, customers: 42 });
+    expect(result.current.data).toEqual(response);
     expect(result.current.isSuccess).toBe(true);
     expect(result.current.error).toBeNull();
   });
@@ -103,38 +101,17 @@ describe('useApiQuery', () => {
     expect(result.current.data).toEqual(response);
   });
 
-  it('does NOT unwrap when only `success` is present (no `data`)', async () => {
-    const wrapper = createWrapper(queryClient);
-    const response = { success: true, message: 'ok' };
-    const queryFn = vi.fn().mockResolvedValue(response);
-
-    const { result } = renderHook(
-      () =>
-        useApiQuery<{ success: boolean; message: string }>({
-          queryKey: ['ack'],
-          queryFn,
-        }),
-      { wrapper },
-    );
-
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    expect(result.current.data).toEqual(response);
-  });
-
   it('custom select wins over auto-unwrap and receives raw response', async () => {
     const wrapper = createWrapper(queryClient);
-    const queryFn = vi.fn().mockResolvedValue({
-      success: true,
-      data: { entries: [{ amount: 100 }, { amount: 200 }] },
-    });
-    const select = vi.fn((res: { data: { entries: { amount: number }[] } }) =>
-      res.data.entries.map(e => e.amount),
+    const response = { entries: [{ amount: 100 }, { amount: 200 }] };
+    const queryFn = vi.fn().mockResolvedValue(response);
+    const select = vi.fn((res: { entries: { amount: number }[] }) =>
+      res.entries.map(e => e.amount),
     );
 
     const { result } = renderHook(
       () =>
-        useApiQuery<{ success: true; data: { entries: { amount: number }[] } }, number[]>({
+        useApiQuery<{ entries: { amount: number }[] }, number[]>({
           queryKey: ['ledger'],
           queryFn,
           select,
@@ -145,19 +122,16 @@ describe('useApiQuery', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data).toEqual([100, 200]);
-    expect(select).toHaveBeenCalledWith({
-      success: true,
-      data: { entries: [{ amount: 100 }, { amount: 200 }] },
-    });
+    expect(select).toHaveBeenCalledWith(response);
   });
 
   it('applies freshness preset (realtime → 20s stale)', async () => {
     const wrapper = createWrapper(queryClient);
-    const queryFn = vi.fn().mockResolvedValue({ success: true, data: 1 });
+    const queryFn = vi.fn().mockResolvedValue(1);
 
     renderHook(
       () =>
-        useApiQuery<{ success: true; data: number }>({
+        useApiQuery<number>({
           queryKey: ['rt'],
           queryFn,
           freshness: 'realtime',
@@ -174,11 +148,11 @@ describe('useApiQuery', () => {
 
   it('options override freshness preset', async () => {
     const wrapper = createWrapper(queryClient);
-    const queryFn = vi.fn().mockResolvedValue({ success: true, data: 1 });
+    const queryFn = vi.fn().mockResolvedValue(1);
 
     renderHook(
       () =>
-        useApiQuery<{ success: true; data: number }>({
+        useApiQuery<number>({
           queryKey: ['override'],
           queryFn,
           freshness: 'static',
@@ -216,12 +190,12 @@ describe('useApiQuery', () => {
     const wrapper = createWrapper(queryClient);
     const queryFn = vi
       .fn()
-      .mockResolvedValueOnce({ success: true, data: 'first' })
-      .mockResolvedValueOnce({ success: true, data: 'second' });
+      .mockResolvedValueOnce('first')
+      .mockResolvedValueOnce('second');
 
     const { result } = renderHook(
       () =>
-        useApiQuery<{ success: true; data: string }>({
+        useApiQuery<string>({
           queryKey: ['refetch'],
           queryFn,
         }),
@@ -240,12 +214,12 @@ describe('useApiQuery', () => {
     const wrapper = createWrapper(queryClient);
     const queryFn = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
       expect(signal).toBeInstanceOf(AbortSignal);
-      return { success: true, data: 'ok' };
+      return 'ok';
     });
 
     renderHook(
       () =>
-        useApiQuery<{ success: true; data: string }>({
+        useApiQuery<string>({
           queryKey: ['signal'],
           queryFn,
         }),
@@ -276,13 +250,13 @@ describe('useApiQuery', () => {
     expect(result.current.data).toBeNull();
   });
 
-  it('handles primitive (number) response from envelope', async () => {
+  it('handles primitive (number) response', async () => {
     const wrapper = createWrapper(queryClient);
-    const queryFn = vi.fn().mockResolvedValue({ success: true, data: 42 });
+    const queryFn = vi.fn().mockResolvedValue(42);
 
     const { result } = renderHook(
       () =>
-        useApiQuery<{ success: true; data: number }>({
+        useApiQuery<number>({
           queryKey: ['count'],
           queryFn,
         }),
@@ -294,13 +268,13 @@ describe('useApiQuery', () => {
     expect(result.current.data).toBe(42);
   });
 
-  it('handles null data field in envelope (returns null)', async () => {
+  it('handles null response (returns null)', async () => {
     const wrapper = createWrapper(queryClient);
-    const queryFn = vi.fn().mockResolvedValue({ success: true, data: null });
+    const queryFn = vi.fn().mockResolvedValue(null);
 
     const { result } = renderHook(
       () =>
-        useApiQuery<{ success: true; data: null }>({
+        useApiQuery<null>({
           queryKey: ['null-data'],
           queryFn,
         }),

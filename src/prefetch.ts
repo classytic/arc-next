@@ -96,6 +96,25 @@ export interface CrudPrefetcher {
    * @example
    * await productsPrefetcher.prefetchInfiniteList(queryClient, { limit: 20 });
    */
+  /**
+   * Prefetch a declared aggregation (arc 2.13+). Uses the same query key as
+   * `useAggregation` so RSC-pre-rendered dashboard rows hydrate without a
+   * client refetch.
+   *
+   * @example
+   * await ordersPrefetcher.prefetchAggregation(
+   *   queryClient,
+   *   'salesByDay',
+   *   { from: '2025-01-01', to: '2025-12-31' },
+   *   { token: jwt, organizationId: orgId, staleTime: 60_000 },
+   * );
+   */
+  prefetchAggregation: (
+    queryClient: QueryClient,
+    name: string,
+    filter?: Record<string, unknown>,
+    options?: PrefetchOptions,
+  ) => Promise<void>;
   prefetchInfiniteList: (
     queryClient: QueryClient,
     params?: Record<string, unknown>,
@@ -155,6 +174,13 @@ export function createCrudPrefetcher(
     }) => Promise<unknown>;
     getDeleted?: (opts: {
       params?: Record<string, unknown>;
+      token?: string | null;
+      organizationId?: string | null;
+      options?: { headerOptions?: Record<string, string> };
+    }) => Promise<unknown>;
+    aggregate?: (opts: {
+      name: string;
+      filter?: Record<string, unknown>;
       token?: string | null;
       organizationId?: string | null;
       options?: { headerOptions?: Record<string, string> };
@@ -239,6 +265,28 @@ export function createCrudPrefetcher(
         queryKey,
         queryFn: () => api.getDeleted!({
           params: restParams,
+          token: options.token ?? null,
+          organizationId: orgId,
+          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+        }),
+        staleTime: options.staleTime,
+      });
+    },
+
+    async prefetchAggregation(queryClient, name, filter, options = {}) {
+      if (!api.aggregate) {
+        throw new Error(`[arc-next] prefetchAggregation requires an api with aggregate (arc 2.13+)`);
+      }
+      if (!name) throw new Error('[arc-next] prefetchAggregation: aggregation name is required');
+      const orgId = options.organizationId ?? null;
+      // Mirror useAggregation's tenant-scoped filter key so hydration matches.
+      const filterKey = orgId ? { _org: orgId, ...(filter ?? {}) } : (filter ?? {});
+
+      await queryClient.prefetchQuery({
+        queryKey: KEYS.aggregation(name, filterKey),
+        queryFn: () => api.aggregate!({
+          name,
+          filter,
           token: options.token ?? null,
           organizationId: orgId,
           ...(options.headers ? { options: { headerOptions: options.headers } } : {}),

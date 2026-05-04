@@ -13,69 +13,77 @@ export type UseRouterHook = () => {
 };
 
 // ============================================================================
-// ArcApiError
+// ArcApiError — unified on `@classytic/repo-core` ErrorContract
 // ============================================================================
 
+import type { ErrorContract, ErrorDetail } from '@classytic/repo-core/errors';
+
 /**
- * Top-level error codes arc's `errorHandlerPlugin` emits on the response root
- * (`json.code`). Mirrors `statusCodeToCode()` + the special `VALIDATION_ERROR`
- * / `DUPLICATE_KEY` / `INTERNAL_ERROR` branches.
+ * Canonical error codes arc and repo-core emit on `json.code`. Single
+ * top-level slot — arc 2.13's `createError` lifts business codes from
+ * `details` to top-level so `repo-core`'s `toErrorContract` round-trips
+ * them on the wire. There is no separate `detailsCode` slot; everything
+ * lives at `error.code`.
  *
- * Open via intersection with `(string & {})` so unknown codes from custom
- * `errorMappers` / `errorMap` still satisfy the type.
+ * Three families compose this list:
+ *  1. **repo-core canonical** (`validation_error`, `not_found`, ...) — RFC 7807
+ *     / Stripe-shaped lowercase + snake_case. Cross-package universals.
+ *  2. **arc hierarchical** (`arc.forbidden`, `arc.validation_error`,
+ *     `arc.org.access_denied`, ...) — what arc's `errorHandlerPlugin`
+ *     emits for HTTP-status throws + arc-classified errors.
+ *  3. **arc business** (`ORG_CONTEXT_REQUIRED`, `ALL_FIELDS_STRIPPED`,
+ *     `OWNERSHIP_DENIED`, ...) — emitted by mixins / org guards via
+ *     `createError(status, msg, { code })`. The UPPER_SNAKE form is
+ *     intentional: these are reason codes, not HTTP-status codes.
+ *
+ * `(string & {})` keeps the type open so domain packages and custom
+ * `errorMappers` codes still satisfy it.
  */
-/**
- * Top-level HTTP-status error codes arc's `errorHandlerPlugin` emits on
- * `json.code`. Exported as a `const` array first so callers get both
- * compile-time exhaustiveness AND runtime iteration (e.g. building a
- * client-side i18n lookup, or whitelisting which codes get retried).
- */
-export const KNOWN_TOP_LEVEL_CODES = [
-  'BAD_REQUEST',
-  'UNAUTHORIZED',
-  'FORBIDDEN',
-  'NOT_FOUND',
-  'METHOD_NOT_ALLOWED',
-  'CONFLICT',
-  'UNPROCESSABLE_ENTITY',
-  'RATE_LIMITED',
-  'INTERNAL_ERROR',
-  'BAD_GATEWAY',
-  'SERVICE_UNAVAILABLE',
-  'GATEWAY_TIMEOUT',
-  'VALIDATION_ERROR',
-  'DUPLICATE_KEY',
-  'DOMAIN_ERROR',
-] as const;
-
-/**
- * Top-level HTTP-status error code union derived from {@link KNOWN_TOP_LEVEL_CODES}.
- * `(string & {})` keeps the type open so non-arc backends or custom error mappers
- * still satisfy it.
- */
-export type ArcTopLevelErrorCode = (typeof KNOWN_TOP_LEVEL_CODES)[number] | (string & {});
-
-/**
- * Nested business-logic codes arc's mixins / preset routes / org guards emit
- * on `json.details.code`. These are distinct from the HTTP-status code above —
- * `error.code` (top-level) vs `error.detailsCode` (nested). When a route
- * returns 403 with `details.code: 'ORG_CONTEXT_REQUIRED'`, hosts read
- * `detailsCode` to disambiguate "missing org context" from "permission denied".
- */
-export const KNOWN_DETAILS_CODES = [
+export const KNOWN_ARC_ERROR_CODES = [
+  // repo-core canonical (lowercase, RFC 7807)
+  'validation_error',
+  'not_found',
+  'conflict',
+  'unauthorized',
+  'forbidden',
+  'rate_limited',
+  'idempotency_conflict',
+  'precondition_failed',
+  'internal_error',
+  'service_unavailable',
+  'timeout',
+  // arc hierarchical (lowercase, dot-separated)
+  'arc.bad_request',
+  'arc.unauthorized',
+  'arc.forbidden',
+  'arc.not_found',
+  'arc.conflict',
+  'arc.unprocessable_entity',
+  'arc.rate_limited',
+  'arc.internal_error',
+  'arc.bad_gateway',
+  'arc.service_unavailable',
+  'arc.gateway_timeout',
+  'arc.validation_error',
+  'arc.invalid_id',
+  'arc.org.selection_required',
+  'arc.org.access_denied',
+  // arc business (UPPER_SNAKE) — emitted by mixins + org guards
   'ORG_CONTEXT_REQUIRED',
   'ORG_ROLE_REQUIRED',
   'OWNERSHIP_DENIED',
   'MIXED_UPDATE_SHAPE',
   'ALL_FIELDS_STRIPPED',
   'BEFORE_RESTORE_HOOK_ERROR',
+  'duplicate_key',
 ] as const;
 
 /**
- * Nested business-logic error code union derived from {@link KNOWN_DETAILS_CODES}.
- * Same `(string & {})` escape hatch as {@link ArcTopLevelErrorCode}.
+ * Canonical arc error code union. `(string & {})` keeps the type open so
+ * domain packages can extend hierarchically (`'order.cart.locked'`,
+ * `'payment.gateway.timeout'`) and still satisfy the type.
  */
-export type ArcDetailsErrorCode = (typeof KNOWN_DETAILS_CODES)[number] | (string & {});
+export type ArcErrorCode = (typeof KNOWN_ARC_ERROR_CODES)[number] | (string & {});
 
 export interface ArcApiErrorOptions {
   status: number;
@@ -117,73 +125,90 @@ export class ArcApiError extends Error {
   }
 
   /**
-   * Top-level error code from arc's response envelope (`json.code`).
+   * Canonical error code from arc's wire envelope (`json.code`).
    *
-   * One of {@link ArcTopLevelErrorCode} — covers HTTP-status codes (`FORBIDDEN`,
-   * `CONFLICT`...) plus the dedicated `VALIDATION_ERROR` / `DUPLICATE_KEY`
-   * branches arc emits. Returns `null` if the response carries no envelope.
+   * Arc 2.13 + `repo-core` 0.4 emit one canonical {@link ErrorContract}
+   * shape — `{ code, message, status, details? }` — with the business
+   * code at top-level. Hosts switch on `error.code` directly:
    *
    * @example
-   * if (error.code === 'DUPLICATE_KEY') showRetryAsAdmin();
+   * if (error.code === 'ORG_CONTEXT_REQUIRED') promptOrgSelector();
+   * if (error.code === 'arc.not_found') router.replace('/404');
+   * if (error.code === 'duplicate_key') showRetryAsAdmin();
    */
-  get code(): ArcTopLevelErrorCode | null {
+  get code(): ArcErrorCode | null {
     const j = this.json as { code?: unknown } | null;
-    return j && typeof j.code === 'string' ? (j.code as ArcTopLevelErrorCode) : null;
+    return j && typeof j.code === 'string' ? (j.code as ArcErrorCode) : null;
   }
 
   /**
-   * Nested business-logic code from arc's `json.details.code` slot.
-   *
-   * Arc's preset mixins (bulk, softDelete) and org guards emit specific reason
-   * codes here — distinct from the HTTP-status `code` above. The most common
-   * is `ORG_CONTEXT_REQUIRED` (bulk operations + orgGuard reject when the
-   * caller's `request.scope.organizationId` is missing).
-   *
-   * @example
-   * if (error.detailsCode === 'ORG_CONTEXT_REQUIRED') {
-   *   alert('Configure auth before bulk operations: configureAuth({ getOrgId })');
-   * }
+   * Canonical structured details — populated for validation failures
+   * (one entry per offending field) and duplicate-key conflicts (one entry
+   * per offending field). Shape matches `repo-core`'s {@link ErrorDetail}:
+   * `{ path?, code, message, meta? }`. Returns `null` for non-arc backends
+   * or responses without details.
    */
-  get detailsCode(): ArcDetailsErrorCode | null {
-    const j = this.json as { details?: { code?: unknown } } | null;
-    const c = j?.details?.code;
-    return typeof c === 'string' ? (c as ArcDetailsErrorCode) : null;
+  get details(): readonly ErrorDetail[] | null {
+    const j = this.json as { details?: unknown } | null;
+    return Array.isArray(j?.details) ? (j!.details as ErrorDetail[]) : null;
   }
 
   /**
    * Extract field-level validation errors as `{ field: message }` map.
    *
-   * Reads three response shapes used by Arc:
-   * 1. `{ errors: { email: 'invalid' } }` — record form (legacy / app-level handlers).
-   * 2. `{ details: { errors: [{ field, message }] } }` — Fastify AJV + Arc errorHandler emit this.
-   * 3. `{ details: { errors: [{ instancePath, message, params }] } }` — raw AJV passthrough.
-   *
-   * Returns null when none of the shapes match.
+   * Reads the canonical `ErrorContract.details: ErrorDetail[]` shape first
+   * (what arc 2.13 + repo-core emit), then falls back to legacy shapes for
+   * non-arc backends:
+   *  1. `details: [{ path, code, message }]` — canonical (arc / repo-core).
+   *  2. `errors: { email: 'invalid' }` — record form (legacy app handlers).
+   *  3. `details: { errors: [{ field|instancePath, message }] }` — pre-2.13 AJV.
+   *  4. `errors: [...]` at the top level — third-party frameworks.
    */
   get fieldErrors(): Record<string, string> | null {
     const j = this.json as
-      | { errors?: Record<string, string> | unknown[]; details?: { errors?: unknown[] } }
+      | {
+          errors?: Record<string, string> | unknown[];
+          details?: ErrorDetail[] | { errors?: unknown[] } | unknown[];
+        }
       | null;
     if (!j) return null;
 
-    // Shape 1: { errors: { field: 'message' } }
+    // Shape 1 (canonical): `details: ErrorDetail[]` with `{ path, code, message }`.
+    if (Array.isArray(j.details) && j.details.length > 0) {
+      const map: Record<string, string> = {};
+      for (const d of j.details as ErrorDetail[]) {
+        if (!d || typeof d !== 'object') continue;
+        const key = typeof d.path === 'string' ? d.path : '';
+        const msg = typeof d.message === 'string' ? d.message : 'Invalid value';
+        if (key && !(key in map)) map[key] = msg;
+      }
+      if (Object.keys(map).length > 0) return map;
+    }
+
+    // Shape 2 (legacy record form): `errors: { field: 'message' }`.
     if (j.errors && !Array.isArray(j.errors) && typeof j.errors === 'object') {
       return j.errors as Record<string, string>;
     }
 
-    // Shape 2/3: { details: { errors: [{ field|instancePath, message }] } }
-    //         or { errors: [...] } at the top level (some frameworks)
+    // Shape 3/4 (pre-2.13 / third-party): `errors: [...]` or `details.errors: [...]`.
+    const detailsObj = j.details as { errors?: unknown[] } | undefined;
     const errorList = Array.isArray(j.errors)
       ? j.errors
-      : Array.isArray(j.details?.errors)
-        ? j.details!.errors
+      : Array.isArray(detailsObj?.errors)
+        ? detailsObj!.errors
         : null;
     if (!errorList) return null;
 
     const map: Record<string, string> = {};
     for (const item of errorList) {
       if (!item || typeof item !== 'object') continue;
-      const e = item as { field?: unknown; instancePath?: unknown; path?: unknown; message?: unknown; params?: { missingProperty?: unknown } };
+      const e = item as {
+        field?: unknown;
+        instancePath?: unknown;
+        path?: unknown;
+        message?: unknown;
+        params?: { missingProperty?: unknown };
+      };
       const key =
         (typeof e.field === 'string' && e.field) ||
         (typeof e.instancePath === 'string' && e.instancePath.replace(/^\//, '')) ||
@@ -192,7 +217,6 @@ export class ArcApiError extends Error {
         '';
       if (!key) continue;
       const msg = typeof e.message === 'string' ? e.message : 'Invalid value';
-      // First message wins; later ones for the same key are dropped (matches user expectation).
       if (!(key in map)) map[key] = msg;
     }
     return Object.keys(map).length > 0 ? map : null;
@@ -237,21 +261,18 @@ export function isAbortError(error: unknown): boolean {
 }
 
 /**
- * Generic check: is this an `ArcApiError` carrying a specific top-level OR
- * nested `details.code`? Matches whichever slot the code lives in — saves
- * call sites from having to know whether arc emitted it at the root or under
- * `details`.
+ * Generic check: is this an `ArcApiError` carrying a specific `code`?
+ * Single-slot — arc 2.13 + repo-core 0.4 emit one canonical `code` at
+ * top-level. Pass either the canonical lowercase form (`'arc.not_found'`,
+ * `'validation_error'`) or arc's UPPER_SNAKE business form
+ * (`'ORG_CONTEXT_REQUIRED'`).
  *
  * @example
- * if (isArcErrorCode(error, 'DUPLICATE_KEY')) showRetryUI();
+ * if (isArcErrorCode(error, 'duplicate_key')) showRetryUI();
  * if (isArcErrorCode(error, 'ORG_CONTEXT_REQUIRED')) promptOrgSelector();
  */
-export function isArcErrorCode(
-  error: unknown,
-  code: ArcTopLevelErrorCode | ArcDetailsErrorCode,
-): error is ArcApiError {
-  if (!isArcApiError(error)) return false;
-  return error.code === code || error.detailsCode === code;
+export function isArcErrorCode(error: unknown, code: ArcErrorCode): error is ArcApiError {
+  return isArcApiError(error) && error.code === code;
 }
 
 /**
@@ -259,8 +280,8 @@ export function isArcErrorCode(
  *
  * Arc's bulk endpoints (`POST/PATCH/DELETE /:resource/bulk`) reject any call
  * where `request.scope.organizationId` is missing — the wire signal is
- * `403 { details: { code: 'ORG_CONTEXT_REQUIRED' } }`. Hosts hitting this
- * need to call `configureAuth({ getOrgId })` before retrying.
+ * `403 { code: 'ORG_CONTEXT_REQUIRED', message, status: 403 }`. Hosts hitting
+ * this need to call `configureAuth({ getOrgId })` before retrying.
  *
  * @example
  * try { await api.bulkCreate({ data: [...] }); }
@@ -275,21 +296,32 @@ export function isOrgContextRequiredError(error: unknown): error is ArcApiError 
 }
 
 /**
- * Specific predicate for arc's `VALIDATION_ERROR` (Fastify AJV + Mongoose
+ * Specific predicate for validation failures (Fastify AJV + Mongoose
  * ValidationError). When true, `error.fieldErrors` is populated with the
- * `{ field: message }` map.
+ * `{ field: message }` map. Matches arc's `arc.validation_error` and the
+ * canonical `validation_error` from repo-core.
  */
 export function isValidationError(error: unknown): error is ArcApiError {
-  return isArcErrorCode(error, 'VALIDATION_ERROR');
+  if (!isArcApiError(error)) return false;
+  return error.code === 'arc.validation_error' || error.code === 'validation_error';
 }
 
 /**
- * Specific predicate for arc's `DUPLICATE_KEY` (unique-constraint violation).
- * Arc's errorHandler classifies these uniformly across MongoDB E11000,
- * Postgres 23505, and Prisma P2002.
+ * Specific predicate for unique-constraint violations. Arc's errorHandler
+ * classifies these uniformly across MongoDB E11000, Postgres 23505,
+ * Prisma P2002 → `arc.conflict` (with `details[].code === 'duplicate_key'`).
  */
 export function isDuplicateKeyError(error: unknown): error is ArcApiError {
-  return isArcErrorCode(error, 'DUPLICATE_KEY');
+  if (!isArcApiError(error)) return false;
+  if (error.code === 'arc.conflict' || error.code === 'duplicate_key' || error.code === 'conflict') {
+    // arc.conflict can also represent non-duplicate conflicts (lease, version) —
+    // narrow further by checking details[].code === 'duplicate_key' when present.
+    if (error.code === 'arc.conflict') {
+      return error.details?.some((d) => d.code === 'duplicate_key') ?? false;
+    }
+    return true;
+  }
+  return false;
 }
 
 // ============================================================================
@@ -1075,8 +1107,8 @@ async function executeAttempt<T = unknown>(
  * Handles JSON, binary (PDF, images), CSV, and text responses.
  *
  * @example
- * const { success, data } = await handleApiRequest<ApiResponse<User>>('GET', '/users/me');
- * const response = await handleApiRequest<PaginatedResponse<Product>>('GET', '/products?page=1');
+ * const user = await handleApiRequest<User>('GET', '/users/me');
+ * const response = await handleApiRequest<PaginatedResult<Product>>('GET', '/products?page=1');
  */
 export async function handleApiRequest<T = unknown>(
   method: HttpMethod,
@@ -1148,6 +1180,23 @@ export function createQueryString<T extends Record<string, unknown>>(params: T =
       }
     } else if (value === null) {
       searchParams.append(key, 'null');
+    } else if (typeof value === 'object') {
+      // Nested operator object — `{ field: { gte: 18, lt: 65 } }` → `field[gte]=18&field[lt]=65`.
+      // Matches `@classytic/repo-core/query-parser` bracket grammar so the
+      // server-side `parseUrl()` reverses to the same Filter IR.
+      // Array operator values flatten via comma-join (`{ in: [1,2,3] }` → `field[in]=1,2,3`),
+      // matching mongokit/sqlitekit URL conventions.
+      for (const [op, opValue] of Object.entries(value as Record<string, unknown>)) {
+        if (opValue === undefined || opValue === '') continue;
+        const bracketKey = `${key}[${op}]`;
+        if (Array.isArray(opValue)) {
+          if (opValue.length > 0) searchParams.append(bracketKey, opValue.join(','));
+        } else if (opValue === null) {
+          searchParams.append(bracketKey, 'null');
+        } else {
+          searchParams.append(bracketKey, String(opValue));
+        }
+      }
     } else {
       searchParams.append(key, String(value));
     }

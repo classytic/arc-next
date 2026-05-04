@@ -243,7 +243,7 @@ describe("uploadWithProgress (plain function)", () => {
     MockXHR.latest().emitLoad({
       status: 413,
       statusText: "Payload Too Large",
-      body: { success: false, error: "File exceeds 5MB", details: { code: "FILE_TOO_LARGE" } },
+      body: { code: "FILE_TOO_LARGE", message: "File exceeds 5MB", status: 413 },
     });
 
     try {
@@ -256,7 +256,7 @@ describe("uploadWithProgress (plain function)", () => {
         expect(e.message).toBe("File exceeds 5MB");
         expect(e.endpoint).toBe("/upload");
         expect(e.method).toBe("POST");
-        expect(e.detailsCode).toBe("FILE_TOO_LARGE");
+        expect(e.code).toBe("FILE_TOO_LARGE");
       }
     }
   });

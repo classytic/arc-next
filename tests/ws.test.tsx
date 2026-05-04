@@ -177,7 +177,7 @@ describe('useWebSocket', () => {
 
   it('invalidates query keys on every received message', async () => {
     const listKey = ['todo', 'list'];
-    queryClient.setQueryData(listKey, { docs: [] });
+    queryClient.setQueryData(listKey, { data: [] });
     const spy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const { result } = renderHook(

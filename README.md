@@ -97,19 +97,19 @@ All mutations are optimistic with automatic rollback on error. Lists prefill the
 
 ### `useApiQuery` — non-CRUD reads
 
-For reports, aggregates, RPC-style endpoints. Auto-unwraps `{ success, data }`:
+For reports, aggregates, RPC-style endpoints. Response IS the data — arc 2.13+ has no envelope:
 
 ```ts
 import { useApiQuery } from "@classytic/arc-next/query";
 
-const { data, isLoading } = useApiQuery<ApiResponse<DashboardStats>>({
+const { data, isLoading } = useApiQuery<DashboardStats>({
   queryKey: ["dashboard", "stats"],
   queryFn: ({ signal }) => api.request("GET", "/dashboard/stats", { options: { signal } }),
   freshness: "realtime",  // 'realtime' | 'frequent' | 'stable' | 'static'
 });
 ```
 
-Pass a custom `select` to override auto-unwrap.
+Pass a custom `select` to project a sub-field from the response.
 
 ## Actions & Custom Routes
 
@@ -126,14 +126,16 @@ const stats = await api.invokeRoute<{ data: { total: number } }>({
   method: "GET",
   path: "/stats",
 });
-const recent = await api.invokeRoute<PaginatedResponse<Todo>>({
+import type { OffsetPaginationResult } from "@classytic/repo-core/pagination";
+
+const recent = await api.invokeRoute<OffsetPaginationResult<Todo>>({
   method: "GET",
   path: "/recent",
   params: { limit: 5 },
 });
 ```
 
-The `useAction` hook (returned from `createCrudHooks`) wraps `api.dispatchAction()` with toast + invalidation. For custom GETs, compose `api.invokeRoute()` with `useApiQuery` — it auto-unwraps the `{ success, data }` envelope:
+The `useAction` hook (returned from `createCrudHooks`) wraps `api.dispatchAction()` with toast + invalidation. For custom GETs, compose `api.invokeRoute()` with `useApiQuery` — the response IS the data (no envelope since arc 2.13):
 
 ```ts
 const { data } = useApiQuery({

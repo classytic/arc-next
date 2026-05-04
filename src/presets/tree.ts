@@ -1,7 +1,6 @@
+import type { PaginatedResult } from '@classytic/repo-core/pagination';
 import type {
   BaseApi,
-  ApiResponse,
-  PaginatedResponse,
   QueryParams,
   ScopedArgs,
 } from '../api.js';
@@ -12,13 +11,13 @@ import type {
 
 export interface TreeMethods<TDoc> {
   /** Fetch the full hierarchy. Backend mounts `GET /:resource/tree`. */
-  getTree(args?: ScopedArgs & { params?: QueryParams }): Promise<ApiResponse<TDoc[]>>;
+  getTree(args?: ScopedArgs & { params?: QueryParams }): Promise<TDoc[]>;
 
   /** Fetch direct children of a node. Backend mounts `GET /:resource/:id/children`. */
   getChildren(args: ScopedArgs & {
     parentId: string;
     params?: QueryParams;
-  }): Promise<PaginatedResponse<TDoc>>;
+  }): Promise<PaginatedResult<TDoc>>;
 }
 
 // ============================================================================
@@ -47,7 +46,7 @@ export function withTree<TDoc, TCreate, TUpdate>(
       // Tree endpoint can return many nodes — merge defaultParams (limit/page)
       // for parity with getChildren and the always-on getAll.
       const merged = { ...api.config.defaultParams, ...params };
-      return api.request<ApiResponse<TDoc[]>>('GET', `${api.baseUrl}/tree`, {
+      return api.request<TDoc[]>('GET', `${api.baseUrl}/tree`, {
         token,
         organizationId,
         params: merged,
@@ -57,7 +56,7 @@ export function withTree<TDoc, TCreate, TUpdate>(
     async getChildren({ token = null, organizationId = null, parentId, params = {}, options = {} }) {
       if (!parentId) throw new Error('Parent ID is required');
       const merged = { ...api.config.defaultParams, ...params };
-      return api.request<PaginatedResponse<TDoc>>(
+      return api.request<PaginatedResult<TDoc>>(
         'GET',
         `${api.baseUrl}/${parentId}/children`,
         { token, organizationId, params: merged, options },

@@ -35,7 +35,7 @@ function createMockApi(): CrudApi<{ _id: string; name: string }, { name: string 
   return {
     getAll: vi.fn().mockResolvedValue({
       success: true,
-      docs: [
+      data: [
         { _id: '1', name: 'Item 1' },
         { _id: '2', name: 'Item 2' },
       ],
@@ -46,21 +46,11 @@ function createMockApi(): CrudApi<{ _id: string; name: string }, { name: string 
       hasNext: false,
       hasPrev: false,
     }),
-    getById: vi.fn().mockResolvedValue({
-      success: true,
-      data: { _id: '1', name: 'Item 1' },
-    }),
-    create: vi.fn().mockResolvedValue({
-      success: true,
-      data: { _id: '3', name: 'New Item' },
-    }),
-    update: vi.fn().mockResolvedValue({
-      success: true,
-      data: { _id: '1', name: 'Updated Item' },
-    }),
+    getById: vi.fn().mockResolvedValue({ _id: '1', name: 'Item 1' }),
+    create: vi.fn().mockResolvedValue({ _id: '3', name: 'New Item' }),
+    update: vi.fn().mockResolvedValue({ _id: '1', name: 'Updated Item' }),
     delete: vi.fn().mockResolvedValue({
-      success: true,
-      deleted: true,
+      message: 'Deleted',
       id: '1',
     }),
   };
@@ -293,10 +283,7 @@ describe('createCrudHooks', () => {
   describe('useDetail with custom response keys', () => {
     it('extracts item from { product: {...} }', async () => {
       const customApi = createMockApi();
-      customApi.getById = vi.fn().mockResolvedValue({
-        success: true,
-        product: { _id: '1', name: 'Widget' },
-      });
+      customApi.getById = vi.fn().mockResolvedValue({ _id: '1', name: 'Widget' });
 
       const customHooks = createCrudHooks({
         api: customApi,
@@ -439,7 +426,7 @@ describe('createCrudHooks', () => {
       });
 
       await act(async () => {
-        resolveCreate!({ success: true, data: { _id: '99', name: 'X' } });
+        resolveCreate!({ _id: '99', name: 'X' });
         await createPromise;
       });
 
@@ -904,7 +891,7 @@ describe('createCrudHooks', () => {
       infiniteApi.getAll = vi.fn().mockResolvedValue({
         success: true,
         method: 'offset',
-        docs: [
+        data: [
           { _id: '1', name: 'Item 1' },
           { _id: '2', name: 'Item 2' },
         ],
@@ -943,7 +930,7 @@ describe('createCrudHooks', () => {
       infiniteApi.getAll = vi.fn().mockResolvedValue({
         success: true,
         method: 'offset',
-        docs: [{ _id: '1', name: 'Item 1' }],
+        data: [{ _id: '1', name: 'Item 1' }],
         page: 1,
         limit: 10,
         total: 1,
@@ -977,7 +964,7 @@ describe('createCrudHooks', () => {
       infiniteApi.getAll = vi.fn().mockResolvedValue({
         success: true,
         method: 'keyset',
-        docs: [{ _id: '1', name: 'Item 1' }],
+        data: [{ _id: '1', name: 'Item 1' }],
         limit: 10,
         hasMore: true,
         next: 'cursor-abc',
@@ -1009,7 +996,7 @@ describe('createCrudHooks', () => {
       infiniteApi.getAll = vi.fn().mockResolvedValue({
         success: true,
         method: 'keyset',
-        docs: [{ _id: '1', name: 'Item 1' }],
+        data: [{ _id: '1', name: 'Item 1' }],
         limit: 10,
         hasMore: false,
         next: null,
@@ -1045,7 +1032,7 @@ describe('createCrudHooks', () => {
       infiniteApi.getAll = vi.fn().mockResolvedValue({
         success: true,
         method: 'offset',
-        docs: [{ _id: '1', name: 'Item 1' }],
+        data: [{ _id: '1', name: 'Item 1' }],
         page: 1,
         limit: 10,
         total: 1,
@@ -1088,7 +1075,7 @@ describe('createCrudHooks', () => {
           return Promise.resolve({
             success: true,
             method: 'offset',
-            docs: [{ _id: '1', name: 'Page 1' }],
+            data: [{ _id: '1', name: 'Page 1' }],
             page: 1,
             limit: 1,
             total: 2,
@@ -1100,7 +1087,7 @@ describe('createCrudHooks', () => {
         return Promise.resolve({
           success: true,
           method: 'offset',
-          docs: [{ _id: '2', name: 'Page 2' }],
+          data: [{ _id: '2', name: 'Page 2' }],
           page: 2,
           limit: 1,
           total: 2,
@@ -1288,7 +1275,7 @@ describe('createCrudHooks', () => {
       mockApi.getAll = vi.fn().mockResolvedValue({
         success: true,
         method: 'offset',
-        docs: [{ _id: '1' }],
+        data: [{ _id: '1' }],
         page: 1, limit: 10, total: 1, pages: 1,
         hasNext: false, hasPrev: false,
       });
@@ -1304,7 +1291,7 @@ describe('createCrudHooks', () => {
       mockApi.getAll = vi.fn().mockResolvedValue({
         success: true,
         method: 'offset',
-        docs: [{ _id: '1' }],
+        data: [{ _id: '1' }],
         page: 1, limit: 10, total: 1, pages: 1,
         hasNext: false, hasPrev: false,
       });
@@ -1582,7 +1569,7 @@ describe('createCrudHooks', () => {
       // Pre-populate BOTH list and detail cache (optimistic update runs against list queries)
       const listKey = hooks.KEYS.scopedList('super-admin', {});
       queryClient.setQueryData(listKey, {
-        docs: [{ _id: '1', name: 'Item' }, { _id: '2', name: 'Other' }],
+        data: [{ _id: '1', name: 'Item' }, { _id: '2', name: 'Other' }],
         total: 2,
       });
       queryClient.setQueryData(hooks.KEYS.detail('1'), { data: { _id: '1', name: 'Item' } });
@@ -1614,10 +1601,10 @@ describe('createCrudHooks', () => {
         () => hooks.useList(null, {}, {
           public: true,
           select: (data: unknown) => {
-            const d = data as { docs: Array<{ _id: string; name: string }> };
+            const d = data as { data: Array<{ _id: string; name: string }> };
             return {
               ...d,
-              docs: d.docs.map((item) => ({ ...item, name: item.name.toUpperCase() })),
+              data: d.data.map((item) => ({ ...item, name: item.name.toUpperCase() })),
             };
           },
         }),
@@ -1639,8 +1626,8 @@ describe('createCrudHooks', () => {
         () => hooks.useDetail('1', null, {
           public: true,
           select: (data: unknown) => {
-            const d = data as { data: { _id: string; name: string } };
-            return { data: { ...d.data, name: d.data.name.toUpperCase() } };
+            const d = data as { _id: string; name: string };
+            return { ...d, name: d.name.toUpperCase() };
           },
         }),
         { wrapper }
@@ -1664,8 +1651,8 @@ describe('createCrudHooks', () => {
       const { result } = renderHook(
         () => hooks.useList({}, {
           select: (data: unknown) => {
-            const d = data as { docs: Array<{ _id: string; name: string }> };
-            return { ...d, docs: d.docs.filter((item) => item._id === '1') };
+            const d = data as { data: Array<{ _id: string; name: string }> };
+            return { ...d, data: d.data.filter((item) => item._id === '1') };
           },
         }),
         { wrapper }
@@ -1845,7 +1832,7 @@ describe('createCrudHooks', () => {
       // Pre-populate list cache
       const listKey = rollbackHooks.KEYS.scopedList('super-admin', {});
       queryClient.setQueryData(listKey, {
-        docs: [{ _id: '1', name: 'Existing' }],
+        data: [{ _id: '1', name: 'Existing' }],
         total: 1,
       });
 
@@ -1861,9 +1848,9 @@ describe('createCrudHooks', () => {
       });
 
       // Cache should be rolled back to original
-      const cached = queryClient.getQueryData(listKey) as { docs: unknown[] };
-      expect(cached.docs).toHaveLength(1);
-      expect((cached.docs[0] as { _id: string })._id).toBe('1');
+      const cached = queryClient.getQueryData(listKey) as { data: unknown[] };
+      expect(cached.data).toHaveLength(1);
+      expect((cached.data[0] as { _id: string })._id).toBe('1');
     });
 
     it('rolls back list cache on update failure', async () => {
@@ -1880,7 +1867,7 @@ describe('createCrudHooks', () => {
 
       const listKey = rollbackHooks.KEYS.scopedList('super-admin', {});
       queryClient.setQueryData(listKey, {
-        docs: [{ _id: '1', name: 'Original' }],
+        data: [{ _id: '1', name: 'Original' }],
         total: 1,
       });
 
@@ -1895,8 +1882,8 @@ describe('createCrudHooks', () => {
         } catch {}
       });
 
-      const cached = queryClient.getQueryData(listKey) as { docs: Array<{ name: string }> };
-      expect(cached.docs[0]!.name).toBe('Original');
+      const cached = queryClient.getQueryData(listKey) as { data: Array<{ name: string }> };
+      expect(cached.data[0]!.name).toBe('Original');
     });
   });
 
@@ -1933,7 +1920,7 @@ describe('createCrudHooks', () => {
       infiniteApi.getAll = vi.fn().mockResolvedValue({
         success: true,
         method: 'offset',
-        docs: [{ _id: '1', name: 'Item 1' }],
+        data: [{ _id: '1', name: 'Item 1' }],
         page: 1, limit: 10, total: 1, pages: 1,
         hasNext: false, hasPrev: false,
       });
@@ -2196,7 +2183,7 @@ describe('createCrudHooks', () => {
 
     it('calls upload api and shows toast', async () => {
       const uploadApi = createMockApi();
-      uploadApi.upload = vi.fn().mockResolvedValue({ success: true, url: '/uploads/file.png' });
+      uploadApi.upload = vi.fn().mockResolvedValue({ url: '/uploads/file.png' });
 
       const uploadHooks = createCrudHooks({
         api: uploadApi,
@@ -2225,7 +2212,7 @@ describe('createCrudHooks', () => {
 
     it('calls upload api with custom messages', async () => {
       const uploadApi = createMockApi();
-      uploadApi.upload = vi.fn().mockResolvedValue({ success: true });
+      uploadApi.upload = vi.fn().mockResolvedValue({ url: '/uploads/file.png' });
 
       const uploadHooks = createCrudHooks({
         api: uploadApi,
@@ -2251,7 +2238,7 @@ describe('createCrudHooks', () => {
 
     it('passes id to upload api when provided', async () => {
       const uploadApi = createMockApi();
-      uploadApi.upload = vi.fn().mockResolvedValue({ success: true });
+      uploadApi.upload = vi.fn().mockResolvedValue({ url: '/uploads/file.png' });
 
       const uploadHooks = createCrudHooks({
         api: uploadApi,
@@ -2373,7 +2360,7 @@ describe('createCrudHooks', () => {
   describe('useUpload id and path passthrough', () => {
     it('passes path to upload api', async () => {
       const uploadApi = createMockApi();
-      uploadApi.upload = vi.fn().mockResolvedValue({ success: true });
+      uploadApi.upload = vi.fn().mockResolvedValue({ url: '/uploads/file.png' });
 
       const uploadHooks = createCrudHooks({
         api: uploadApi,
@@ -2396,7 +2383,7 @@ describe('createCrudHooks', () => {
 
     it('passes both id and path — api decides precedence', async () => {
       const uploadApi = createMockApi();
-      uploadApi.upload = vi.fn().mockResolvedValue({ success: true });
+      uploadApi.upload = vi.fn().mockResolvedValue({ url: '/uploads/file.png' });
 
       const uploadHooks = createCrudHooks({
         api: uploadApi,
@@ -2514,7 +2501,7 @@ describe('createCrudHooks', () => {
       // Pre-populate list and detail caches
       const listKey = failHooks.KEYS.scopedList('super-admin', {});
       queryClient.setQueryData(listKey, {
-        docs: [{ _id: '1', name: 'Original' }],
+        data: [{ _id: '1', name: 'Original' }],
         total: 1,
       });
       queryClient.setQueryData(failHooks.KEYS.detail('1'), {
@@ -2667,11 +2654,11 @@ describe('createCrudHooks', () => {
       // A minimal object with only required methods (no upload/search)
       type MinimalApi = CrudApi<{ _id: string; name: string }, { name: string }, { name: string }>;
       const api: MinimalApi = {
-        getAll: vi.fn().mockResolvedValue({ docs: [], total: 0, page: 1, limit: 10, pages: 0, hasNext: false, hasPrev: false }),
-        getById: vi.fn().mockResolvedValue({ data: null }),
-        create: vi.fn().mockResolvedValue({ data: null }),
-        update: vi.fn().mockResolvedValue({ data: null }),
-        delete: vi.fn().mockResolvedValue({ success: true }),
+        getAll: vi.fn().mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, pages: 0, hasNext: false, hasPrev: false }),
+        getById: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ _id: '1', name: 'Minimal' }),
+        update: vi.fn().mockResolvedValue({ _id: '1', name: 'Minimal' }),
+        delete: vi.fn().mockResolvedValue({ message: 'Deleted', id: '1' }),
         // no upload, no search
       };
 
@@ -2805,7 +2792,7 @@ describe('createCrudHooks', () => {
         ...createMockApi(),
         getDeleted: vi.fn().mockResolvedValue({
           success: true,
-          docs: [{ _id: 'del-1', name: 'Deleted Item', deletedAt: '2024-01-01' }],
+          data: [{ _id: 'del-1', name: 'Deleted Item', deletedAt: '2024-01-01' }],
           total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
         }),
       };
@@ -2844,10 +2831,7 @@ describe('createCrudHooks', () => {
     it('fetches item by slug', async () => {
       const slugApi = {
         ...createMockApi(),
-        getBySlug: vi.fn().mockResolvedValue({
-          success: true,
-          data: { _id: '1', name: 'My Article', slug: 'my-article' },
-        }),
+        getBySlug: vi.fn().mockResolvedValue({ _id: '1', name: 'My Article', slug: 'my-article' }),
       };
 
       const slugHooks = createCrudHooks({
@@ -2908,12 +2892,9 @@ describe('createCrudHooks', () => {
     it('fetches tree data', async () => {
       const treeApi = {
         ...createMockApi(),
-        getTree: vi.fn().mockResolvedValue({
-          success: true,
-          data: [
-            { _id: 'root', name: 'Root', children: [{ _id: 'child', name: 'Child' }] },
-          ],
-        }),
+        getTree: vi.fn().mockResolvedValue([
+          { _id: 'root', name: 'Root', children: [{ _id: 'child', name: 'Child' }] },
+        ]),
       };
 
       const treeHooks = createCrudHooks({
@@ -2951,7 +2932,7 @@ describe('createCrudHooks', () => {
         ...createMockApi(),
         getChildren: vi.fn().mockResolvedValue({
           success: true,
-          docs: [{ _id: 'child-1', name: 'Child 1' }, { _id: 'child-2', name: 'Child 2' }],
+          data: [{ _id: 'child-1', name: 'Child 1' }, { _id: 'child-2', name: 'Child 2' }],
           total: 2, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
         }),
       };
@@ -3013,10 +2994,7 @@ describe('createCrudHooks', () => {
     it('calls api.restore and shows success toast', async () => {
       const restoreApi = {
         ...createMockApi(),
-        restore: vi.fn().mockResolvedValue({
-          success: true,
-          data: { _id: 'del-1', name: 'Restored Item' },
-        }),
+        restore: vi.fn().mockResolvedValue({ _id: 'del-1', name: 'Restored Item' }),
       };
 
       const restoreHooks = createCrudHooks({
@@ -3041,10 +3019,7 @@ describe('createCrudHooks', () => {
     it('restore returns extracted entity', async () => {
       const restoreApi = {
         ...createMockApi(),
-        restore: vi.fn().mockResolvedValue({
-          success: true,
-          data: { _id: 'del-1', name: 'Restored Item' },
-        }),
+        restore: vi.fn().mockResolvedValue({ _id: 'del-1', name: 'Restored Item' }),
       };
 
       const restoreHooks = createCrudHooks({
@@ -3138,7 +3113,7 @@ describe('createCrudHooks', () => {
     it('bulkUpdate calls api.bulkUpdate', async () => {
       const bulkApi = {
         ...createMockApi(),
-        bulkUpdate: vi.fn().mockResolvedValue({ success: true, modifiedCount: 5 }),
+        bulkUpdate: vi.fn().mockResolvedValue({ modifiedCount: 5 }),
       };
 
       const bulkHooks = createCrudHooks({
@@ -3164,7 +3139,7 @@ describe('createCrudHooks', () => {
     it('bulkRemove calls api.bulkDelete', async () => {
       const bulkApi = {
         ...createMockApi(),
-        bulkDelete: vi.fn().mockResolvedValue({ success: true, deletedCount: 3 }),
+        bulkDelete: vi.fn().mockResolvedValue({ deletedCount: 3 }),
       };
 
       const bulkHooks = createCrudHooks({
@@ -3251,10 +3226,7 @@ describe('createCrudHooks', () => {
   describe('custom idField', () => {
     it('resolveItemId uses idField for optimistic create', async () => {
       const skuApi = createMockApi();
-      skuApi.create = vi.fn().mockResolvedValue({
-        success: true,
-        data: { _id: 'mongo-1', sku: 'SKU-001', name: 'Product' },
-      });
+      skuApi.create = vi.fn().mockResolvedValue({ _id: 'mongo-1', sku: 'SKU-001', name: 'Product' });
 
       const skuHooks = createCrudHooks({
         api: skuApi,
@@ -3277,7 +3249,7 @@ describe('createCrudHooks', () => {
       const skuApi = createMockApi();
       skuApi.getAll = vi.fn().mockResolvedValue({
         success: true,
-        docs: [
+        data: [
           { _id: 'mongo-1', sku: 'SKU-001', name: 'A' },
           { _id: 'mongo-2', sku: 'SKU-002', name: 'B' },
         ],
@@ -3317,7 +3289,7 @@ describe('createCrudHooks', () => {
 
     it('optimistic delete uses idField to match items', async () => {
       const skuApi = createMockApi();
-      skuApi.delete = vi.fn().mockResolvedValue({ success: true });
+      skuApi.delete = vi.fn().mockResolvedValue({ message: 'Deleted', id: 'DEL-001' });
 
       const skuHooks = createCrudHooks({
         api: skuApi,
@@ -3330,7 +3302,7 @@ describe('createCrudHooks', () => {
 
       // Pre-populate list cache with SKU-keyed items
       queryClient.setQueryData(['sku-del', 'list', { _scope: 'super-admin' }], {
-        docs: [
+        data: [
           { _id: 'a', sku: 'DEL-001', name: 'Delete Me' },
           { _id: 'b', sku: 'KEEP-001', name: 'Keep Me' },
         ],
@@ -3365,7 +3337,7 @@ describe('createCrudHooks', () => {
 
       const clientWithAuth = {
         request: vi.fn().mockResolvedValue({
-          success: true, docs: [{ _id: '1', name: 'Item' }],
+          success: true, data: [{ _id: '1', name: 'Item' }],
           total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
         }),
         config: { baseUrl: 'http://other.test' } as const,

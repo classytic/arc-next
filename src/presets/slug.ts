@@ -1,6 +1,5 @@
 import type {
   BaseApi,
-  ApiResponse,
   ScopedArgs,
 } from '../api.js';
 
@@ -13,7 +12,7 @@ export interface SlugLookupMethods<TDoc> {
   getBySlug(args: ScopedArgs & {
     slug: string;
     params?: { select?: string; populate?: string | string[] };
-  }): Promise<ApiResponse<TDoc>>;
+  }): Promise<TDoc>;
 }
 
 // ============================================================================
@@ -38,7 +37,7 @@ export function withSlugLookup<TDoc, TCreate, TUpdate>(
   const ext: SlugLookupMethods<TDoc> = {
     async getBySlug({ token = null, organizationId = null, slug, params = {}, options = {} }) {
       if (!slug) throw new Error('Slug is required');
-      return api.request<ApiResponse<TDoc>>('GET', `${api.baseUrl}/slug/${slug}`, {
+      return api.request<TDoc>('GET', `${api.baseUrl}/slug/${slug}`, {
         token,
         organizationId,
         params,

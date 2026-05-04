@@ -319,26 +319,13 @@ export function useInfiniteListQuery<T>({
 export type QueryFreshness = keyof typeof QUERY_CONFIGS;
 
 /**
- * Extracts the inner type of an Arc envelope `{ success, data: T }`.
- * Falls through to `T` itself when the response isn't an envelope.
+ * Identity passthrough — arc emits raw data on success (no envelope; HTTP
+ * status discriminates errors via thrown `ArcApiError`). Kept as a named
+ * type for the `useApiQuery` default param so the public signature stays
+ * `useApiQuery<TResponse, TData = ExtractData<TResponse>>` for callers
+ * that want a custom select projection.
  */
-export type ExtractData<T> = T extends { success: unknown; data: infer D } ? D : T;
-
-/**
- * Strict Arc envelope detector — requires BOTH `success` and `data` keys.
- *
- * Stricter than checking only `data` so we don't mis-unwrap responses that happen
- * to use a `data` field for unrelated semantics (e.g. a chart that returns
- * `{ data: number[], labels: [] }`).
- */
-function isArcEnvelope(value: unknown): value is { success: unknown; data: unknown } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "success" in value &&
-    "data" in value
-  );
-}
+export type ExtractData<T> = T;
 
 /** Per-call request pass-through and TanStack Query overrides. */
 export interface UseApiQueryOptions {
@@ -359,9 +346,9 @@ export interface UseApiQueryConfig<TResponse, TData> {
   /** Freshness preset name (`realtime` | `frequent` | `stable` | `static`). */
   freshness?: QueryFreshness;
   /**
-   * Custom projection from the raw response. When omitted, the hook auto-unwraps
-   * Arc envelopes (`{ success, data }`) and returns `data`. Non-envelope responses
-   * pass through unchanged.
+   * Custom projection from the raw response. When omitted, the response is
+   * returned unchanged — arc 2.13+ has no wire envelope, so the response
+   * already IS the data.
    */
   select?: (response: TResponse) => TData;
   /** TanStack Query overrides (staleTime, refetchInterval, retry, etc.). */
@@ -381,29 +368,29 @@ export interface UseApiQueryResult<TData> {
 
 /**
  * Generic query hook for non-CRUD reads (reports, aggregates, lookups, RPC-style
- * endpoints). Wraps TanStack Query with three ergonomics on top:
+ * endpoints). Wraps TanStack Query with two ergonomics on top:
  *
- * 1. **Envelope auto-unwrap.** `{ success, data: T }` responses are projected to
- *    `T` automatically. Override with a custom `select` for shape changes or
- *    multi-field projections.
- * 2. **Freshness presets.** Pass `freshness: 'realtime' | 'frequent' | 'stable' |
+ * 1. **Freshness presets.** Pass `freshness: 'realtime' | 'frequent' | 'stable' |
  *    'static'` to map onto `QUERY_CONFIGS`. Per-option overrides still win.
- * 3. **Standardized result shape.** `{ data, isLoading, isFetching, isError,
+ * 2. **Standardized result shape.** `{ data, isLoading, isFetching, isError,
  *    isSuccess, isStale, error, refetch }` — same contract as the CRUD hooks.
  *
+ * Arc emits raw data on success (no envelope), so the response IS the data.
+ * Use `select` for shape transformations / multi-field projections.
+ *
  * @example
- * // Auto-unwrap envelope
- * const { data } = useApiQuery<ApiResponse<DashboardStats>>({
+ * // Direct typing — response IS the data
+ * const { data } = useApiQuery<DashboardStats>({
  *   queryKey: ['dashboard', 'stats'],
  *   queryFn: ({ signal }) => api.request('GET', '/dashboard/stats', { options: { signal } }),
  *   freshness: 'realtime',
  * });
  *
- * // Custom projection
+ * // Custom projection (e.g. extract a sub-field)
  * const { data } = useApiQuery({
  *   queryKey: ['ledger', accountId],
- *   queryFn: ({ signal }) => api.request('GET', `/ledger/${accountId}`, { options: { signal } }),
- *   select: (res) => res.data?.entries ?? [],
+ *   queryFn: ({ signal }) => api.request<{ entries: Entry[] }>('GET', `/ledger/${accountId}`, { options: { signal } }),
+ *   select: (res) => res.entries,
  * });
  */
 export function useApiQuery<TResponse = unknown, TData = ExtractData<TResponse>>({
@@ -415,7 +402,7 @@ export function useApiQuery<TResponse = unknown, TData = ExtractData<TResponse>>
   options = {},
 }: UseApiQueryConfig<TResponse, TData>): UseApiQueryResult<TData> {
   // Stable projection: stash `select` in a ref so an inline arrow at the call
-  // site (`select: (r) => r.data`) doesn't change projection identity on every
+  // site (`select: (r) => r.field`) doesn't change projection identity on every
   // render. TanStack treats a new `select` reference as cause to re-run the
   // projection (structural sharing only saves on equal *output*, not equal
   // *function*); the ref pattern keeps `select` always resolvable to the latest
@@ -425,7 +412,7 @@ export function useApiQuery<TResponse = unknown, TData = ExtractData<TResponse>>
   const projection = useCallback((response: TResponse): TData => {
     const fn = selectRef.current;
     if (fn) return fn(response);
-    return (isArcEnvelope(response) ? response.data : response) as TData;
+    return response as unknown as TData;
   }, []);
 
   const preset = freshness ? QUERY_CONFIGS[freshness] : undefined;

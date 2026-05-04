@@ -8,7 +8,7 @@ describe('BaseApi', () => {
   beforeEach(() => {
     configureClient({ baseUrl: 'http://api.test' });
     fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ success: true, docs: [], total: 0 }), {
+      new Response(JSON.stringify({ success: true, data: [], total: 0 }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
@@ -415,18 +415,18 @@ describe('BaseApi upload', () => {
 
 describe('type guards', () => {
   it('isOffsetPagination', () => {
-    expect(isOffsetPagination({ success: true, method: 'offset', docs: [], page: 1, limit: 10, total: 0, pages: 0, hasNext: false, hasPrev: false })).toBe(true);
-    expect(isOffsetPagination({ success: true, method: 'keyset', docs: [], limit: 10, hasMore: false, next: null })).toBe(false);
+    expect(isOffsetPagination({ success: true, method: 'offset', data: [], page: 1, limit: 10, total: 0, pages: 0, hasNext: false, hasPrev: false })).toBe(true);
+    expect(isOffsetPagination({ success: true, method: 'keyset', data: [], limit: 10, hasMore: false, next: null })).toBe(false);
   });
 
   it('isKeysetPagination', () => {
-    expect(isKeysetPagination({ success: true, method: 'keyset', docs: [], limit: 10, hasMore: false, next: null })).toBe(true);
-    expect(isKeysetPagination({ success: true, method: 'offset', docs: [], page: 1, limit: 10, total: 0, pages: 0, hasNext: false, hasPrev: false })).toBe(false);
+    expect(isKeysetPagination({ success: true, method: 'keyset', data: [], limit: 10, hasMore: false, next: null })).toBe(true);
+    expect(isKeysetPagination({ success: true, method: 'offset', data: [], page: 1, limit: 10, total: 0, pages: 0, hasNext: false, hasPrev: false })).toBe(false);
   });
 
   it('isAggregatePagination', () => {
-    expect(isAggregatePagination({ success: true, method: 'aggregate', docs: [], page: 1, limit: 10, total: 0, pages: 0, hasNext: false, hasPrev: false })).toBe(true);
-    expect(isAggregatePagination({ success: true, method: 'offset', docs: [], page: 1, limit: 10, total: 0, pages: 0, hasNext: false, hasPrev: false })).toBe(false);
+    expect(isAggregatePagination({ success: true, method: 'aggregate', data: [], page: 1, limit: 10, total: 0, pages: 0, hasNext: false, hasPrev: false })).toBe(true);
+    expect(isAggregatePagination({ success: true, method: 'offset', data: [], page: 1, limit: 10, total: 0, pages: 0, hasNext: false, hasPrev: false })).toBe(false);
   });
 });
 
@@ -457,7 +457,7 @@ describe('BaseApi with client', () => {
   beforeEach(() => {
     configureClient({ baseUrl: 'http://global.test' });
     fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ success: true, docs: [], total: 0 }), {
+      new Response(JSON.stringify({ success: true, data: [], total: 0 }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
@@ -752,6 +752,72 @@ describe('BaseApi with client', () => {
   });
 
   // ==========================================================================
+  // aggregate — GET /aggregations/:name (arc 2.13+)
+  // ==========================================================================
+
+  describe('aggregate', () => {
+    let aggFetch: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      configureClient({ baseUrl: 'http://api.test' });
+      aggFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ rows: [{ day: '2025-01-01', total: 100 }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    });
+
+    afterEach(() => aggFetch.mockRestore());
+
+    it('GETs /aggregations/:name with no filter', async () => {
+      const api = createCrudApi('orders', { basePath: '/api' });
+      const result = await api.aggregate({ name: 'salesByDay' });
+
+      const [url, init] = aggFetch.mock.calls[0]!;
+      expect(url).toBe('http://api.test/api/orders/aggregations/salesByDay');
+      expect((init as RequestInit).method).toBe('GET');
+      expect(result).toEqual({ rows: [{ day: '2025-01-01', total: 100 }] });
+    });
+
+    it('encodes filter as query string', async () => {
+      const api = createCrudApi('orders', { basePath: '/api' });
+      await api.aggregate({
+        name: 'salesByDay',
+        filter: { from: '2025-01-01', to: '2025-12-31', region: 'NA' },
+      });
+
+      const url = aggFetch.mock.calls[0]![0] as string;
+      expect(url).toContain('/api/orders/aggregations/salesByDay?');
+      expect(url).toContain('from=2025-01-01');
+      expect(url).toContain('to=2025-12-31');
+      expect(url).toContain('region=NA');
+    });
+
+    it('preserves the canonical AggResult shape (no envelope unwrap)', async () => {
+      const api = createCrudApi('orders');
+      const result = await api.aggregate<{ day: string; total: number }>({ name: 'salesByDay' });
+      // Wire shape is `{ rows: TRow[] }` — caller reads `.rows` directly.
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]!.day).toBe('2025-01-01');
+      expect(result.rows[0]!.total).toBe(100);
+    });
+
+    it('throws on missing name', async () => {
+      const api = createCrudApi('orders');
+      await expect(api.aggregate({ name: '' })).rejects.toThrow('Aggregation name is required');
+    });
+
+    it('forwards organizationId as x-organization-id header', async () => {
+      const api = createCrudApi('orders');
+      await api.aggregate({ name: 'salesByDay', organizationId: 'org_42' });
+
+      const headers = (aggFetch.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+      expect(headers['x-organization-id']).toBe('org_42');
+    });
+  });
+
+  // ==========================================================================
   // findBy with geo operators (mongokit URL grammar)
   // ==========================================================================
 
@@ -761,7 +827,7 @@ describe('BaseApi with client', () => {
     beforeEach(() => {
       configureClient({ baseUrl: 'http://api.test' });
       geoFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify({ success: true, docs: [], total: 0 }), {
+        new Response(JSON.stringify({ success: true, data: [], total: 0 }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         })

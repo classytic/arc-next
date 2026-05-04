@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptimisticMutation, useMutationWithTransition } from "./mutation.js";
 import type { MutationMessages } from "./mutation.js";
@@ -16,6 +16,7 @@ import type {
   DetailQueryResult,
   InfiniteListQueryOptions,
   InfiniteListQueryResult,
+  RequestPassthrough,
 } from "./query.js";
 // Utilities live in the server-safe cache module — import directly so this
 // hook layer doesn't accidentally take a dependency on a client-marked path.
@@ -27,12 +28,13 @@ import {
   DEFAULT_QUERY_CONFIG,
   extractItem,
 } from "./cache.js";
+import type { PaginatedResult } from "@classytic/repo-core/pagination";
 import type { QueryKeys, CacheUtils } from "./cache.js";
 import {
   isOffsetPagination,
   isKeysetPagination,
 } from "./api.js";
-import type { PaginatedResponse, BaseApi, ApiResponse } from "./api.js";
+import type { AggResult, AggRow, BaseApi } from "./api.js";
 import type { SoftDeleteMethods } from "./presets/soft-delete.js";
 import type { BulkMethods } from "./presets/bulk.js";
 import type { SlugLookupMethods } from "./presets/slug.js";
@@ -65,11 +67,55 @@ export type CrudApi<T = unknown, TCreate = Partial<T>, TUpdate = Partial<T>> = P
   upload?: BaseApi<T, TCreate, TUpdate>['upload'];
   dispatchAction?: BaseApi<T, TCreate, TUpdate>['dispatchAction'];
   invokeRoute?: BaseApi<T, TCreate, TUpdate>['invokeRoute'];
+  /** Declared aggregations (arc 2.13+). Always available on BaseApi. */
+  aggregate?: BaseApi<T, TCreate, TUpdate>['aggregate'];
 } & Partial<SoftDeleteMethods<T>>
   & Partial<BulkMethods<T, TCreate, TUpdate>>
   & Partial<SlugLookupMethods<T>>
   & Partial<TreeMethods<T>>
   & Partial<SearchPresetMethods<T>>;
+
+/** Args + options for `useAggregation`. Mirrors `ListQueryOptions` for DX consistency. */
+export interface AggregationQueryOptions<TRow extends AggRow = AggRow, TData = AggResult<TRow>> {
+  /** Bypass auth gate (for public dashboards behind `allowPublic` permissions). */
+  public?: boolean;
+  /** Skip the query (e.g. while a parent filter is being assembled). */
+  enabled?: boolean;
+  /** Per-call staleTime override. Defaults to factory's `defaults.staleTime`. */
+  staleTime?: number;
+  /** Per-call gcTime override. */
+  gcTime?: number;
+  /**
+   * Refetch on window focus. Aggregations / dashboards usually want this OFF —
+   * long-running compute. Defaults to `false` regardless of factory config.
+   */
+  refetchOnWindowFocus?: boolean;
+  /** Periodic refetch (ms or `false`). Set for live dashboards. */
+  refetchInterval?: number | false;
+  /** Continue polling while the tab is in the background. */
+  refetchIntervalInBackground?: boolean;
+  /**
+   * Transform `AggResult<TRow>` before exposing it. Common pattern is to
+   * pluck the rows array directly:
+   *   `select: (r) => r.rows`
+   * Or compute a derived value:
+   *   `select: (r) => r.rows.reduce((acc, x) => acc + x.total, 0)`
+   * Runs on each render after structural-sharing dedupe.
+   */
+  select?: (data: AggResult<TRow>) => TData;
+  /**
+   * Pass-through to the underlying fetch call. Use for Next.js ISR — pass
+   * `request: { revalidate: 60, tags: ['orders'] }` so the server-side fetch
+   * cache participates in `revalidateTag('orders')` invalidations alongside
+   * TanStack's client cache.
+   */
+  request?: RequestPassthrough;
+  /**
+   * Show this data while the real query is loading / re-fetching with
+   * different filters. Smooths fast filter switches on dashboards.
+   */
+  placeholderData?: AggResult<TRow> | ((prev: AggResult<TRow> | undefined) => AggResult<TRow> | undefined);
+}
 
 export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
   api: CrudApi<T, TCreate, TUpdate>;
@@ -198,10 +244,10 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     /** Default action name. Can be overridden per-call via `mutate({ action })`. */
     action?: string;
     messages?: MutationMessages;
-    onSuccess?: (data: ApiResponse<TResult>, variables: { id: string; action: string; data?: TBody }) => void;
+    onSuccess?: (data: TResult, variables: { id: string; action: string; data?: TBody }) => void;
     onError?: (error: Error, variables: { id: string; action: string; data?: TBody }) => void;
-    onSettled?: (data: ApiResponse<TResult> | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
-  }) => TransitionMutationReturn<ApiResponse<TResult>, { id: string; action?: string; data?: TBody }>;
+    onSettled?: (data: TResult | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
+  }) => TransitionMutationReturn<TResult, { id: string; action?: string; data?: TBody }>;
   /** Mutation against the search-preset POST `/search` route. */
   useSearchEngine: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
     path?: string;
@@ -220,6 +266,28 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     messages?: MutationMessages;
     invalidateQueries?: QueryKey[];
   }) => TransitionMutationReturn<unknown, { input: string | string[]; body?: Record<string, unknown> }>;
+  /**
+   * Query against arc's declarative aggregations (arc v2.13+).
+   * `GET /:resource/aggregations/:name` — wire shape `{ rows: TRow[] }`.
+   *
+   * Cached under `KEYS.aggregation(name, filter)` so multiple call sites with
+   * the same args share one cache entry. Mutation hooks
+   * (`useActions`/`useBulkActions`) auto-invalidate `KEYS.aggregations()` so
+   * dashboards refresh after CRUD writes — opt out via the mutation's
+   * `invalidateQueries` override if you want stale-on-write.
+   *
+   * @example
+   * const { data } = useAggregation<{ day: string; total: number }>({
+   *   name: 'salesByDay',
+   *   filter: { from: '2025-01-01' },
+   *   refetchOnWindowFocus: false,
+   * });
+   * // data.rows: Array<{ day: string; total: number }>
+   */
+  useAggregation: <TRow extends AggRow = AggRow, TData = AggResult<TRow>>(args: {
+    name: string;
+    filter?: Record<string, unknown>;
+  } & AggregationQueryOptions<TRow, TData>) => UseQueryResult<TData>;
   useUpload: (options?: {
     invalidateQueries?: QueryKey[];
     messages?: MutationMessages;
@@ -473,7 +541,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       mutationFn: ({ token, organizationId, data }: MutationParams<TCreate>) =>
         api.create({ token, organizationId, data }),
       queryClient,
-      queryKeys: [KEYS.lists()],
+      // Invalidate lists + every aggregation — dashboards derive from the
+      // underlying data, so any CRUD write may shift their rows.
+      queryKeys: [KEYS.lists(), KEYS.aggregations()],
       shouldToast,
       optimisticUpdate: (oldData, { data }) => {
         const optimisticItem = {
@@ -500,7 +570,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       mutationFn: ({ token, organizationId, id, data }: UpdateParams<TUpdate>) =>
         api.update({ token, organizationId, id, data }),
       queryClient,
-      queryKeys: [KEYS.lists(), KEYS.details()],
+      queryKeys: [KEYS.lists(), KEYS.details(), KEYS.aggregations()],
       shouldToast,
       optimisticUpdate: (oldData, { id, data }) => {
         const updated = updateListCache(oldData, (arr: unknown[]) =>
@@ -533,7 +603,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const deleteMutation = useOptimisticMutation({
       mutationFn: ({ token, organizationId, id }: DeleteParams) => api.delete({ token, organizationId, id }),
       queryClient,
-      queryKeys: [KEYS.lists()],
+      queryKeys: [KEYS.lists(), KEYS.aggregations()],
       shouldToast,
       optimisticUpdate: (oldData, { id }) => {
         return updateListCache(oldData, (arr: unknown[]) => (arr || []).filter((item) => resolveItemId(item) !== id));
@@ -560,7 +630,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         }
         return api.restore({ token, organizationId, id });
       },
-      invalidateQueries: [KEYS.lists(), KEYS.custom('deleted')],
+      invalidateQueries: [KEYS.lists(), KEYS.custom('deleted'), KEYS.aggregations()],
       shouldToast,
       messages: {
         success: `${singular} restored successfully`,
@@ -706,7 +776,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
       initialPageParam: restParams.after ? restParams.after : 1,
       getNextPageParam: (lastPage) => {
-        const page = lastPage as PaginatedResponse<T>;
+        const page = lastPage as PaginatedResult<T>;
         if (isKeysetPagination(page)) {
           return page.hasMore ? page.next : undefined;
         }
@@ -721,7 +791,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       },
       // Required when maxPages is set — enables backward re-fetching on scroll-back
       getPreviousPageParam: queryOpts.maxPages != null ? (firstPage) => {
-        const page = firstPage as PaginatedResponse<T>;
+        const page = firstPage as PaginatedResult<T>;
         if (isOffsetPagination(page)) {
           return page.hasPrev ? page.page - 1 : undefined;
         }
@@ -925,7 +995,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           data: vars.data,
         });
       },
-      invalidateQueries: [KEYS.lists()],
+      invalidateQueries: [KEYS.lists(), KEYS.aggregations()],
       messages: {
         success: `${pluralName} created successfully`,
         error: `Failed to create ${(pluralName).toLowerCase()}`,
@@ -946,7 +1016,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           data: vars.data as Parameters<NonNullable<typeof api.bulkUpdate>>[0]['data'],
         });
       },
-      invalidateQueries: [KEYS.lists(), KEYS.details()],
+      invalidateQueries: [KEYS.lists(), KEYS.details(), KEYS.aggregations()],
       messages: {
         success: `${pluralName} updated successfully`,
         error: `Failed to update ${(pluralName).toLowerCase()}`,
@@ -966,7 +1036,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           filter: vars.filter,
         });
       },
-      invalidateQueries: [KEYS.lists()],
+      invalidateQueries: [KEYS.lists(), KEYS.aggregations()],
       messages: {
         success: `${pluralName} deleted successfully`,
         error: `Failed to delete ${(pluralName).toLowerCase()}`,
@@ -1003,13 +1073,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     invalidateQueries?: QueryKey[];
     action?: string;
     messages?: MutationMessages;
-    onSuccess?: (data: ApiResponse<TResult>, variables: { id: string; action: string; data?: TBody }) => void;
+    onSuccess?: (data: TResult, variables: { id: string; action: string; data?: TBody }) => void;
     onError?: (error: Error, variables: { id: string; action: string; data?: TBody }) => void;
-    onSettled?: (data: ApiResponse<TResult> | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
+    onSettled?: (data: TResult | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
   }) {
     const queryClient = useQueryClient();
 
-    return useMutationWithTransition<ApiResponse<TResult>, { id: string; action?: string; data?: TBody }>({
+    return useMutationWithTransition<TResult, { id: string; action?: string; data?: TBody }>({
       mutationFn: (vars) => {
         if (!api.dispatchAction) {
           return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a dispatchAction method`));
@@ -1130,6 +1200,67 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     });
   }
 
+  // ========== useAggregation (arc 2.13+ declarative aggregations) ==========
+
+  function useAggregation<TRow extends AggRow = AggRow, TData = AggResult<TRow>>(args: {
+    name: string;
+    filter?: Record<string, unknown>;
+  } & AggregationQueryOptions<TRow, TData>): UseQueryResult<TData> {
+    const {
+      name,
+      filter,
+      public: isPublic,
+      enabled = true,
+      staleTime = config.staleTime,
+      gcTime = config.gcTime,
+      // Aggregations are usually expensive — default to NOT refetching on
+      // window focus even when the factory's CRUD default is `true`. Callers
+      // who want it can opt back in per-call.
+      refetchOnWindowFocus = false,
+      refetchInterval,
+      refetchIntervalInBackground,
+      select,
+      request,
+      placeholderData,
+    } = args;
+
+    const auth = resolveAuth();
+    // Tenant-scoped key — same shape as `scopedList` so multi-tenant hosts
+    // never accidentally cross-cache aggregation rows across orgs.
+    const filterKey = auth.organizationId
+      ? { _org: auth.organizationId, ...(filter ?? {}) }
+      : (filter ?? {});
+
+    return useQuery<AggResult<TRow>, Error, TData>({
+      queryKey: KEYS.aggregation(name, filterKey),
+      queryFn: () => {
+        if (!api.aggregate) {
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define an aggregate method (requires arc 2.13+)`),
+          );
+        }
+        return api.aggregate<TRow>({
+          name,
+          filter,
+          token: auth.token,
+          organizationId: auth.organizationId,
+          ...(request ? { options: request } : {}),
+        });
+      },
+      enabled:
+        !!name &&
+        !!api.aggregate &&
+        createEnabledRule(auth.token, { public: isPublic, enabled }, resolveAuthMode(), hasStaticAuth),
+      staleTime,
+      gcTime,
+      refetchOnWindowFocus,
+      ...(select ? { select } : {}),
+      ...(refetchInterval !== undefined ? { refetchInterval } : {}),
+      ...(refetchIntervalInBackground !== undefined ? { refetchIntervalInBackground } : {}),
+      ...(placeholderData !== undefined ? { placeholderData } : {}),
+    });
+  }
+
   // ========== useResourceSync (real-time auto-invalidation) ==========
 
   /**
@@ -1200,6 +1331,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
         // Lists always invalidate — count/order can shift on any op.
         queryClient.invalidateQueries({ queryKey: KEYS.lists() });
+        // Aggregations always invalidate too — dashboards derive from the
+        // underlying data, so any broadcast may shift their rows.
+        queryClient.invalidateQueries({ queryKey: KEYS.aggregations() });
         // Detail invalidates on update/delete (prefix-match scoped variants).
         if (id && (operation === 'updated' || operation === 'deleted')) {
           queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
@@ -1300,6 +1434,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     useSearchEngine,
     useSearchSimilar,
     useEmbed,
+    useAggregation,
     useResourceSync,
     useNavigation,
   };

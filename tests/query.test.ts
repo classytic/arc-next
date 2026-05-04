@@ -42,9 +42,9 @@ describe('getItemId', () => {
 
 describe('updateListCache', () => {
   it('handles docs format', () => {
-    const data = { docs: [{ _id: '1' }, { _id: '2' }], total: 2 };
+    const data = { data: [{ _id: '1' }, { _id: '2' }], total: 2 };
     const result = updateListCache(data, (items: unknown[]) => items.filter((i: any) => i._id !== '1'));
-    expect(result).toEqual({ docs: [{ _id: '2' }], total: 1 });
+    expect(result).toEqual({ data: [{ _id: '2' }], total: 1 });
   });
 
   it('handles array format', () => {
@@ -72,15 +72,15 @@ describe('updateListCache', () => {
   });
 
   it('updates totalDocs when present', () => {
-    const data = { docs: [{ _id: '1' }, { _id: '2' }], total: 2, totalDocs: 2 };
+    const data = { data: [{ _id: '1' }, { _id: '2' }], total: 2, totalDocs: 2 };
     const result = updateListCache(data, (items: unknown[]) => items.filter((i: any) => i._id !== '1'));
-    expect(result).toEqual({ docs: [{ _id: '2' }], total: 1, totalDocs: 1 });
+    expect(result).toEqual({ data: [{ _id: '2' }], total: 1, totalDocs: 1 });
   });
 
   it('does not add totalDocs when not originally present', () => {
-    const data = { docs: [{ _id: '1' }], total: 1 };
+    const data = { data: [{ _id: '1' }], total: 1 };
     const result = updateListCache(data, (items: unknown[]) => [...items, { _id: '2' }]);
-    expect(result).toEqual({ docs: [{ _id: '1' }, { _id: '2' }], total: 2 });
+    expect(result).toEqual({ data: [{ _id: '1' }, { _id: '2' }], total: 2 });
     expect(result).not.toHaveProperty('totalDocs');
   });
 
@@ -120,10 +120,10 @@ describe('extractItems flexibility (via updateListCache)', () => {
 
   it('well-known keys take precedence over custom keys', () => {
     // If both `docs` and `products` exist, `docs` wins
-    const data = { docs: [{ _id: '1' }], products: [{ _id: '2' }], total: 1 };
+    const data = { data: [{ _id: '1' }], products: [{ _id: '2' }], total: 1 };
     const result = updateListCache(data, (items: unknown[]) => [...items, { _id: '3' }]);
     const r = result as Record<string, unknown>;
-    expect(r.docs).toEqual([{ _id: '1' }, { _id: '3' }]);
+    expect(r.data).toEqual([{ _id: '1' }, { _id: '3' }]);
     expect(r.products).toEqual([{ _id: '2' }]); // untouched
   });
 
@@ -234,9 +234,9 @@ describe('updateListCache edge cases', () => {
   });
 
   it('handles empty docs array', () => {
-    const data = { docs: [] as unknown[], total: 0 };
+    const data = { data: [] as unknown[], total: 0 };
     const result = updateListCache(data, (items: unknown[]) => [...items, { _id: '1' }]);
-    expect(result).toEqual({ docs: [{ _id: '1' }], total: 1 });
+    expect(result).toEqual({ data: [{ _id: '1' }], total: 1 });
   });
 
   it('handles data field with non-array value (skips)', () => {
@@ -245,7 +245,7 @@ describe('updateListCache edge cases', () => {
   });
 
   it('preserves extra properties on wrapper objects', () => {
-    const data = { docs: [{ _id: '1' }], total: 1, page: 1, limit: 10, hasNext: false };
+    const data = { data: [{ _id: '1' }], total: 1, page: 1, limit: 10, hasNext: false };
     const result = updateListCache(data, (items: unknown[]) => items) as Record<string, unknown>;
     expect(result.page).toBe(1);
     expect(result.limit).toBe(10);
@@ -253,13 +253,13 @@ describe('updateListCache edge cases', () => {
   });
 
   it('total does not go below zero', () => {
-    const data = { docs: [{ _id: '1' }], total: 0 };
+    const data = { data: [{ _id: '1' }], total: 0 };
     const result = updateListCache(data, () => []) as Record<string, unknown>;
     expect(result.total).toBe(0);
   });
 
   it('handles delta when adding multiple items', () => {
-    const data = { docs: [{ _id: '1' }], total: 1 };
+    const data = { data: [{ _id: '1' }], total: 1 };
     const result = updateListCache(data, (items: unknown[]) => [
       ...items, { _id: '2' }, { _id: '3' }, { _id: '4' },
     ]) as Record<string, unknown>;
@@ -273,7 +273,7 @@ describe('updateListCache edge cases', () => {
   });
 
   it('does not modify total when item count is unchanged (replace)', () => {
-    const data = { docs: [{ _id: '1' }, { _id: '2' }], total: 2 };
+    const data = { data: [{ _id: '1' }, { _id: '2' }], total: 2 };
     const result = updateListCache(data, (items: unknown[]) =>
       items.map((i: any) => ({ ...i, updated: true }))
     ) as Record<string, unknown>;
@@ -411,7 +411,7 @@ describe('Arc backend response shapes', () => {
     const response = {
       success: true,
       method: 'offset',
-      docs: [{ _id: '1' }, { _id: '2' }],
+      data: [{ _id: '1' }, { _id: '2' }],
       page: 1,
       limit: 10,
       total: 50,
@@ -422,12 +422,12 @@ describe('Arc backend response shapes', () => {
 
     it('extractItems returns docs', () => {
       const items = updateListCache(response, (i: unknown[]) => i);
-      expect((items as Record<string, unknown>).docs).toEqual(response.docs);
+      expect((items as Record<string, unknown>).data).toEqual(response.data);
     });
 
     it('updateListCache updates docs and total', () => {
       const result = updateListCache(response, (items: unknown[]) => [...items, { _id: '3' }]) as Record<string, unknown>;
-      expect((result.docs as unknown[]).length).toBe(3);
+      expect((result.data as unknown[]).length).toBe(3);
       expect(result.total).toBe(51);
     });
   });
@@ -436,7 +436,7 @@ describe('Arc backend response shapes', () => {
     const response = {
       success: true,
       method: 'keyset',
-      docs: [{ _id: 'a' }, { _id: 'b' }],
+      data: [{ _id: 'a' }, { _id: 'b' }],
       limit: 20,
       hasMore: true,
       next: 'cursor_abc',
@@ -444,14 +444,14 @@ describe('Arc backend response shapes', () => {
 
     it('extractItems returns docs', () => {
       const result = updateListCache(response, (i: unknown[]) => i);
-      expect((result as Record<string, unknown>).docs).toEqual(response.docs);
+      expect((result as Record<string, unknown>).data).toEqual(response.data);
     });
 
     it('updateListCache works on keyset response', () => {
       const result = updateListCache(response, (items: unknown[]) =>
         items.filter((i: any) => i._id !== 'a')
       ) as Record<string, unknown>;
-      expect((result.docs as unknown[]).length).toBe(1);
+      expect((result.data as unknown[]).length).toBe(1);
       // keyset has no total — should not add one
       expect(result.total).toBeUndefined();
     });
@@ -461,7 +461,7 @@ describe('Arc backend response shapes', () => {
     const response = {
       success: true,
       method: 'aggregate',
-      docs: [{ _id: '1', sum: 100 }],
+      data: [{ _id: '1', sum: 100 }],
       page: 1,
       limit: 10,
       total: 1,
@@ -472,7 +472,7 @@ describe('Arc backend response shapes', () => {
 
     it('updateListCache updates docs', () => {
       const result = updateListCache(response, (items: unknown[]) => [...items, { _id: '2', sum: 200 }]) as Record<string, unknown>;
-      expect((result.docs as unknown[]).length).toBe(2);
+      expect((result.data as unknown[]).length).toBe(2);
       expect(result.total).toBe(2);
     });
   });

@@ -39,7 +39,7 @@ function createWrapper(qc: QueryClient) {
 function createMockApi(): CrudApi<{ _id: string; name: string }, { name: string }, { name: string }> {
   return {
     getAll: vi.fn().mockResolvedValue({
-      success: true, docs: [{ _id: '1', name: 'Item' }],
+      success: true, data: [{ _id: '1', name: 'Item' }],
       total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
     }),
     getById: vi.fn().mockResolvedValue({ success: true, data: { _id: '1', name: 'Item' } }),
