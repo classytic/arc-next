@@ -1,0 +1,28 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - strong [ref=e3]: arc-next smoke
+    - navigation [ref=e4]:
+      - link "Home" [ref=e5] [cursor=pointer]:
+        - /url: /
+      - link "Examples list" [ref=e6] [cursor=pointer]:
+        - /url: /examples
+      - link "arc.get test" [ref=e7] [cursor=pointer]:
+        - /url: /fetch-test
+  - main [ref=e8]:
+    - generic [ref=e9]:
+      - heading "Examples" [level=1] [ref=e10]
+      - paragraph [ref=e11]:
+        - text: "State:"
+        - strong [ref=e12]: loading
+        - text: "· Items:"
+        - strong [ref=e13]: "0"
+      - generic [ref=e14]:
+        - heading "Create (will 401 — smoke harness has no auth wired)" [level=3] [ref=e15]
+        - generic [ref=e16]:
+          - textbox "Name" [ref=e17]
+          - button "Create" [disabled] [ref=e18]
+      - heading "List (0)" [level=3] [ref=e19]
+      - list
+  - button "Open Next.js Dev Tools" [ref=e25] [cursor=pointer]:
+    - img [ref=e26]
+  - alert [ref=e29]

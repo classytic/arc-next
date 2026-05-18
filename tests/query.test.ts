@@ -331,17 +331,17 @@ describe('createCacheUtils edge cases', () => {
   const KEYS = createQueryKeys('items');
   const cache = createCacheUtils<{ _id: string; name: string }>(KEYS);
 
-  it('setDetail wraps data in { data } envelope', () => {
+  it('setDetail writes the raw doc (no { data } envelope) — matches arc 2.13+ wire shape', () => {
     const client = new QueryClient();
     cache.setDetail(client, '1', { _id: '1', name: 'Item' });
     const raw = client.getQueryData(KEYS.detail('1')) as Record<string, unknown>;
-    expect(raw).toEqual({ data: { _id: '1', name: 'Item' } });
+    expect(raw).toEqual({ _id: '1', name: 'Item' });
   });
 
-  it('getDetail unwraps { data } envelope', () => {
+  it('getDetail reads the raw doc — matches what useDetail / prefetch / useNavigation all write', () => {
     const client = new QueryClient();
-    client.setQueryData(KEYS.detail('1'), { data: { _id: '1', name: 'Wrapped' } });
-    expect(cache.getDetail(client, '1')).toEqual({ _id: '1', name: 'Wrapped' });
+    client.setQueryData(KEYS.detail('1'), { _id: '1', name: 'Raw' });
+    expect(cache.getDetail(client, '1')).toEqual({ _id: '1', name: 'Raw' });
   });
 
   it('setDetail then getDetail roundtrips correctly', () => {

@@ -1,5 +1,260 @@
 # Changelog
 
+## 0.7.0
+
+Fixes a real-world "`useDetail` never fires a GET" bug and the silent disable
+of every protected query when the app authenticates via a global API key.
+Adopts the canonical TanStack `placeholderData` pattern for list→detail
+handoff (no more cache pollution, no more clobber loops). Promotes the
+async-`getToken` signal from `console.warn` to a stack-traced `console.error`
+so the misuse can't ship to production unnoticed.
+
+### Breaking — cache envelope removed
+
+The detail cache now stores **raw documents** matching arc 2.13+'s wire
+shape, not the legacy `{ data: TDoc }` envelope. Every internal write path
+converges on the same shape: `useDetail` queryFn, `prefetchDetail`,
+`cache.setDetail` / `setScopedDetail`, and `useNavigation` all write `TDoc`.
+
+**You don't need to change anything if you only consume `useDetail().item`,
+`useDetailBySlug().item`, or `cache.getDetail()` — those continue to return
+the raw doc as before** (the bug was that `useDetail` already returned the
+envelope-shaped value via the identity `extractItem`, so consumers were
+already coding against `TDoc`-or-`{ data: TDoc }` ambiguity).
+
+You **do** need to update code that reads cache directly via the bare
+`queryClient.getQueryData(KEYS.detail(id))` and expected the envelope:
+
+```diff
+- const cached = qc.getQueryData(KEYS.detail(id)) as { data: TDoc } | undefined;
+- const item = cached?.data;
++ const item = qc.getQueryData<TDoc>(KEYS.detail(id));
+```
+
+### Breaking — `useList` no longer prefills the detail cache
+
+The old setQueryData-based prefill ran inside a `useEffect` with an unstable
+`detailKeyBuilder` dependency, which (1) blocked the real detail GET from
+firing because of the default 5min `staleTime`, (2) wrote a wrong-shape
+envelope that didn't match real GET responses, and (3) re-ran on every
+list render, silently clobbering successful detail-fetch results with the
+stale list payload. The fix is on the read side: `useDetail` /
+`useDetailBySlug` now read list cache via `placeholderData`. Consumers see
+an instant list-shaped preview, the real detail GET always fires, and the
+cache stays clean.
+
+- `ListQueryOptions.prefillDetailCache` is now a no-op (kept for compile-time
+  back-compat; safe to remove from caller code).
+- `useListQuery` no longer accepts `prefillDetailCache`, `detailKeyBuilder`,
+  or `itemIdResolver` — these were the plumbing for the old broken prefill.
+
+### Added — `isPlaceholderData` on `DetailQueryResult`
+
+Use to dim or label the instant preview while the real GET resolves:
+
+```tsx
+const { item, isPlaceholderData } = useDetail(id);
+return <article aria-busy={isPlaceholderData}>{item?.title}</article>;
+```
+
+### Added — `findItemInListCache`
+
+```ts
+import { findItemInListCache } from '@classytic/arc-next/query';
+```
+
+Exported helper that walks every `[entity, 'list', ...]` cache entry
+(including infinite-query `pages` arrays) and returns the first matching
+item by id. `useDetail` uses it internally as a `placeholderData` factory;
+exported in case you need it for custom hooks.
+
+### Fixed — `hasStaticAuth` now reads global `configureClient` too
+
+Previously only inspected per-client config. An app authenticating via a
+global `internalApiKey` or `defaultHeaders` saw every protected query stuck
+in a permanently-disabled state. Added `hasGlobalStaticAuth()` to
+`@classytic/arc-next/client` and OR'd it into the enable rule.
+
+### Fixed — async `getToken` failure is now loud
+
+`configureAuth({ getToken: async () => ... })` is a misuse — tokens MUST
+resolve synchronously. Before 0.7 the dropped Promise produced a single
+`console.warn` then silently disabled every authenticated query
+(`isLoading: false, item: null` — indistinguishable from a clean empty
+state). 0.7 logs a real `Error` instance via `console.error` so dev tools
+surface a stack trace pointing at the offending `configureAuth` site.
+
+### Added — 401 → refresh → retry interceptor
+
+Lazy auth recovery wired into the SDK transport. When the backend returns
+401 (or 403, with `retryOn403: true`), the optional `onAuthError` handler
+fires, refreshes the token via your auth library, and arc-next replays
+the request transparently. Default off — apps that don't wire it see
+401s surface immediately as before, no behavior change.
+
+```ts
+import { configureAuth, createAuthRefreshHandler } from '@classytic/arc-next/client';
+
+configureAuth({
+  getToken: () => authClient.getSession().data?.session.token ?? null,
+  onAuthError: createAuthRefreshHandler({
+    refresh: async () => {
+      const { data } = await authClient.getSession({ disableCookieCache: true });
+      return data?.session.token ?? null; // null → truly expired; original 401 surfaces
+    },
+  }),
+});
+```
+
+**Concurrent dedup.** When N requests hit 401 simultaneously, the handler
+fires **once**; every concurrent caller awaits the same refresh promise
+and retries with the token it produces. No stampeding the refresh
+endpoint under burst auth-expiry. Verified end-to-end against a live JWT
+backend with 5 concurrent expired-token requests → 1 refresh call.
+
+**Cross-transport coverage.** Auth recovery fires across every transport
+arc-next exposes — concurrent failures across mixed transports collapse
+to a single `onAuthError` call (shared dedup):
+
+| Transport | Trigger | Mechanism |
+|---|---|---|
+| Fetch (CRUD hooks, `arcFetch`, `handleApiRequest`) | 401 / 403 | Outer retry loop in `executeRequest` |
+| XHR upload (`uploadWithProgress`) | 401 / 403 | Outer retry loop in `upload.ts` |
+| WebSocket | close code `1008` / `3401` / `4001` / `4401` | `ws.onclose` → recovery → reconnect with refreshed token |
+| SSE (`subscribeToEvents`) | `EventSource.onerror` | Pre-flight `fetch` probe → recovery → reopen |
+
+Tuning knobs:
+- `retryOn403: boolean` — also recover from 403 (default: 401 only)
+- `maxAuthRetries: number` — cap per individual request (default: 1)
+- `createAuthRefreshHandler({ onRefreshError: 'throw' })` — propagate
+  refresh-fn errors instead of skipping back to the original 401
+
+Types: `AuthErrorContext`, `AuthErrorHandler` exported from
+`@classytic/arc-next/client`.
+
+### Added — `arcFetch` + `arc.{get,post,patch,delete}` helpers
+
+One-line authenticated fetch for non-hook contexts (event handlers,
+service workers, server actions, custom MDX submits) — collapses the
+5-concern boilerplate (auth header, org header, content-type, error
+throw, JSON parse) into one call. Composes with `onAuthError`, the 5xx
+retry loop, and the `beforeRequest`/`afterResponse` interceptors —
+nothing has to be rewired.
+
+```ts
+import { arc } from '@classytic/arc-next/client';
+
+// Before: 15 lines (manual headers, manual error parse, manual JSON)
+// After:
+const result = await arc.post<{ ok: boolean }>('/api/statements', statements);
+```
+
+Body sniffing handles `FormData`, `Blob`, `ArrayBuffer`,
+`URLSearchParams`, `ReadableStream`, and `string` (passed through —
+caller-controlled `Content-Type`); plain objects and arrays are
+auto-`JSON.stringify`'d with `application/type: application/json`.
+
+Protected headers — `Authorization`, `x-organization-id`,
+`x-internal-api-key`, custom `headerName` for header-auth mode — cannot
+be overridden by `options.headers`. A caller can't accidentally strip
+auth by passing a custom header map.
+
+Escape hatch for the rare full-control case:
+```ts
+import { arcAuthHeaders } from '@classytic/arc-next/client';
+const res = await fetch(url, { headers: { ...arcAuthHeaders(), 'X-Custom': '1' } });
+```
+
+### Added — pseudo-normalization via `syncDetailToLists`
+
+After a fresh `useDetail` (or `useDetailBySlug`) GET resolves, arc-next
+walks every list cache that contains the item and shallow-merges the
+new field values in-place. The list view picks up the latest values
+without needing a refetch, and stays consistent with whatever the
+detail page just rendered.
+
+```ts
+import { syncDetailToLists, createQueryKeys } from '@classytic/arc-next/cache';
+
+// Most consumers never call this directly — it's wired by default into
+// `useDetail` / `useDetailBySlug`. Exposed for custom hooks + tests.
+// Vocabulary note: `item` matches the rest of arc-next's consumer API
+// (`useDetail().item`, `useList().items`, `extractItem`, `getItemId`,
+// `findItemInListCache`). The backend-facing `TDoc` generic in
+// `BaseApi<TDoc>` / `Repository<TDoc>` is the same entity at the type
+// layer — `item` is the runtime noun.
+syncDetailToLists(queryClient, KEYS.lists(), freshItem, { idField: 'sku' });
+```
+
+**Design notes (load-bearing):**
+
+- **Direction is one-way: detail → list, never the reverse.** List
+  payloads are typically a SUBSET of detail (apps trim fields with
+  `select=...` for list perf), so a list → detail merge would overwrite
+  rich detail-cache values with the trimmed list versions. Mutations
+  still propagate from lists to detail via `useActions.update`'s
+  existing fan-out — that path is safe because mutation data is
+  authoritative.
+- **Shallow-merge preserves the receiver's key set.** Detail-only fields
+  (populated relations, full body) never bleed into list caches —
+  list-cache entries stay LEAN. No memory bloat.
+- **Never creates new cache entries.** Only updates entries that already
+  exist. (Creating new entries was the 0.6 prefill bug that this entire
+  release was originally diagnosing.)
+- **Skipped during placeholder render.** When `useDetail` shows a list-
+  cache placeholder via `placeholderData`, we don't re-fan-out the
+  placeholder back to lists — would be a no-op merge but burns CPU.
+
+**Memory + CPU profile:**
+
+- Memory cost: zero new entries; merge preserves entry sizes.
+- CPU cost: O(L × M) per detail fetch, where L = matching list caches
+  and M = average items per list. For typical apps (5–10 caches × 50–500
+  items), <1ms. For 10k-row admin tables, ~5ms — still well below a frame.
+- This is **pseudo-normalization, not the real thing**: copies still exist
+  in memory, GC is still per-query. For Apollo/Relay-style entity
+  normalization (one copy per entity ID, field-level invalidation, GC
+  by reference count), use Apollo Client or Relay. arc-next stays
+  opinionated about its niche: REST + React Query with a tiny runtime
+  and zero codegen.
+
+### Fixed — `updateListCache` short-circuits on no-op updaters
+
+When an `optimisticUpdate` updater returns the same `items` array
+reference (the canonical "I didn't actually change anything" signal),
+`updateListCache` now returns the original wrapper unchanged instead of
+allocating a fresh outer object. Eliminates spurious `setQueryData`
+writes + the re-render cascade they trigger. Required for
+`syncDetailToLists` to accurately report "did anything change".
+
+### Fixed — `Authorization` no longer sent in `authMode: 'cookie'`
+
+The fetch path used to add `Authorization: Bearer <token>` even when
+`authMode` was `'cookie'` — redundant with the cookie, and tripped
+servers (Better Auth's session validator among them) that strictly
+enforce one auth mechanism per request. Aligned with `upload.ts` and
+`arcAuthHeaders()` which already skipped the header in cookie mode.
+
+### Fixed — WebSocket reconnect cascade
+
+Closing the previous socket inside `connect()` (during a reconnect) fired
+its `onclose` handler, which scheduled another reconnect — creating two
+sockets per reconnect cycle. The cascade resolved in the browser because
+sockets transition `CONNECTING → OPEN` fast enough to win the race, but
+was visible on slower networks and in tests. Now nulls `onclose`/`onerror`
+/`onmessage`/`onopen` before closing the old socket so the cascade is
+structurally impossible.
+
+### Bumped peer — TanStack Query
+
+```diff
+- "@tanstack/react-query": ">=5.0.0"
++ "@tanstack/react-query": ">=5.62.0"
+```
+
+Anchors `isPlaceholderData` semantics and the lazy `placeholderData`
+factory form.
+
 ## 0.6.0
 
 Targets Arc 2.12.x. Aligns pagination response shapes with `@classytic/repo-core/pagination` — server (arc 2.12 `fastifyAdapter` via `toCanonicalList()`) and client (arc-next typed responses) now share **one** declaration, eliminating the `method` discriminant drift that bit during the cross-package review.

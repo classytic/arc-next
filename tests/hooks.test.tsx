@@ -173,24 +173,26 @@ describe('createCrudHooks', () => {
       });
     });
 
-    it('prefills detail cache from list results', async () => {
+    it('does NOT pollute detail cache from list results — list payload only seeds placeholderData', async () => {
+      // Since 0.7: useList no longer writes to detail cache via setQueryData.
+      // The list payload is read on-demand by useDetail's placeholderData,
+      // so subsequent detail GETs always fire and return the rich detail
+      // shape. This test guards against re-introducing the silent-prefill
+      // bug that blocked detail fetches and produced shape-mismatched cache.
       const wrapper = createWrapper(queryClient);
+      const { result } = renderHook(() => hooks.useList(null, {}, { public: true }), {
+        wrapper,
+      });
 
-      const { result } = renderHook(
-        () => hooks.useList(null, {}, { public: true }),
-        { wrapper }
-      );
-
-      // Wait for the list query to finish first
       await waitFor(() => {
         expect(result.current.items).toHaveLength(2);
       });
 
-      // Then the useEffect prefill runs on the next tick
-      await waitFor(() => {
-        const cached = queryClient.getQueryData(hooks.KEYS.detail('1'));
-        expect(cached).toEqual({ data: { _id: '1', name: 'Item 1' } });
-      });
+      // Give any stray effects a chance to run.
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(queryClient.getQueryData(hooks.KEYS.detail('1'))).toBeUndefined();
+      expect(queryClient.getQueryData(hooks.KEYS.detail('2'))).toBeUndefined();
     });
   });
 
@@ -491,20 +493,19 @@ describe('createCrudHooks', () => {
   });
 
   describe('useNavigation', () => {
-    it('sets detail cache on navigate', async () => {
+    it('seeds detail cache with the raw doc on navigate (matches arc 2.13+ wire shape)', async () => {
       const wrapper = createWrapper(queryClient);
 
-      const { result } = renderHook(
-        () => hooks.useNavigation(),
-        { wrapper }
-      );
+      const { result } = renderHook(() => hooks.useNavigation(), { wrapper });
 
       act(() => {
         result.current('/items/1', { _id: '1', name: 'Item 1' });
       });
 
+      // 0.7: no { data: ... } envelope — the cache holds the raw doc so
+      // useDetail / cache.getDetail / prefetch all converge on TDoc.
       const cached = queryClient.getQueryData(hooks.KEYS.detail('1'));
-      expect(cached).toEqual({ data: { _id: '1', name: 'Item 1' } });
+      expect(cached).toEqual({ _id: '1', name: 'Item 1' });
     });
 
     it('calls router.push when configured', async () => {
@@ -569,18 +570,14 @@ describe('createCrudHooks', () => {
 
       const wrapper = createWrapper(queryClient);
 
-      const { result } = renderHook(
-        () => hooks.useNavigation(),
-        { wrapper }
-      );
+      const { result } = renderHook(() => hooks.useNavigation(), { wrapper });
 
-      // Should not throw, just sets cache
       act(() => {
         result.current('/items/1', { _id: '1', name: 'Item 1' });
       });
 
       const cached = queryClient.getQueryData(hooks.KEYS.detail('1'));
-      expect(cached).toEqual({ data: { _id: '1', name: 'Item 1' } });
+      expect(cached).toEqual({ _id: '1', name: 'Item 1' });
     });
   });
 
@@ -1795,24 +1792,23 @@ describe('createCrudHooks', () => {
     });
   });
 
-  describe('prefillDetailCache control', () => {
-    it('does not prefill detail cache when prefillDetailCache is false', async () => {
+  describe('prefillDetailCache option (deprecated since 0.7)', () => {
+    it('accepts the option for compile-time back-compat but it is a no-op', async () => {
+      // Old API: `{ prefillDetailCache: false }` disabled the broken setQueryData
+      // prefill. The fix removed the prefill entirely (replaced with
+      // placeholderData on the read side), so the option no longer changes
+      // behavior. We keep the field in `ListQueryOptions` so consumer code
+      // compiles, but the cache stays clean either way.
       const wrapper = createWrapper(queryClient);
-
       const { result } = renderHook(
         () => hooks.useList(null, {}, { public: true, prefillDetailCache: false }),
-        { wrapper }
+        { wrapper },
       );
 
-      await waitFor(() => {
-        expect(result.current.items).toHaveLength(2);
-      });
-
-      // Wait a tick to ensure no useEffect fires
+      await waitFor(() => expect(result.current.items).toHaveLength(2));
       await new Promise((r) => setTimeout(r, 50));
 
-      const cached = queryClient.getQueryData(hooks.KEYS.detail('1'));
-      expect(cached).toBeUndefined();
+      expect(queryClient.getQueryData(hooks.KEYS.detail('1'))).toBeUndefined();
     });
   });
 
@@ -3245,7 +3241,7 @@ describe('createCrudHooks', () => {
       expect(skuApi.create).toHaveBeenCalled();
     });
 
-    it('detail cache prefill uses idField', async () => {
+    it('useDetail placeholderData finds items by idField (not _id) — list payload appears instantly under SKU key', async () => {
       const skuApi = createMockApi();
       skuApi.getAll = vi.fn().mockResolvedValue({
         success: true,
@@ -3255,6 +3251,11 @@ describe('createCrudHooks', () => {
         ],
         total: 2, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
       });
+      // The detail GET returns a richer payload (e.g. with a `price`) so we
+      // can verify the swap from placeholder → real data.
+      skuApi.getById = vi.fn().mockResolvedValue({
+        _id: 'mongo-1', sku: 'SKU-001', name: 'A', price: 42,
+      } as unknown);
 
       const skuHooks = createCrudHooks({
         api: skuApi,
@@ -3266,23 +3267,25 @@ describe('createCrudHooks', () => {
       const localQc = createTestQueryClient();
       const localWrapper = createWrapper(localQc);
 
-      const { result } = renderHook(
-        () => skuHooks.useList(null, {}, { public: true }),
-        { wrapper: localWrapper }
-      );
-
-      await waitFor(() => {
-        expect(result.current.items).toHaveLength(2);
+      // 1. Mount list — no detail cache writes (placeholderData reads list on demand).
+      const list = renderHook(() => skuHooks.useList(null, {}, { public: true }), {
+        wrapper: localWrapper,
       });
+      await waitFor(() => expect(list.result.current.items).toHaveLength(2));
+      expect(localQc.getQueryData(skuHooks.KEYS.detail('SKU-001'))).toBeUndefined();
 
-      // Detail cache should be keyed by SKU, not _id
-      const keys = skuHooks.KEYS;
-      const cachedBySku1 = localQc.getQueryData(keys.detail('SKU-001'));
-      const cachedBySku2 = localQc.getQueryData(keys.detail('SKU-002'));
+      // 2. Mount detail by SKU — placeholder hit is instant (no loading flash).
+      const detail = renderHook(
+        () => skuHooks.useDetail('SKU-001', { public: true }),
+        { wrapper: localWrapper },
+      );
+      expect(detail.result.current.isPlaceholderData).toBe(true);
+      expect((detail.result.current.item as { name?: string } | null)?.name).toBe('A');
 
-      expect(cachedBySku1).toBeDefined();
-      expect(cachedBySku2).toBeDefined();
-      expect((cachedBySku1 as { data: { name: string } }).data.name).toBe('A');
+      // 3. Real detail GET fires and resolves with the richer payload.
+      await waitFor(() => expect(skuApi.getById).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(detail.result.current.isPlaceholderData).toBe(false));
+      expect((detail.result.current.item as { price?: number } | null)?.price).toBe(42);
 
       localQc.clear();
     });

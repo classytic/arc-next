@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
-import { buildStreamUrl } from "./client.js";
+import {
+  ArcApiError,
+  buildStreamUrl,
+  _getAuthErrorHandler,
+  _runAuthRecovery,
+} from "./client.js";
 
 // ============================================================================
 // Types
@@ -228,6 +233,17 @@ export function connectWs<TData = unknown>(
 
   const connect = (): void => {
     if (ws) {
+      // Detach the previous socket's onclose BEFORE we close it from our side
+      // — otherwise the old handler fires and schedules another reconnect,
+      // which then closes again, etc. Pre-existing bug that didn't bite
+      // because real browser WebSockets transition CONNECTING→OPEN fast
+      // enough that the cascade resolves on the first successful open. With
+      // a slower / non-auto-opening environment (tests, throttled networks)
+      // the cascade compounds. Nulling the handler is the canonical fix.
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.onmessage = null;
+      ws.onopen = null;
       try { ws.close(); } catch { /* ignore */ }
     }
     // Defensive: clear any heartbeat from the previous socket BEFORE the new
@@ -244,6 +260,7 @@ export function connectWs<TData = unknown>(
 
     ws.onopen = () => {
       reconnectAttempts = 0;
+      wsAuthRetries = 0; // fresh budget — a future re-auth can recover again
       connected = true;
       options.onConnectionChange?.(true);
 
@@ -274,7 +291,7 @@ export function connectWs<TData = unknown>(
       // Browser fires `error` then `close` — let onclose handle reconnect.
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
       connected = false;
       options.onConnectionChange?.(false);
 
@@ -285,6 +302,56 @@ export function connectWs<TData = unknown>(
 
       if (manualClose) return;
 
+      // Auth-recoverable close codes:
+      //   1008 — RFC 6455 "Policy Violation" (servers use this for auth fail)
+      //   3401 / 4401 — community convention "WebSocket 401" in 3000-4999 ranges
+      //   4001 — common in older Socket.io-flavored servers
+      // When detected, hand off to the shared `onAuthError` recovery cycle
+      // (same dedup as the fetch path — concurrent socket reconnects collapse
+      // to one refresh). On 'retry', we reconnect immediately with the fresh
+      // token in the URL; on 'skip', we surface the close and stop reconnecting.
+      const { handler, maxAuthRetries } = _getAuthErrorHandler();
+      const isAuthClose =
+        event.code === 1008 ||
+        event.code === 3401 ||
+        event.code === 4001 ||
+        event.code === 4401;
+
+      if (handler && isAuthClose && wsAuthRetries < maxAuthRetries) {
+        wsAuthRetries += 1;
+        const synthError = new ArcApiError(
+          event.reason || `WebSocket closed with auth code ${event.code}`,
+          {
+            status: 401,
+            statusText: 'WebSocket auth failure',
+            json: { code: 'arc.websocket.unauthorized', wsCloseCode: event.code, reason: event.reason },
+            endpoint: url ?? path,
+            method: 'GET',
+          },
+        );
+        _runAuthRecovery(handler, {
+          error: synthError,
+          request: { method: 'GET', endpoint: url ?? path },
+          attempt: wsAuthRetries,
+        })
+          .then(({ decision }) => {
+            if (decision === 'retry') {
+              // Reset reconnectAttempts so we don't apply backoff to the
+              // recovery — the refresh already took its own time.
+              reconnectAttempts = 0;
+              connect();
+            }
+            // 'skip' → no reconnect; consumer sees connection stay down.
+          })
+          .catch(() => {
+            // Handler threw — surface via the connection-state callback;
+            // no reconnect (the throw is a signal that recovery is impossible).
+          });
+        return;
+      }
+
+      // Non-auth close OR no recovery handler wired OR cap hit — fall back
+      // to the existing reconnect-with-backoff behavior.
       if (reconnectAttempts < maxReconnectAttempts) {
         reconnectAttempts += 1;
         const delay = Math.min(
@@ -295,6 +362,11 @@ export function connectWs<TData = unknown>(
       }
     };
   };
+
+  // Per-socket auth-retry counter. Reset on every successful onopen so a
+  // long-lived socket that experiences periodic re-auth doesn't permanently
+  // exhaust its recovery budget.
+  let wsAuthRetries = 0;
 
   connect();
 

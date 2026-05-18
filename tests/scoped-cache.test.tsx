@@ -255,7 +255,7 @@ describe('useNavigation tenant-scoped prefill', () => {
     configureAuth({ getToken: () => null, getOrgId: () => null });
   });
 
-  it('navigate writes to scoped detail key when org is set', () => {
+  it('navigate writes raw doc to scoped detail key when org is set (no { data } envelope since 0.7)', () => {
     configureAuth({ getToken: () => 'tok', getOrgId: () => 'org-1' });
 
     const api = createMockApi();
@@ -271,8 +271,8 @@ describe('useNavigation tenant-scoped prefill', () => {
     });
 
     const scopedKey = hooks.KEYS.scopedDetail('abc', 'org-1');
-    const cached = qc.getQueryData(scopedKey) as { data: { name: string } };
-    expect(cached?.data?.name).toBe('Navigated');
+    const cached = qc.getQueryData(scopedKey) as { name: string };
+    expect(cached?.name).toBe('Navigated');
   });
 
   it('navigate also writes bare key as fallback when org is set', () => {
@@ -298,7 +298,7 @@ describe('useNavigation tenant-scoped prefill', () => {
     expect(qc.getQueryData(scopedKey)).toBeDefined();
   });
 
-  it('navigate without org writes only bare key', () => {
+  it('navigate without org writes raw doc to bare key', () => {
     configureAuth({ getToken: () => 'tok', getOrgId: () => null });
 
     const api = createMockApi();
@@ -314,8 +314,8 @@ describe('useNavigation tenant-scoped prefill', () => {
     });
 
     const bareKey = hooks.KEYS.detail('abc');
-    const cached = qc.getQueryData(bareKey) as { data: { name: string } };
-    expect(cached?.data?.name).toBe('BareOnly');
+    const cached = qc.getQueryData(bareKey) as { name: string };
+    expect(cached?.name).toBe('BareOnly');
   });
 });
 
@@ -323,7 +323,7 @@ describe('useNavigation tenant-scoped prefill', () => {
 // useList detail prefill with org scope
 // ============================================================================
 
-describe('useList detail cache prefill with org scope', () => {
+describe('useList + useDetail org-scope handoff (0.7 placeholderData pattern)', () => {
   let qc: QueryClient;
 
   beforeEach(() => {
@@ -337,11 +337,11 @@ describe('useList detail cache prefill with org scope', () => {
     configureAuth({ getToken: () => null, getOrgId: () => null });
   });
 
-  it('list prefills detail cache with scoped keys when org is set', async () => {
+  it('useList does NOT pollute the scoped detail cache (no eager setQueryData)', async () => {
     configureAuth({ getToken: () => 'tok', getOrgId: () => 'org-1' });
 
     const api = createMockApi();
-    const entityKey = `list-prefill-${Math.random()}`;
+    const entityKey = `list-noprefill-${Math.random()}`;
     const hooks = createCrudHooks({ api, entityKey, singular: 'Item' });
 
     const wrapper = createWrapper(qc);
@@ -349,30 +349,34 @@ describe('useList detail cache prefill with org scope', () => {
 
     await waitFor(() => expect(result.current.items).toHaveLength(2));
 
-    // Detail cache should be under scoped keys
     const KEYS = createQueryKeys(entityKey);
-    const item1 = qc.getQueryData(KEYS.scopedDetail('1', 'org-1'));
-    const item2 = qc.getQueryData(KEYS.scopedDetail('2', 'org-1'));
-
-    expect(item1).toBeDefined();
-    expect(item2).toBeDefined();
+    // 0.7 contract: list never writes to detail keys. The placeholderData
+    // handoff happens inside useDetail at read time — keeps the cache clean
+    // and lets `staleTime` reason about real fetches only.
+    expect(qc.getQueryData(KEYS.scopedDetail('1', 'org-1'))).toBeUndefined();
+    expect(qc.getQueryData(KEYS.scopedDetail('2', 'org-1'))).toBeUndefined();
   });
 
-  it('list prefills with bare keys when no org', async () => {
-    configureAuth({ getToken: () => 'tok', getOrgId: () => null });
+  it('useDetail picks up the list item as instant placeholder under the scoped key', async () => {
+    configureAuth({ getToken: () => 'tok', getOrgId: () => 'org-1' });
 
     const api = createMockApi();
-    const entityKey = `list-bare-${Math.random()}`;
+    const entityKey = `list-detail-handoff-${Math.random()}`;
     const hooks = createCrudHooks({ api, entityKey, singular: 'Item' });
 
     const wrapper = createWrapper(qc);
-    const { result } = renderHook(() => hooks.useList(), { wrapper });
+    const list = renderHook(() => hooks.useList(), { wrapper });
+    await waitFor(() => expect(list.result.current.items).toHaveLength(2));
 
-    await waitFor(() => expect(result.current.items).toHaveLength(2));
+    const detail = renderHook(() => hooks.useDetail('1'), { wrapper });
 
-    const KEYS = createQueryKeys(entityKey);
-    const item1 = qc.getQueryData(KEYS.detail('1'));
-    expect(item1).toBeDefined();
+    // Synchronous first render: placeholder hit, no loading flash.
+    expect(detail.result.current.isPlaceholderData).toBe(true);
+    expect((detail.result.current.item as { _id?: string } | null)?._id).toBe('1');
+
+    // Real GET still fires and resolves.
+    await waitFor(() => expect(api.getById).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(detail.result.current.isPlaceholderData).toBe(false));
   });
 });
 

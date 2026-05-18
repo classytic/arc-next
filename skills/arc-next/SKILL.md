@@ -4,10 +4,11 @@ description: |
   @classytic/arc-next — React + TanStack Query SDK for Arc resources.
   Production-grade CRUD hooks with optimistic updates, multi-tenant scoping, and pluggable configuration.
   Use when building React CRUD UIs, creating API hooks with TanStack Query, implementing optimistic updates,
-  paginated lists, detail cache prefilling, or multi-tenant data fetching.
+  paginated lists, list→detail placeholderData handoff, or multi-tenant data fetching.
   Triggers: arc-next, createCrudApi, createCrudHooks, tanstack query hooks, crud hooks, optimistic updates,
-  react query factory, api client hooks, pagination normalization, configureClient, configureToast.
-version: "0.6.0"
+  react query factory, api client hooks, pagination normalization, configureClient, configureToast,
+  isPlaceholderData, findItemInListCache.
+version: "0.7.0"
 tags: [react, tanstack-query, crud, api-client, hooks, optimistic-updates]
 metadata:
   author: Classytic
@@ -47,6 +48,14 @@ configureClient({
 configureAuth({
   getOrgId: () => activeOrgId, // return current org ID
   getToken: () => null,        // null for cookie auth (token only for bearer)
+  // 0.7+: lazy 401 recovery. Refreshes + retries transparently when the
+  // session token expires mid-page. Concurrent 401s collapse to ONE refresh.
+  onAuthError: createAuthRefreshHandler({
+    refresh: async () => {
+      const { data } = await authClient.getSession({ disableCookieCache: true });
+      return data?.session.token ?? null; // null → truly expired; surface 401 to caller
+    },
+  }),
 });
 
 // Optional — pluggable toast (defaults to console)
@@ -56,11 +65,56 @@ configureToast({ success: toast.success, error: toast.error });
 configureNavigation(useRouter);
 ```
 
+### `arcFetch` — one-line authenticated fetch outside hooks (0.7+)
+
+For non-hook contexts (event handlers, service workers, server actions,
+MDX submit buttons, background polls) where `useQuery` / `useMutation`
+aren't available:
+
+```ts
+import { arc } from "@classytic/arc-next/client";
+
+const result = await arc.post<{ ok: boolean }>("/api/statements", statements);
+// Auto-injects Authorization + x-organization-id + content-type
+// Throws ArcApiError on non-2xx
+// Composes with onAuthError refresh, retry, beforeRequest/afterResponse
+```
+
+Method shorthands: `arc.get`, `arc.post`, `arc.put`, `arc.patch`,
+`arc.delete`. For full `RequestInit` control, call `arcFetch(path, opts)`
+directly. For raw `Response` access, use plain `fetch` with
+`arcAuthHeaders()` which returns the same auto-injected headers
+(`Authorization`, `x-organization-id`, etc.).
+
+Protected headers: `Authorization`, `x-organization-id`,
+`x-internal-api-key`, and the `authMode: "header"` custom header cannot
+be overridden by `options.headers` — prevents accidental auth-strip when
+a caller spreads their own header map.
+
+### Auth Recovery (0.7+) — when to use `onAuthError`
+
+Use whenever your app authenticates via a bearer token that can expire
+mid-session (Better Auth, NextAuth, Clerk, custom OAuth). Skip for
+cookie-only auth where the server's `Set-Cookie` handles refresh
+out-of-band.
+
+| Handler return | Effect |
+|---|---|
+| `'retry'` | SDK re-issues the request once with the token from `setToken` (or `getToken` if `setToken` wasn't called) |
+| `'skip'` | Original 401 surfaces to the caller — route them to sign-in |
+| throws | Thrown error propagates instead of the 401 |
+
+The handler is invoked **at most `maxAuthRetries` times per request**
+(default `1`). Concurrent 401s share one in-flight refresh promise —
+verified end-to-end with 5 concurrent expired-token requests collapsing
+to 1 refresh call. See [tests/auth-refresh.test.ts](../../tests/auth-refresh.test.ts)
+for the full spec.
+
 ## Subpath Imports
 
 | Import | Purpose | `"use client"` |
 |---|---|:-:|
-| `@classytic/arc-next/client` | `configureClient`, `configureAuth`, `createClient`, `handleApiRequest`, `createQueryString`, `ArcApiError`, `isArcApiError`, `getAuthMode`, `getAuthContext` | No |
+| `@classytic/arc-next/client` | `configureClient`, `configureAuth`, `createClient`, `createAuthAwareClient`, `handleApiRequest`, `createQueryString`, `ArcApiError`, `isArcApiError`, `getAuthMode`, `getAuthContext`, `createAuthRefreshHandler` (0.7+), `arcFetch` / `arc.{get,post,put,patch,delete}` / `arcAuthHeaders` (0.7+) | No |
 | `@classytic/arc-next/api` | `BaseApi`, `createCrudApi`, response types, type guards | No |
 | `@classytic/arc-next/query` | `createQueryKeys`, `createCacheUtils`, `createListQuery`, `createDetailQuery` | Yes |
 | `@classytic/arc-next/mutation` | `configureToast`, `useMutationWithTransition`, `createOptimisticMutation` | Yes |
@@ -263,25 +317,26 @@ const {
 
 **Returned hooks:**
 
-#### `useList(token, params?, options?)`
+#### `useList(params?, options?)` — new signature (recommended)
 
 ```ts
 const { items, pagination, isLoading, isFetching, refetch } = useList(
-  token,
   { organizationId: "org-123", status: "active" },
-  { public: true, staleTime: 30_000, prefillDetailCache: true }
+  { public: true, staleTime: 30_000 }
 );
 ```
 
+- Auto-injects `token` + `organizationId` from `configureAuth()`
 - Auto-scopes query keys by `organizationId` (tenant vs super-admin)
 - Normalizes pagination from `docs`/`data`/`items`/`results` formats
-- Prefills detail cache from list results (skips re-fetch on navigate)
 - `options.public: true` — enables query without token
+
+Legacy `useList(token, params, options)` still compiles.
 
 **`select` transform** — transform raw API data before it reaches your component:
 
 ```ts
-const { items } = useList(token, { organizationId }, {
+const { items } = useList({ organizationId }, {
   select: (data) => ({
     ...data,
     docs: data.docs.map((p) => ({ ...p, displayName: `${p.name} ($${p.price})` })),
@@ -289,13 +344,52 @@ const { items } = useList(token, { organizationId }, {
 });
 ```
 
-#### `useDetail(id, token, options?)`
+#### `useDetail(id, options?)` — with placeholderData handoff (0.7+)
 
 ```ts
-const { item, isLoading } = useDetail(productId, token, {
+const { item, isLoading, isPlaceholderData } = useDetail(productId, {
   organizationId: "org-123",
 });
+
+return (
+  <article aria-busy={isPlaceholderData}>
+    <h1>{item?.name}</h1>
+    {/* `isPlaceholderData` is true while the detail GET runs against a list-cached preview */}
+  </article>
+);
 ```
+
+**How the list→detail handoff works.** When a parent `useList` /
+`useInfiniteList` already has this entity in cache, `useDetail` reads the
+item via TanStack's `placeholderData` factory — the consumer sees an
+instant list-shaped preview, but the real detail GET **always** fires and
+swaps in the richer payload. The list payload is never written to the
+detail cache, so `staleTime` reasons about real fetches only and there's
+no shape pollution.
+
+> **Why this matters.** A prior revision used `setQueryData` to eagerly
+> prefill detail keys from list results. That blocked the real detail GET
+> (cache looked "fresh"), wrote a wrong-shape envelope that didn't match
+> the GET response, and re-ran every render of the list — silently
+> clobbering successful detail fetches. The new `placeholderData` pattern
+> is the canonical TanStack way to do this. Don't reach for `setQueryData`
+> to seed cache from list payloads — let `useDetail` pull from list on
+> demand. `cache.setDetail` / `setScopedDetail` remain for cases where you
+> have a known-authoritative TDoc to seed (POST-after-create response,
+> WebSocket push, etc.).
+
+**Detail → list pseudo-normalization (0.7+).** When a `useDetail` GET
+resolves with fresh data, arc-next walks every list cache holding this
+id and shallow-merges the new values in-place. The list view stays
+consistent with the detail page without firing a refetch. Direction is
+one-way (detail → list, never the reverse) because list payloads are
+typically trimmed subsets of detail. Shallow-merge preserves the list-
+cache key set, so detail-only fields (populated relations, full body)
+never bleed into list caches. Exposed for custom hooks as
+`syncDetailToLists(qc, KEYS.lists(), doc, { idField? })` in
+`@classytic/arc-next/cache`. For true entity normalization (one copy
+per id, field-level invalidation, GC by reference count), use Apollo
+Client or Relay — arc-next stays opinionated about its niche.
 
 - Disabled when `id` is null (conditional fetching)
 - Extracts item from `{ data: T }` wrapper
@@ -416,6 +510,10 @@ KEYS.scopedList("tenant", params) // ["products", "list", { _scope: "tenant", ..
 await cache.invalidateAll(queryClient);
 await cache.invalidateLists(queryClient);
 await cache.invalidateDetail(queryClient, id);
+
+// Writes/reads the raw doc — no `{ data: TDoc }` envelope (0.7+). Matches
+// what useDetail, prefetchDetail, and useNavigation all produce, so callers
+// can mix-and-match without shape coercion.
 cache.setDetail(queryClient, id, data);
 cache.getDetail(queryClient, id);       // T | undefined
 cache.removeDetail(queryClient, id);

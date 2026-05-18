@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState, useMemo } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
-import { getAuthMode, buildStreamUrl } from "./client.js";
+import {
+  ArcApiError,
+  getAuthMode,
+  buildStreamUrl,
+  _getAuthErrorHandler,
+  _runAuthRecovery,
+} from "./client.js";
 
 // ============================================================================
 // URL builder (also exported for ad-hoc EventSource consumers)
@@ -136,6 +142,48 @@ export interface EventStreamResult<TData = unknown> {
 }
 
 // ============================================================================
+// Pre-flight probe — distinguishes auth failures from transient errors
+// ============================================================================
+
+/**
+ * Send a minimal HEAD/GET probe to the SSE URL to classify an EventSource
+ * failure as either an auth failure (401, or 403 when `retryOn403`) or
+ * something transient (network, 5xx, CORS). EventSource itself doesn't
+ * expose status codes — this is the only cross-browser way to route SSE
+ * close events through `onAuthError`.
+ *
+ * The probe uses HEAD when supported (cheaper); falls back to GET with
+ * `Range: bytes=0-0` for servers that 405 on HEAD. Either way, the body
+ * is never read — only the status code matters.
+ */
+async function probeForAuthFailure(
+  url: string,
+  retryOn403: boolean,
+): Promise<'auth-failure' | 'not-auth'> {
+  try {
+    let res = await fetch(url, {
+      method: 'HEAD',
+      credentials: 'include',
+    });
+    // Some SSE servers (Fastify's sse, Cloudflare) reject HEAD with 405.
+    // Fall back to a single-byte GET so we still learn the auth status.
+    if (res.status === 405) {
+      res = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Range: 'bytes=0-0' },
+      });
+    }
+    if (res.status === 401) return 'auth-failure';
+    if (retryOn403 && res.status === 403) return 'auth-failure';
+    return 'not-auth';
+  } catch {
+    // Network failure — not an auth issue, let backoff handle it.
+    return 'not-auth';
+  }
+}
+
+// ============================================================================
 // Plain function — the source of truth (works in Node, tests, non-React UIs)
 // ============================================================================
 
@@ -213,6 +261,7 @@ export function subscribeToEvents<TData = unknown>(
 
     es.onopen = () => {
       reconnectAttempts = 0;
+      sseAuthRetries = 0; // fresh budget — a future re-auth can recover again
       connected = true;
       options.onConnectionChange?.(true);
     };
@@ -264,16 +313,67 @@ export function subscribeToEvents<TData = unknown>(
 
       if (manualClose) return;
 
-      if (reconnectAttempts < maxReconnectAttempts) {
-        reconnectAttempts += 1;
-        const delay = Math.min(
-          reconnectDelay * Math.pow(1.5, reconnectAttempts - 1),
-          30000,
-        );
-        reconnectTimer = setTimeout(connect, delay);
+      // EventSource doesn't expose HTTP status codes — it just fires an
+      // opaque `error` for any failure (network, 401, 403, 5xx, CORS). To
+      // route 401/403 through the shared `onAuthError` recovery cycle we
+      // do a pre-flight `fetch(...)` to the same URL: if it returns 401
+      // (or 403 with `retryOn403`), hand off to recovery; on 'retry',
+      // reopen the EventSource (which re-reads the auth params via
+      // `buildSseUrl`); on 'skip', fall back to the normal reconnect-
+      // with-backoff path so transient network errors still recover.
+      const { handler, retryOn403, maxAuthRetries } = _getAuthErrorHandler();
+      if (handler && sseAuthRetries < maxAuthRetries) {
+        sseAuthRetries += 1;
+        probeForAuthFailure(buildUrl(), retryOn403)
+          .then(async (status) => {
+            if (status === 'auth-failure') {
+              const { decision } = await _runAuthRecovery(handler, {
+                error: new ArcApiError('SSE pre-flight auth failure', {
+                  status: 401,
+                  statusText: 'SSE auth failure',
+                  json: { code: 'arc.sse.unauthorized' },
+                  endpoint: ssePath,
+                  method: 'GET',
+                }),
+                request: { method: 'GET', endpoint: ssePath },
+                attempt: sseAuthRetries,
+              });
+              if (decision === 'retry') {
+                reconnectAttempts = 0;
+                connect();
+                return;
+              }
+            }
+            // 'not-auth' or 'skip' → backoff reconnect as before.
+            scheduleReconnect();
+          })
+          .catch(() => {
+            // Probe itself failed (network down) — treat as transient and
+            // fall back to backoff reconnect.
+            scheduleReconnect();
+          });
+        return;
       }
+
+      scheduleReconnect();
     };
   };
+
+  /** Standard backoff-reconnect — shared between non-auth errors and skipped recoveries. */
+  const scheduleReconnect = (): void => {
+    if (reconnectAttempts < maxReconnectAttempts) {
+      reconnectAttempts += 1;
+      const delay = Math.min(
+        reconnectDelay * Math.pow(1.5, reconnectAttempts - 1),
+        30000,
+      );
+      reconnectTimer = setTimeout(connect, delay);
+    }
+  };
+
+  // Per-subscription auth-retry counter — reset on successful onopen so a
+  // long-lived stream can recover from periodic re-auth multiple times.
+  let sseAuthRetries = 0;
 
   connect();
 

@@ -85,15 +85,33 @@ function Products() {
 ## Core Hooks (from `createCrudHooks`)
 
 ```ts
-const { items, pagination, isLoading, refetch } = useList(token, params, options);
-const { item, isLoading } = useDetail(id, token, options);
+const { items, pagination, isLoading, refetch } = useList(params, options);
+const { item, isLoading, isPlaceholderData } = useDetail(id, options);
 const { create, update, remove, isMutating } = useActions();
-const { items, hasNextPage, fetchNextPage } = useInfiniteList(token, params);
+const { items, hasNextPage, fetchNextPage } = useInfiniteList(params);
 
 await create({ data, organizationId }, { onSuccess: (item) => navigate(...) });
 ```
 
-All mutations are optimistic with automatic rollback on error. Lists prefill the detail cache. Cache keys auto-scope by `organizationId` when present.
+- All mutations are optimistic with automatic rollback on error.
+- Cache keys auto-scope by `organizationId` when present.
+- **List → detail handoff:** when a parent `useList` has the entity in cache,
+  `useDetail` reads it via TanStack's `placeholderData` factory — instant
+  preview, but the real detail GET still fires (rich payload swap, no
+  cache pollution). Use `isPlaceholderData` to dim the preview while it
+  resolves. See [CHANGELOG 0.7](./CHANGELOG.md#070) for why this replaced
+  the old setQueryData-based prefill.
+- **Detail → list pseudo-normalization:** after a `useDetail` GET resolves,
+  arc-next shallow-merges the fresh fields into every list cache holding
+  this id. The list view stays in sync without a refetch. Direction is
+  one-way (detail → list, never the reverse) — see
+  [CHANGELOG → "pseudo-normalization"](./CHANGELOG.md#070) for the
+  rationale. For true entity-level normalization (one copy per id, field-
+  level invalidation), use Apollo Client or Relay; arc-next stays in the
+  REST + React Query niche.
+
+`useList(token, params, options)` (legacy 3-arg form) still compiles —
+both signatures are kept stable across the 0.x line.
 
 ### `useApiQuery` — non-CRUD reads
 
@@ -413,13 +431,132 @@ configureClient({
 
 Interceptors are async-supported and compose with retry — `beforeRequest` re-runs each attempt (so a refreshed token mid-flight is picked up). Aborting via `AbortSignal` cancels both the pending fetch AND any in-flight backoff sleep.
 
+## `arcFetch` — one-line authenticated fetch for non-hook contexts (0.7+)
+
+When you need to hit an arc endpoint from outside a hook — event handler, service worker, server action, custom MDX submit, background poll — `arcFetch` collapses the auth/org/content-type/error/parse boilerplate into one call:
+
+```ts
+import { arc } from "@classytic/arc-next/client";
+
+// Before — 15 lines of header dance + error parse + JSON parse:
+//   const { token } = getAuthContext();
+//   if (!token) throw ...
+//   const res = await fetch(`${apiBaseUrl()}/api/statements`, {
+//     method: "POST",
+//     headers: { "content-type": "application/json", authorization: `Bearer ${token}`, ... },
+//     body: JSON.stringify(statements),
+//   });
+//   if (!res.ok) throw ...
+//   return await res.json();
+//
+// After:
+const result = await arc.post<{ ok: boolean }>("/api/statements", statements);
+```
+
+Auto-injects `Authorization` (or your `headerName` for `authMode: "header"`), `x-organization-id`, `x-internal-api-key`, `Idempotency-Key`, `x-arc-scope`, and `Content-Type: application/json` (only for plain object/array bodies). Composes with everything else — `retry`, `onAuthError`, `beforeRequest`, `afterResponse`.
+
+**Method shorthands:**
+
+```ts
+arc.get<T>(path, opts?)
+arc.post<T>(path, body?, opts?)
+arc.put<T>(path, body?, opts?)
+arc.patch<T>(path, body?, opts?)
+arc.delete<T>(path, opts?)
+
+// Or call arcFetch directly for full RequestInit control:
+arcFetch<T>(path, { method, body, headers, signal, elevated, idempotencyKey, revalidate, tags, cache, client })
+```
+
+**Body sniffing.** `FormData`, `Blob`, `URLSearchParams`, `ArrayBuffer`, `ReadableStream`, and `string` pass through unchanged — caller controls `Content-Type` for those. Plain objects and arrays get `JSON.stringify`d and the JSON content-type header.
+
+**Protected headers.** `Authorization`, `x-organization-id`, `x-internal-api-key`, and the custom header for `authMode: "header"` cannot be overridden by `options.headers`. A caller can't accidentally strip the bearer token by spreading their own header map. Non-auth headers (`X-Trace-Id`, `Accept-Version`, etc.) pass through normally.
+
+**Error handling.** Non-2xx throws `ArcApiError` with parsed body, status, endpoint, method — same contract as the CRUD hooks. Use `isArcApiError(err)` + `err.code` to discriminate.
+
+**Escape hatch.** When you need full `Response` control (rare — streaming downloads, custom redirect logic), use plain `fetch` with `arcAuthHeaders()`:
+
+```ts
+import { arcAuthHeaders, getAuthMode } from "@classytic/arc-next/client";
+
+const res = await fetch(url, {
+  headers: { ...arcAuthHeaders(), "X-Custom": "1" },
+  credentials: getAuthMode() === "cookie" ? "include" : "same-origin",
+});
+```
+
+## Auth Recovery (0.7+) — 401 → refresh → retry
+
+When a session token expires mid-page, the SDK transparently refreshes and retries — no flash of unauthenticated UI, no manual reload. Wire it once at app boot:
+
+```ts
+import { configureAuth, createAuthRefreshHandler } from "@classytic/arc-next/client";
+import { authClient } from "@/lib/auth-client";
+
+configureAuth({
+  getToken: () => authClient.getSession().data?.session.token ?? null,
+  onAuthError: createAuthRefreshHandler({
+    refresh: async () => {
+      // Whatever your auth lib calls to mint a fresh access token.
+      const { data } = await authClient.getSession({ disableCookieCache: true });
+      return data?.session.token ?? null; // null → session truly expired; original 401 surfaces
+    },
+  }),
+});
+```
+
+Every `useList`, `useDetail`, `useActions`, and any code path going through `createAuthAwareClient()` or `createClient(...)` now survives token expiry transparently. Apps that don't wire `onAuthError` see the original behavior (401 surfaces immediately).
+
+**Concurrent-refresh dedup.** When N requests hit 401 at the same time, the handler fires **once**. All N concurrent callers await the same refresh promise and retry with the token it produces — no stampeding the refresh endpoint under burst auth-expiry.
+
+**Tuning knobs.**
+
+```ts
+configureAuth({
+  // ...
+  onAuthError,
+  retryOn403: true,    // also recover from 403 (default: 401 only)
+  maxAuthRetries: 1,   // cap per individual request (default: 1; prevents loops)
+});
+```
+
+**Custom handler.** Bypass `createAuthRefreshHandler` if you need full control over the recovery cycle:
+
+```ts
+configureAuth({
+  onAuthError: async ({ error, request, attempt, setToken }) => {
+    if (error.code === "session.revoked") return "skip"; // route to /login
+    const fresh = await myRefreshFn();
+    if (!fresh) return "skip";
+    setToken(fresh);
+    return "retry";
+  },
+});
+```
+
+The handler receives the full `ArcApiError`, the failing request descriptor, the 1-indexed attempt counter, and a `setToken(value)` callback that supplies the refreshed token for the retry. Throwing from the handler short-circuits — the thrown error propagates instead of the 401.
+
+**Transport coverage.** Auth recovery fires across every transport arc-next exposes:
+
+| Transport | Trigger | Mechanism |
+|---|---|---|
+| Fetch (CRUD hooks, `arcFetch`, `handleApiRequest`) | 401 / 403 response | Inline retry in `executeRequest` |
+| XHR upload (`uploadWithProgress`, `useUploadWithProgress`) | 401 / 403 response | Outer retry loop in `upload.ts` |
+| WebSocket | close code `1008` / `3401` / `4001` / `4401` | `ws.onclose` handler routes through recovery, reconnect with refreshed token |
+| SSE (`subscribeToEvents`, `useEventStream`) | `EventSource` error | Pre-flight `fetch` probe classifies as auth-failure → recovery → reopen |
+
+All four transports share **one** dedup'd refresh promise — concurrent failures across mixed transports (5 in-flight uploads + 3 WebSocket reconnects + 10 fetch calls, all 401 at once) collapse to a single `onAuthError` call.
+
 ## Cache & Keys
 
 ```ts
 KEYS.detail(id);                        // ["products", "detail", id]
 KEYS.scopedDetail(id, orgId);           // tenant-scoped variant
 
+// Writes/reads the raw doc — no `{ data: TDoc }` envelope (0.7+). Matches
+// what useDetail, prefetchDetail, and useNavigation all produce.
 cache.setDetail(qc, id, data);
+cache.getDetail(qc, id);                // TDoc | undefined
 cache.invalidateDetail(qc, id);         // matches all scoped variants
 cache.invalidateLists(qc);
 ```

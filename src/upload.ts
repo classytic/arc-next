@@ -61,6 +61,10 @@ import {
   getAuthMode,
   getBaseUrl,
   getClientAuthContext,
+  _getAuthErrorHandler,
+  _runAuthRecovery,
+  _resolveRefreshedToken,
+  _isAuthRecoverable,
   type ArcClient,
   type HttpMethod,
   type ToastHandler,
@@ -165,7 +169,44 @@ export interface UploadWithProgressOptions {
  *   onProgress: ({ percent }) => setUiProgress(percent),
  * });
  */
-export function uploadWithProgress<TResult = unknown>(
+export async function uploadWithProgress<TResult = unknown>(
+  options: UploadWithProgressOptions,
+): Promise<TResult> {
+  const { handler, retryOn403, maxAuthRetries } = _getAuthErrorHandler();
+  // Fast path — no recovery handler wired, single attempt as before.
+  if (!handler) return uploadAttempt<TResult>(options);
+
+  // Auth-retry loop — same shape as `executeRequest`'s outer loop, just
+  // wrapping the XHR transport instead of fetch. Token override from the
+  // shared dedup'd recovery flows back via `options.token` for the retry.
+  let currentOptions = options;
+  for (let attempt = 0; attempt <= maxAuthRetries; attempt++) {
+    try {
+      return await uploadAttempt<TResult>(currentOptions);
+    } catch (error) {
+      if (attempt >= maxAuthRetries || !_isAuthRecoverable(error, retryOn403)) throw error;
+      if (currentOptions.signal?.aborted) throw error;
+
+      const { decision, overrideToken } = await _runAuthRecovery(handler, {
+        error: error as ArcApiError,
+        request: { method: (currentOptions.method ?? 'POST') as HttpMethod, endpoint: currentOptions.url },
+        attempt: attempt + 1,
+      });
+      if (decision !== 'retry') throw error;
+
+      currentOptions = { ...currentOptions, token: _resolveRefreshedToken(overrideToken) };
+    }
+  }
+  throw new Error('arc-next: upload auth retry loop terminated without resolution');
+}
+
+/**
+ * Single XHR attempt. Identical to the pre-0.7 body of `uploadWithProgress`
+ * — extracted so the auth-retry loop above can re-run it with a refreshed
+ * token without duplicating the XHR setup. All auth-recovery semantics live
+ * in the outer loop; this function just performs one upload.
+ */
+function uploadAttempt<TResult = unknown>(
   options: UploadWithProgressOptions,
 ): Promise<TResult> {
   const {

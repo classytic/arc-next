@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery, useInfiniteQuery, useQueryClient, keepPreviousData, type QueryKey, type InfiniteData } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useQuery, useInfiniteQuery, keepPreviousData, type QueryKey, type InfiniteData, type QueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useRef } from "react";
 
 // Server-safe utilities live in ./cache.ts (no "use client") so Server Components
 // can import + call them during RSC prefetch. We re-export them here for callers
@@ -52,6 +52,17 @@ export interface ListQueryOptions<TData = unknown> {
   gcTime?: number;
   refetchOnWindowFocus?: boolean;
   structuralSharing?: boolean;
+  /**
+   * @deprecated No-op since 0.7. The old setQueryData-based prefill was
+   * removed because it (1) stored a `{ data: ... }` envelope that didn't
+   * match arc 2.13+'s raw doc wire, (2) blocked subsequent detail GETs from
+   * firing (fresh staleTime), and (3) clobbered detail responses every
+   * render due to an unstable effect dep. `useDetail` / `useDetailBySlug`
+   * now read list cache via `placeholderData` — the canonical TanStack
+   * pattern — so the GET always fires while consumers see an instant
+   * preview. Safe to remove from caller code. Retained for compile-time
+   * compatibility; will be deleted in a future major.
+   */
   prefillDetailCache?: boolean;
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
@@ -100,6 +111,13 @@ export interface DetailQueryResult<T> {
   isError: boolean;
   isSuccess: boolean;
   isStale: boolean;
+  /**
+   * `true` while the detail GET is in flight and the consumer is seeing a
+   * preview derived from a list cache entry (or any other `placeholderData`).
+   * Use to dim or label the preview, e.g. `<article aria-busy={isPlaceholderData}>`.
+   * Flips to `false` once the real detail payload resolves.
+   */
+  isPlaceholderData: boolean;
   error: Error | null;
   refetch: () => Promise<unknown>;
   data: unknown;
@@ -114,25 +132,31 @@ export interface CreateListQueryConfig {
   queryFn: (context: { signal?: AbortSignal }) => Promise<unknown>;
   enabled?: boolean;
   options?: Record<string, unknown>;
-  prefillDetailCache?: boolean;
-  detailKeyBuilder?: (id: string) => QueryKey;
-  /** Custom ID extractor for cache prefill. Falls back to getItemId (_id → id). */
-  itemIdResolver?: (item: unknown) => string | null;
   select?: (data: unknown) => unknown;
 }
 
+/**
+ * List query hook. Returns the canonical `{ items, pagination, ... }` shape
+ * derived from arc's `PaginatedResult` wire envelope.
+ *
+ * **No detail-cache prefill.** Older revisions of this hook wrote each list
+ * item into the detail cache via `setQueryData`. That pattern was wrong on
+ * three counts: (1) it stored a `{ data: ... }` envelope that didn't match
+ * arc 2.13+'s raw doc wire shape, (2) the fresh-default `staleTime` made
+ * subsequent `useDetail` calls reuse the partial list payload and never fetch
+ * the rich detail response, and (3) the unstable `detailKeyBuilder` ref made
+ * the prefill effect re-run on every render, clobbering successful detail
+ * fetches. The clean fix is on the read side: `useDetail` now reads list cache
+ * directly via `placeholderData`, so the detail GET still fires while the
+ * consumer sees an instant list-shaped preview. See `findItemInListCache`.
+ */
 export function useListQuery<T>({
   queryKey,
   queryFn,
   enabled = true,
   options = {},
-  prefillDetailCache = true,
-  detailKeyBuilder,
-  itemIdResolver,
   select,
 }: CreateListQueryConfig): ListQueryResult<T> {
-  const queryClient = useQueryClient();
-
   const query = useQuery({
     queryKey,
     queryFn: ({ signal }) => queryFn({ signal }),
@@ -143,19 +167,8 @@ export function useListQuery<T>({
     placeholderData: keepPreviousData,
   });
 
-  // Memoize to avoid re-running useEffect on every render
   const items = useMemo(() => extractItems<T>(query.data), [query.data]);
   const pagination = useMemo(() => normalizePagination(query.data), [query.data]);
-
-  useEffect(() => {
-    if (!prefillDetailCache || !detailKeyBuilder || items.length === 0) return;
-
-    const resolveId = itemIdResolver ?? getItemId;
-    items.forEach((item) => {
-      const id = resolveId(item);
-      if (id) queryClient.setQueryData(detailKeyBuilder(id), { data: item });
-    });
-  }, [items, prefillDetailCache, detailKeyBuilder, queryClient]);
 
   return {
     items,
@@ -172,15 +185,75 @@ export function useListQuery<T>({
 }
 
 // ============================================================================
+// List → Detail placeholder lookup
+// ============================================================================
+
+/**
+ * Find an item in any list cache for this entity by ID.
+ *
+ * Walks every `[entity, 'list', ...]` query (including scoped variants and
+ * infinite-list page arrays) and extracts items via the permissive list
+ * detector. Returns the first match — list payloads are subsets of detail
+ * payloads, so the consumer sees an instant preview while the real detail
+ * GET runs in the background.
+ *
+ * This is the canonical TanStack pattern for "show list data while fetching
+ * detail": pass the returned value as `placeholderData` to `useDetail`. The
+ * value isn't persisted to the detail cache (no pollution), `staleTime`
+ * doesn't apply to it (always refetches), and `isPlaceholderData` is `true`
+ * until the GET resolves.
+ *
+ * @param qc TanStack QueryClient (typically from `useQueryClient()`)
+ * @param listsKey Prefix key for this entity's lists (e.g. `KEYS.lists()`)
+ * @param id Item ID being requested
+ * @param idField Optional custom ID field (matches `createCrudHooks({ idField })`)
+ */
+export function findItemInListCache<T>(
+  qc: QueryClient,
+  listsKey: QueryKey,
+  id: string,
+  idField?: string,
+): T | undefined {
+  if (!id) return undefined;
+  const entries = qc.getQueriesData<unknown>({ queryKey: listsKey });
+  for (const [, raw] of entries) {
+    if (!raw) continue;
+    // Infinite-query data is `{ pages: unknown[], pageParams: ... }`; flatten
+    // pages so callers don't need to special-case the infinite shape.
+    const pages =
+      typeof raw === 'object' && raw !== null && Array.isArray((raw as { pages?: unknown }).pages)
+        ? ((raw as { pages: unknown[] }).pages)
+        : [raw];
+    for (const page of pages) {
+      const items = extractItems<T>(page);
+      for (const item of items) {
+        const got = idField
+          ? (item as Record<string, unknown> | null)?.[idField]
+          : getItemId(item);
+        if (got != null && String(got) === id) return item;
+      }
+    }
+  }
+  return undefined;
+}
+
+// ============================================================================
 // Detail Query Hook
 // ============================================================================
 
-export interface CreateDetailQueryConfig {
+export interface CreateDetailQueryConfig<T = unknown> {
   queryKey: QueryKey;
   queryFn: (context: { signal?: AbortSignal }) => Promise<unknown>;
   enabled?: boolean;
   options?: Record<string, unknown>;
   select?: (data: unknown) => unknown;
+  /**
+   * Lazy placeholder. Returns a value (or `undefined`) on each render to show
+   * before the detail GET resolves. Use with `findItemInListCache` to derive
+   * an instant preview from list cache without polluting the detail cache —
+   * the canonical TanStack pattern for "show list data while fetching detail."
+   */
+  placeholderData?: () => T | undefined;
 }
 
 export function useDetailQuery<T>({
@@ -189,7 +262,8 @@ export function useDetailQuery<T>({
   enabled = true,
   options = {},
   select,
-}: CreateDetailQueryConfig): DetailQueryResult<T> {
+  placeholderData,
+}: CreateDetailQueryConfig<T>): DetailQueryResult<T> {
   const query = useQuery({
     queryKey,
     queryFn: ({ signal }) => queryFn({ signal }),
@@ -197,6 +271,7 @@ export function useDetailQuery<T>({
     ...DEFAULT_QUERY_CONFIG,
     ...options,
     ...(select ? { select } : {}),
+    ...(placeholderData ? { placeholderData } : {}),
   });
 
   const item = extractItem<T>(query.data);
@@ -208,6 +283,7 @@ export function useDetailQuery<T>({
     isError: query.isError,
     isSuccess: query.isSuccess,
     isStale: query.isStale,
+    isPlaceholderData: query.isPlaceholderData,
     error: query.error,
     refetch: query.refetch,
     data: query.data,

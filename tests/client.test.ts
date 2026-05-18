@@ -1474,18 +1474,28 @@ describe('createAuthAwareClient', () => {
 // ============================================================================
 
 describe('configureAuth async-token guard', () => {
-  let warnSpy: ReturnType<typeof vi.spyOn>;
+  // Async returns are logged via console.error (not warn) because the failure
+  // is silent in the UI — queries silently disable, indistinguishable from a
+  // clean empty state. The error carries a real `Error` instance so dev tools
+  // surface a stack trace pointing at the offending `configureAuth` call site.
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  const asyncErrorCount = () =>
+    errorSpy.mock.calls.filter((c) => {
+      const arg = c[0];
+      return arg instanceof Error && arg.message.includes('returned a Promise');
+    }).length;
 
   beforeEach(() => {
     _resetAuthWarnings();
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    warnSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 
-  it('returns null and warns when getToken returns a Promise', () => {
+  it('returns null and logs an Error when getToken returns a Promise', () => {
     configureAuth({
       getToken: () => Promise.resolve('async-token') as unknown as string | null,
     });
@@ -1493,12 +1503,10 @@ describe('configureAuth async-token guard', () => {
     const ctx = getAuthContext();
 
     expect(ctx.token).toBeNull();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('returned a Promise'),
-    );
+    expect(asyncErrorCount()).toBe(1);
   });
 
-  it('warns only once across multiple calls', () => {
+  it('logs only once across multiple calls', () => {
     configureAuth({
       getToken: () => Promise.resolve('x') as unknown as string | null,
     });
@@ -1507,12 +1515,7 @@ describe('configureAuth async-token guard', () => {
     getAuthContext();
     getAuthContext();
 
-    // Server-warning from configureAuth (jsdom has window so this should NOT fire)
-    // We only count the async-token warnings
-    const asyncWarnCount = warnSpy.mock.calls.filter(c =>
-      typeof c[0] === 'string' && c[0].includes('returned a Promise'),
-    ).length;
-    expect(asyncWarnCount).toBe(1);
+    expect(asyncErrorCount()).toBe(1);
   });
 
   it('resets dedup flag on reconfigure', () => {
@@ -1526,10 +1529,7 @@ describe('configureAuth async-token guard', () => {
     });
     getAuthContext();
 
-    const asyncWarnCount = warnSpy.mock.calls.filter(c =>
-      typeof c[0] === 'string' && c[0].includes('returned a Promise'),
-    ).length;
-    expect(asyncWarnCount).toBe(2);
+    expect(asyncErrorCount()).toBe(2);
   });
 
   it('passes through synchronous tokens', () => {
@@ -1538,10 +1538,7 @@ describe('configureAuth async-token guard', () => {
     const ctx = getAuthContext();
 
     expect(ctx.token).toBe('sync-token');
-    const asyncWarnCount = warnSpy.mock.calls.filter(c =>
-      typeof c[0] === 'string' && c[0].includes('returned a Promise'),
-    ).length;
-    expect(asyncWarnCount).toBe(0);
+    expect(asyncErrorCount()).toBe(0);
   });
 
   it('handles thenable (non-Promise) returns as async', () => {
@@ -1551,9 +1548,7 @@ describe('configureAuth async-token guard', () => {
     const ctx = getAuthContext();
 
     expect(ctx.token).toBeNull();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('returned a Promise'),
-    );
+    expect(asyncErrorCount()).toBe(1);
   });
 });
 

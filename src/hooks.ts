@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptimisticMutation, useMutationWithTransition } from "./mutation.js";
 import type { MutationMessages } from "./mutation.js";
@@ -8,6 +8,7 @@ import {
   useListQuery,
   useDetailQuery,
   useInfiniteListQuery,
+  findItemInListCache,
 } from "./query.js";
 import type {
   ListQueryOptions,
@@ -27,6 +28,7 @@ import {
   createCacheUtils,
   DEFAULT_QUERY_CONFIG,
   extractItem,
+  syncDetailToLists,
 } from "./cache.js";
 import type { PaginatedResult } from "@classytic/repo-core/pagination";
 import type { QueryKeys, CacheUtils } from "./cache.js";
@@ -41,7 +43,7 @@ import type { SlugLookupMethods } from "./presets/slug.js";
 import type { TreeMethods } from "./presets/tree.js";
 import type { SearchPresetMethods } from "./presets/search.js";
 import type { MutationCallbacks, TransitionMutationReturn } from "./mutation.js";
-import { getAuthMode, getClientAuthContext } from "./client.js";
+import { getAuthMode, getClientAuthContext, hasGlobalStaticAuth } from "./client.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
 import { subscribeToEvents, type CrudOperation } from "./sse.js";
 import { connectWs } from "./ws.js";
@@ -387,12 +389,21 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   /** Resolve auth context — per-client auth takes priority over global */
   const resolveAuth = () => getClientAuthContext(client);
 
-  /** Whether auth is provided via static config (headers, internalApiKey, per-client auth) — no token needed for enablement */
-  const hasStaticAuth = !!(
-    client?.config?.defaultHeaders ||
-    client?.config?.internalApiKey ||
-    client?.auth
-  );
+  /**
+   * Whether auth is provided via static config — no per-request token needed.
+   * Sources (in priority order):
+   *   1. Per-client `defaultHeaders` / `internalApiKey` (when `client` is passed in).
+   *   2. Per-client custom auth (e.g. `createClient({ getToken })`).
+   *   3. Global `configureClient({ internalApiKey | defaultHeaders | authMode: 'cookie' })`.
+   *
+   * Resolved lazily on every render so that an app calling `configureClient`
+   * inside a "use client" provider after factory creation still picks up the
+   * global static-auth signal — previously a global `internalApiKey` was
+   * ignored, leaving every protected query stuck in a permanently-disabled state.
+   */
+  const resolveHasStaticAuth = () =>
+    !!(client?.config?.defaultHeaders || client?.config?.internalApiKey || client?.auth) ||
+    hasGlobalStaticAuth();
 
   /** Extract ID from an item using configured idField, falling back to _id → id */
   function resolveItemId(item: unknown): string | null {
@@ -467,7 +478,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useListQuery<T>({
       queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
       queryFn: ({ signal }) => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
-      enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
+      enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -476,11 +487,16 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         refetchInterval: queryOpts.refetchInterval,
         refetchIntervalInBackground: queryOpts.refetchIntervalInBackground,
       },
-      prefillDetailCache: queryOpts.prefillDetailCache ?? true,
-      detailKeyBuilder: (id) => KEYS.scopedDetail(id, (organizationId as string | null) ?? null),
-      itemIdResolver: resolveItemId,
       select: queryOpts.select,
     });
+    // NOTE: we deliberately do NOT fan-out from list → detail. Bidirectional
+    // sync creates a last-write-wins race when list + detail both fetch
+    // around the same time: list payloads are typically stale-er than the
+    // detail GET response (lists often use `select=...` to drop fields the
+    // detail GET fully populates), so a post-fetch list → detail merge
+    // overwrites the rich detail value with the trimmed list one. The
+    // canonical flow is detail → list (detail is the authoritative read for
+    // a single doc), implemented in `useDetail` below.
   }
 
   // ========== useDetail ==========
@@ -514,10 +530,24 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const detailKey = KEYS.scopedDetail(id || "", organizationId ?? null);
     const fullDetailKey = queryParams ? [...detailKey, queryParams] : detailKey;
 
-    return useDetailQuery<T>({
+    // Lazy placeholder: when a parent `useList` (or `useInfiniteList`) already
+    // has this entity in cache, show that subset instantly while the detail
+    // GET runs in the background. `placeholderData` is the canonical TanStack
+    // pattern for this — it does NOT persist to the detail cache (no
+    // pollution), `staleTime` doesn't apply to it (the GET always fires), and
+    // consumers can dim the preview via `isPlaceholderData` until the rich
+    // detail payload resolves.
+    const queryClient = useQueryClient();
+    const listPlaceholder = useCallback(
+      () =>
+        id ? findItemInListCache<T>(queryClient, KEYS.lists(), id, idField) : undefined,
+      [queryClient, id],
+    );
+
+    const detailResult = useDetailQuery<T>({
       queryKey: fullDetailKey,
       queryFn: ({ signal }) => api.getById({ id: id!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
-      enabled: !!id && createEnabledRule(token, restOptions, resolveAuthMode(), hasStaticAuth),
+      enabled: !!id && createEnabledRule(token, restOptions, resolveAuthMode(), resolveHasStaticAuth()),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
@@ -527,7 +557,26 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         refetchIntervalInBackground: restOptions.refetchIntervalInBackground,
       },
       select: restOptions.select,
+      placeholderData: listPlaceholder,
     });
+
+    // Pseudo-normalization: when this detail GET resolves with fresh data,
+    // shallow-merge the new fields into every list cache containing this id.
+    // Keeps list views in sync without an extra refetch. See `syncDetailToLists`
+    // JSDoc in cache.ts for the rationale + scope. Skipped while the value is
+    // a placeholder so we don't fan-out the list-shape preview back to lists
+    // (would be a no-op shallow merge but burns CPU per render).
+    useEffect(() => {
+      if (!detailResult.item || detailResult.isPlaceholderData) return;
+      syncDetailToLists(
+        queryClient,
+        KEYS.lists(),
+        detailResult.item as unknown as Record<string, unknown>,
+        idField ? { idField } : {},
+      );
+    }, [detailResult.item, detailResult.isPlaceholderData, queryClient]);
+
+    return detailResult;
   }
 
   // ========== useActions ==========
@@ -773,7 +822,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           options: { signal, ...requestOpts },
         });
       },
-      enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
+      enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
       initialPageParam: restParams.after ? restParams.after : 1,
       getNextPageParam: (lastPage) => {
         const page = lastPage as PaginatedResult<T>;
@@ -811,6 +860,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         refetchIntervalInBackground: queryOpts.refetchIntervalInBackground,
       },
     });
+    // No list → detail sync (same reasoning as `useList` — see note there).
   }
 
   // ========== useUpload ==========
@@ -882,7 +932,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.getDeleted) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getDeleted method`));
         return api.getDeleted({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getDeleted && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
+      enabled: !!api.getDeleted && createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -903,13 +953,21 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const organizationId = resolvedOptions.organizationId ?? auth.organizationId;
     const { params: queryParams, request: requestOpts, ...restOptions } = resolvedOptions;
 
-    return useDetailQuery<T>({
+    // Match useDetail's DX: derive an instant preview from any list cache that
+    // already contains this slug. Resolves by the `slug` field on each item.
+    const queryClient = useQueryClient();
+    const listPlaceholder = useCallback(
+      () => (slug ? findItemInListCache<T>(queryClient, KEYS.lists(), slug, 'slug') : undefined),
+      [queryClient, slug],
+    );
+
+    const slugResult = useDetailQuery<T>({
       queryKey: queryParams ? KEYS.custom('slug', slug, queryParams) : KEYS.custom('slug', slug),
       queryFn: ({ signal }) => {
         if (!api.getBySlug) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getBySlug method`));
         return api.getBySlug({ slug: slug!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getBySlug && !!slug && createEnabledRule(token, restOptions, resolveAuthMode(), hasStaticAuth),
+      enabled: !!api.getBySlug && !!slug && createEnabledRule(token, restOptions, resolveAuthMode(), resolveHasStaticAuth()),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
@@ -917,7 +975,24 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         structuralSharing: restOptions.structuralSharing ?? config.structuralSharing,
       },
       select: restOptions.select,
+      placeholderData: listPlaceholder,
     });
+
+    // Same pseudo-normalization as `useDetail` — propagate the fresh doc to
+    // any list cache that contains it. Slugs match by the `slug` field, but
+    // we ALSO fan out by the doc's primary id so that an `_id`-keyed list
+    // cache picks up the update too.
+    useEffect(() => {
+      if (!slugResult.item || slugResult.isPlaceholderData) return;
+      syncDetailToLists(
+        queryClient,
+        KEYS.lists(),
+        slugResult.item as unknown as Record<string, unknown>,
+        idField ? { idField } : {},
+      );
+    }, [slugResult.item, slugResult.isPlaceholderData, queryClient]);
+
+    return slugResult;
   }
 
   // ========== useTree ==========
@@ -939,7 +1014,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.getTree) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getTree method`));
         return api.getTree({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getTree && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
+      enabled: !!api.getTree && createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -968,14 +1043,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.getChildren) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getChildren method`));
         return api.getChildren({ token, organizationId, parentId: parentId!, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getChildren && !!parentId && createEnabledRule(token, queryOpts, resolveAuthMode(), hasStaticAuth),
+      enabled: !!api.getChildren && !!parentId && createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
       },
-      prefillDetailCache: queryOpts.prefillDetailCache ?? true,
-      detailKeyBuilder: (id) => KEYS.scopedDetail(id, (organizationId as string | null) ?? null),
-      itemIdResolver: resolveItemId,
       select: queryOpts.select,
     });
   }
@@ -1250,7 +1322,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       enabled:
         !!name &&
         !!api.aggregate &&
-        createEnabledRule(auth.token, { public: isPublic, enabled }, resolveAuthMode(), hasStaticAuth),
+        createEnabledRule(auth.token, { public: isPublic, enabled }, resolveAuthMode(), resolveHasStaticAuth()),
       staleTime,
       gcTime,
       refetchOnWindowFocus,
@@ -1395,11 +1467,16 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (id) {
           const auth = resolveAuth();
           const orgId = auth.organizationId;
-          // Write to scoped key (matches useDetail's cache key)
-          queryClient.setQueryData(KEYS.scopedDetail(id, orgId), { data: item });
-          // Also write bare key as fallback (matches non-scoped useDetail, navigation from public pages)
+          // Write the raw doc — matches arc 2.13+'s raw-payload wire shape and
+          // the shape `useDetail` / prefetch / cache.setDetail all produce.
+          // No `{ data: item }` envelope: the cache contract is "TDoc, not
+          // `{ data: TDoc }`" across every write path.
+          queryClient.setQueryData(KEYS.scopedDetail(id, orgId), item);
+          // Also seed the bare key — `useDetail` from a public page (no
+          // resolved org) reads the un-scoped key, so this keeps the
+          // instant-detail UX consistent across scoped + un-scoped consumers.
           if (orgId) {
-            queryClient.setQueryData(KEYS.detail(id), { data: item });
+            queryClient.setQueryData(KEYS.detail(id), item);
           }
         }
 
