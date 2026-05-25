@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.1
+
+### Fixed — `createAuthAwareClient()` reads `configureClient()` lazily
+
+Previous revisions snapshotted `getBaseUrl()` / `getAuthMode()` /
+`isAutoIdempotency()` at construction time and froze the result. That
+bit hard in real apps: `createAuthAwareClient()` typically runs at
+module-load (top of `api.ts`), but `configureClient({ baseUrl })` runs
+LATER inside a `'use client'` provider's `useState` initializer. The
+frozen `baseUrl` was `''` → every request hit a relative URL → 404
+cascade against the dev server / Vercel function origin instead of
+the API.
+
+Now: per-call `request` reads the latest global config every time.
+Token rotation, `baseUrl` set-after-load, `authMode` flipped via
+reconfigure — all pick up automatically. The only fields that
+snapshot are overrides explicitly passed in (an opt-in "I want a
+different transport" signal).
+
+Lock-in: `tests/lazy-baseUrl.test.ts`.
+
+### Changed — query internals follow the same lazy-config rule
+
+`src/query.ts` reaches for the resolved client at call time so query
+keys / fetcher functions honour the latest `baseUrl` and auth fields
+without relying on the closure captured at hook construction. No public
+API change.
+
 ## 0.7.0
 
 Fixes a real-world "`useDetail` never fires a GET" bug and the silent disable

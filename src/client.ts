@@ -1069,16 +1069,64 @@ export function createClient(config: ArcClientConfig): ArcClient {
  * });
  */
 export function createAuthAwareClient(overrides: Partial<ArcClientConfig> = {}): ArcClient {
-  return createClient({
-    baseUrl: overrides.baseUrl ?? getBaseUrl(),
-    authMode: overrides.authMode ?? getAuthMode(),
-    autoIdempotency: overrides.autoIdempotency ?? isAutoIdempotency(),
-    elevated: overrides.elevated ?? clientConfig?.elevated,
-    ...overrides,
-    getToken: overrides.getToken ?? (() => readToken(authConfig?.getToken)),
-    getOrgId: overrides.getOrgId ?? (() => authConfig?.getOrgId?.() ?? null),
-    headerName: overrides.headerName ?? authConfig?.headerName,
+  // **All config is resolved lazily.** Previous revisions snapshotted
+  // `getBaseUrl()` / `getAuthMode()` / etc. at construction time and froze
+  // the result into `clientCfg`. That bit hard in real apps: `createAuthAwareClient()`
+  // typically runs at module-load (top of an `api.ts` module), but
+  // `configureClient({ baseUrl })` runs LATER inside a `'use client'` provider's
+  // `useState` initializer. The frozen baseUrl was `''` → every request hit
+  // a relative URL → 404 cascade against the Next.js dev server / Vercel
+  // function origin instead of the API.
+  //
+  // Now: per-call `request` reads the latest global config every time. Token
+  // rotation, baseUrl set-after-load, authMode flipped via reconfigure — all
+  // pick up automatically. The only fields that snapshot are the overrides
+  // explicitly passed in (those are an opt-in, "I want a different transport"
+  // signal that we honor literally).
+  const { toast, navigation, getToken, getOrgId, headerName, ...overrideCfg } = overrides;
+
+  const authGetToken = getToken ?? ((): string | null => readToken(authConfig?.getToken));
+  const authGetOrgId = getOrgId ?? ((): string | null => authConfig?.getOrgId?.() ?? null);
+  const authHeaderName = headerName ?? authConfig?.headerName;
+  const clientAuth = { getToken: authGetToken, getOrgId: authGetOrgId, headerName: authHeaderName };
+
+  const resolveClientCfg = (): ClientConfig => ({
+    baseUrl: overrideCfg.baseUrl ?? getBaseUrl(),
+    authMode: overrideCfg.authMode ?? getAuthMode(),
+    autoIdempotency: overrideCfg.autoIdempotency ?? isAutoIdempotency(),
+    elevated: overrideCfg.elevated ?? clientConfig?.elevated,
+    internalApiKey: overrideCfg.internalApiKey ?? clientConfig?.internalApiKey,
+    defaultHeaders: overrideCfg.defaultHeaders ?? clientConfig?.defaultHeaders,
+    credentials: overrideCfg.credentials ?? clientConfig?.credentials,
+    apiVersion: overrideCfg.apiVersion ?? clientConfig?.apiVersion,
+    retry: overrideCfg.retry ?? clientConfig?.retry,
+    beforeRequest: overrideCfg.beforeRequest ?? clientConfig?.beforeRequest,
+    afterResponse: overrideCfg.afterResponse ?? clientConfig?.afterResponse,
   });
+
+  return {
+    request: <T = unknown>(method: HttpMethod, endpoint: string, options?: ApiRequestOptions) => {
+      const cfg = resolveClientCfg();
+      const resolved: ApiRequestOptions = { ...options };
+      if (resolved.token === undefined) resolved.token = readToken(authGetToken);
+      if (resolved.organizationId === undefined) resolved.organizationId = authGetOrgId();
+      if (cfg.authMode === 'header' && resolved.token) {
+        const name = authHeaderName ?? 'x-api-key';
+        resolved.headerOptions = { [name]: resolved.token, ...(resolved.headerOptions ?? {}) };
+        resolved.token = undefined;
+      }
+      return executeRequest<T>(cfg, method, endpoint, resolved);
+    },
+    // `config` is the snapshot frozen at construction — kept for the
+    // `hasGlobalStaticAuth` / `internalApiKey` heuristic in `createCrudHooks`.
+    // Reads of `config.baseUrl` here will be `''` if the global wasn't set yet,
+    // but no part of the request path actually reads that — `resolveClientCfg`
+    // does at request time.
+    config: resolveClientCfg(),
+    toast,
+    navigation,
+    auth: clientAuth,
+  };
 }
 
 /**
@@ -1357,6 +1405,25 @@ async function executeAttempt<T = unknown>(
       fetchOptions.next = { ...fetchOptions.next, tags };
     }
 
+    // Fail loud on the silent 404 cascade: if baseUrl is empty AND the
+    // endpoint is relative, fetch resolves against the current origin and
+    // hits the Next.js dev server / Vercel function / whatever else owns
+    // the page's origin instead of the API. That's almost never what the
+    // caller intended — and the resulting 404s look like backend bugs.
+    // The most common cause is calling `configureClient({ baseUrl })`
+    // AFTER an SDK module already constructed its `ArcClient` at top-level
+    // import time. Throwing here costs us nothing on healthy apps and
+    // saves hours of "why is the API returning HTML" debugging on broken ones.
+    const isAbsolute = /^https?:\/\//i.test(endpoint);
+    if (!isAbsolute && !config.baseUrl) {
+      throw new Error(
+        `[arc-next] handleApiRequest(${method} ${endpoint}): baseUrl is empty. ` +
+        `Call configureClient({ baseUrl: '...' }) BEFORE the first request. ` +
+        `If you use createAuthAwareClient() at module top-level, make sure the ` +
+        `Providers component runs configureClient() first (e.g. in a useState() ` +
+        `initializer, before the children render).`,
+      );
+    }
     const response = await fetch(`${config.baseUrl}${endpoint}`, fetchOptions);
 
     if (!response.ok) {

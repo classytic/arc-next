@@ -91,8 +91,28 @@ export interface DetailQueryOptions<TData = unknown> {
   request?: RequestPassthrough;
 }
 
+/**
+ * Result of `useList` (and `useListQuery`). Matches the same typed-end-to-end
+ * shape `repo-core` uses for its server-side result interfaces (`AggResult`,
+ * `OffsetPaginationResult`, etc.) — no raw-cache escape hatch on the public
+ * surface, just the typed extracted view.
+ *
+ * Need the raw cache entry? Use `useQueryClient().getQueryData(KEYS.list(...))`
+ * — it's typed against whatever `setQueryData` last wrote, and it makes the
+ * "I'm reaching past the SDK" intent explicit.
+ */
 export interface ListQueryResult<T> {
+  /**
+   * Extracted items array — `T[]`. Always typed, always flat (infinite-list
+   * pages are pre-flattened), always consistent across response-shape
+   * variants (`data` / `items` / `results` / any-array fallback).
+   */
   items: T[];
+  /**
+   * Normalized pagination snapshot — offset / keyset / aggregate all map
+   * onto the same `{ method, total, pages, page, limit, hasNext, hasPrev, next? }`
+   * shape. `null` when the response carries no pagination signal.
+   */
   pagination: PaginationData | null;
   isLoading: boolean;
   isFetching: boolean;
@@ -101,10 +121,23 @@ export interface ListQueryResult<T> {
   isStale: boolean;
   error: Error | null;
   refetch: () => Promise<unknown>;
-  data: unknown;
 }
 
+/**
+ * Result of `useDetail` (and `useDetailQuery`). Matches the typed-end-to-end
+ * shape repo-core uses for its result interfaces — no raw-cache escape
+ * hatch on the public surface, just the typed extracted view.
+ *
+ * Need the raw cache entry? `useQueryClient().getQueryData(KEYS.detail(id))`
+ * — typed against whatever `setQueryData` last wrote, and the explicit
+ * `getQueryData` call signals "I'm reaching past the SDK" at the call site.
+ */
 export interface DetailQueryResult<T> {
+  /**
+   * The extracted entity — `T | null`. Always typed, always the raw doc
+   * (not a wrapper), always consistent with what `prefetchDetail` /
+   * `cache.getDetail` / `useNavigation` write back.
+   */
   item: T | null;
   isLoading: boolean;
   isFetching: boolean;
@@ -120,7 +153,6 @@ export interface DetailQueryResult<T> {
   isPlaceholderData: boolean;
   error: Error | null;
   refetch: () => Promise<unknown>;
-  data: unknown;
 }
 
 // ============================================================================
@@ -180,7 +212,6 @@ export function useListQuery<T>({
     isStale: query.isStale,
     error: query.error,
     refetch: query.refetch,
-    data: query.data,
   };
 }
 
@@ -286,7 +317,6 @@ export function useDetailQuery<T>({
     isPlaceholderData: query.isPlaceholderData,
     error: query.error,
     refetch: query.refetch,
-    data: query.data,
   };
 }
 
