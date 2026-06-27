@@ -3,6 +3,7 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
   entry: [
     'src/client.ts',
+    'src/encryption.ts',
     'src/api.ts',
     'src/query.ts',
     'src/mutation.ts',
@@ -34,6 +35,7 @@ export default defineConfig({
       'react',
       'react/jsx-runtime',
       '@tanstack/react-query',
+      'jose',
     ],
   },
 });

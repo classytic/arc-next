@@ -328,6 +328,40 @@ export function isDuplicateKeyError(error: unknown): error is ArcApiError {
 // Client Configuration
 // ============================================================================
 
+/**
+ * Application-Layer Encryption (ALE) config — the client half of
+ * `@classytic/arc/encryption`. Lets the SDK decrypt JWE response bodies and
+ * (optionally) encrypt JSON request bodies, transparently to callers and to
+ * the repo-core wire contracts (decryption happens BEFORE error / pagination
+ * parsing, so the parsed shape is identical to an unencrypted response).
+ *
+ * `decrypt` / `encrypt` are host-supplied so the core SDK pulls no crypto
+ * dependency. Use `createJoseEncryption()` from `@classytic/arc-next/encryption`
+ * for a ready-made JWE implementation, or wire your own (KMS proxy, WebCrypto).
+ */
+export interface ClientEncryptionConfig {
+  /**
+   * Decrypt an encrypted response body (JWE compact string) → plaintext JSON
+   * string. Required — this is what makes encrypted responses readable.
+   */
+  decrypt: (payload: string) => string | Promise<string>;
+  /**
+   * Encrypt a serialized JSON request body string → JWE compact string.
+   * Required only when `encryptRequests` is true.
+   */
+  encrypt?: (json: string) => string | Promise<string>;
+  /**
+   * Encrypt outbound JSON request bodies. Default `false` — responses are
+   * still decrypted regardless (the common case: server encrypts responses,
+   * client posts plaintext over TLS).
+   */
+  encryptRequests?: boolean;
+  /** Response media type signalling an encrypted body. Default `'application/jose'`. */
+  responseContentType?: string;
+  /** Content-Type set on encrypted outbound requests. Default `'application/jose'`. */
+  requestContentType?: string;
+}
+
 export interface ClientConfig {
   baseUrl: string;
   internalApiKey?: string;
@@ -410,6 +444,13 @@ export interface ClientConfig {
    * });
    */
   afterResponse?: AfterResponseInterceptor;
+  /**
+   * Application-Layer Encryption. When set, the SDK decrypts `application/jose`
+   * response bodies (and, with `encryptRequests`, encrypts JSON request bodies)
+   * — the client counterpart to `@classytic/arc/encryption` on the backend.
+   * Transparent to repo-core wire contracts. See {@link ClientEncryptionConfig}.
+   */
+  encryption?: ClientEncryptionConfig;
 }
 
 // ============================================================================
@@ -1369,6 +1410,20 @@ async function executeAttempt<T = unknown>(
         : JSON.stringify(body);
     }
 
+    // Application-Layer Encryption — encrypt outbound JSON bodies. Only the
+    // JSON path we serialized ourselves (a string) is encrypted; FormData /
+    // Blob / raw bytes pass through untouched. The Content-Type flips to the
+    // JWE media type so the backend's content-type parser decrypts it.
+    const encryption = config.encryption;
+    if (
+      encryption?.encryptRequests &&
+      encryption.encrypt &&
+      typeof serializedBody === 'string'
+    ) {
+      serializedBody = await encryption.encrypt(serializedBody);
+      headers['Content-Type'] = encryption.requestContentType ?? 'application/jose';
+    }
+
     // beforeRequest interceptor: mutate headers/body before fetch. Runs per
     // attempt so retries pick up rotated tokens/trace IDs.
     if (config.beforeRequest) {
@@ -1437,9 +1492,16 @@ async function executeAttempt<T = unknown>(
         // routed through it AND `{ error }` for controller-emitted IControllerResponse
         // failures. Some hosts / non-arc backends use `{ message }` instead.
         // Read both, preferring `error` (arc native), falling back to `message`.
-        const j = json as { error?: unknown; message?: unknown } | null;
+        const j = json as
+          | { error?: unknown; message?: unknown; meta?: { message?: unknown } }
+          | null;
         errorMessage =
           (typeof j?.error === 'string' && j.error) ||
+          // Arc wraps hook-thrown errors as `{ message: 'Hook execution failed',
+          // meta: { message: <the real, author-written message> } }`. Surface the
+          // real message so the user sees "Your organization is pending approval…"
+          // instead of the generic wrapper text. (No-op when `meta.message` absent.)
+          (typeof j?.meta?.message === 'string' && j.meta.message) ||
           (typeof j?.message === 'string' && j.message) ||
           response.statusText;
       } catch {
@@ -1468,7 +1530,16 @@ async function executeAttempt<T = unknown>(
 
     let data: unknown;
 
-    if (contentType?.includes('application/json')) {
+    // Application-Layer Encryption — decrypt a JWE response body BEFORE any
+    // content-type / repo-core parsing, so the decrypted JSON flows through
+    // the normal path and the wire contract (pagination, error shapes) is
+    // identical to an unencrypted response.
+    const decryptCt = encryption ? (encryption.responseContentType ?? 'application/jose') : undefined;
+    if (encryption && decryptCt && contentType?.includes(decryptCt)) {
+      const cipher = await response.text();
+      const plaintext = cipher.length > 0 ? await encryption.decrypt(cipher) : '';
+      data = plaintext.length > 0 ? JSON.parse(plaintext) : undefined;
+    } else if (contentType?.includes('application/json')) {
       data = await response.json();
     } else if (contentType?.includes('application/pdf') || contentType?.includes('image/')) {
       const blobData = await response.blob();

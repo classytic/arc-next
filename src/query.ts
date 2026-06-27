@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useInfiniteQuery, keepPreviousData, type QueryKey, type InfiniteData, type QueryClient } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery, useInfiniteQuery, keepPreviousData, type QueryKey, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef } from "react";
 
 // Server-safe utilities live in ./cache.ts (no "use client") so Server Components
@@ -315,6 +315,83 @@ export function useDetailQuery<T>({
     isSuccess: query.isSuccess,
     isStale: query.isStale,
     isPlaceholderData: query.isPlaceholderData,
+    error: query.error,
+    refetch: query.refetch,
+  };
+}
+
+// ============================================================================
+// Suspense Query Hooks
+// ============================================================================
+//
+// `useSuspenseQuery` variants for Suspense / streaming-SSR routes: the query
+// always fetches (no `enabled` gate) and SUSPENDS until data resolves, so the
+// component renders with `data` guaranteed-defined and never sees a loading
+// branch — wrap the subtree in `<Suspense fallback={...}>` and an
+// `<ErrorBoundary>` (errors throw to the boundary instead of populating
+// `isError`). TanStack forbids `enabled` / `placeholderData` on the suspense
+// hook, so these variants intentionally drop both (the list→detail
+// `placeholderData` preview is a non-suspense feature — use `useDetailQuery`
+// when you want it). The result shape mirrors the non-suspense hooks so call
+// sites can switch between them with no other changes (`isLoading` is always
+// `false`; `isPlaceholderData` is always `false`).
+
+/** Suspense variant of {@link useListQuery}. Always enabled; suspends until resolved. */
+export function useSuspenseListQuery<T>({
+  queryKey,
+  queryFn,
+  options = {},
+  select,
+}: Omit<CreateListQueryConfig, "enabled">): ListQueryResult<T> {
+  const query = useSuspenseQuery({
+    queryKey,
+    queryFn: ({ signal }) => queryFn({ signal }),
+    ...DEFAULT_QUERY_CONFIG,
+    ...options,
+    ...(select ? { select } : {}),
+  });
+
+  const items = useMemo(() => extractItems<T>(query.data), [query.data]);
+  const pagination = useMemo(() => normalizePagination(query.data), [query.data]);
+
+  return {
+    items,
+    pagination,
+    isLoading: false,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    isSuccess: query.isSuccess,
+    isStale: query.isStale,
+    error: query.error,
+    refetch: query.refetch,
+  };
+}
+
+/** Suspense variant of {@link useDetailQuery}. Always enabled; suspends until resolved. */
+export function useSuspenseDetailQuery<T>({
+  queryKey,
+  queryFn,
+  options = {},
+  select,
+}: Omit<CreateDetailQueryConfig<T>, "enabled" | "placeholderData">): DetailQueryResult<T> {
+  const query = useSuspenseQuery({
+    queryKey,
+    queryFn: ({ signal }) => queryFn({ signal }),
+    ...DEFAULT_QUERY_CONFIG,
+    ...options,
+    ...(select ? { select } : {}),
+  });
+
+  const item = extractItem<T>(query.data);
+
+  return {
+    item,
+    isLoading: false,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    isSuccess: query.isSuccess,
+    isStale: query.isStale,
+    isPlaceholderData: false,
     error: query.error,
     refetch: query.refetch,
   };

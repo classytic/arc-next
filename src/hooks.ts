@@ -7,6 +7,8 @@ import type { MutationMessages } from "./mutation.js";
 import {
   useListQuery,
   useDetailQuery,
+  useSuspenseListQuery,
+  useSuspenseDetailQuery,
   useInfiniteListQuery,
   findItemInListCache,
 } from "./query.js";
@@ -224,6 +226,24 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     /** Legacy signature — explicit token */
     (id: string | null, token: string | null, options?: DetailQueryOptions<T>): DetailQueryResult<T>;
   };
+  /**
+   * Suspense variant of `useList` for Suspense / streaming-SSR routes. Always
+   * fetches and SUSPENDS until resolved — wrap the subtree in `<Suspense>` and
+   * an error boundary. No `enabled` gate and no `keepPreviousData` preview
+   * (TanStack forbids both on suspense queries); `isLoading` is always `false`.
+   */
+  useSuspenseList: (
+    params?: Record<string, unknown>,
+    options?: Omit<ListQueryOptions<T>, "enabled">,
+  ) => ListQueryResult<T>;
+  /**
+   * Suspense variant of `useDetail`. `id` must be present (it always fetches).
+   * Suspends until resolved; no list→detail `placeholderData` preview.
+   */
+  useSuspenseDetail: (
+    id: string,
+    options?: Omit<DetailQueryOptions<T>, "enabled">,
+  ) => DetailQueryResult<T>;
   useInfiniteList: {
     /** New signature — auto-injects token/orgId from configureAuth() context */
     (params?: Record<string, unknown>, options?: InfiniteListQueryOptions): InfiniteListQueryResult<T>;
@@ -575,6 +595,86 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         idField ? { idField } : {},
       );
     }, [detailResult.item, detailResult.isPlaceholderData, queryClient]);
+
+    return detailResult;
+  }
+
+  // ========== useSuspenseList / useSuspenseDetail ==========
+  // Suspense variants for Suspense / streaming-SSR routes. Auth/orgId are
+  // auto-resolved (same as the new-signature useList/useDetail). They always
+  // fetch and suspend — no `enabled` gate, no list→detail placeholder preview.
+
+  function useSuspenseList(
+    params: Record<string, unknown> = {},
+    options: Omit<ListQueryOptions<T>, "enabled"> = {},
+  ): ListQueryResult<T> {
+    const auth = resolveAuth();
+    const token = auth.token;
+    let resolvedParams = params;
+    if (auth.organizationId && !resolvedParams.organizationId) {
+      resolvedParams = { ...resolvedParams, organizationId: auth.organizationId };
+    }
+    const { organizationId, ...restParams } = resolvedParams;
+    const scope = options._scope || (organizationId ? "tenant" : "super-admin");
+    const { request: requestOpts, ...queryOpts } = options;
+
+    return useSuspenseListQuery<T>({
+      queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
+      queryFn: ({ signal }) =>
+        api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
+      options: {
+        staleTime: queryOpts.staleTime ?? config.staleTime,
+        gcTime: queryOpts.gcTime ?? config.gcTime,
+        refetchOnWindowFocus: queryOpts.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
+        structuralSharing: queryOpts.structuralSharing ?? config.structuralSharing,
+        refetchInterval: queryOpts.refetchInterval,
+        refetchIntervalInBackground: queryOpts.refetchIntervalInBackground,
+      },
+      select: queryOpts.select,
+    });
+  }
+
+  function useSuspenseDetail(
+    id: string,
+    options: Omit<DetailQueryOptions<T>, "enabled"> = {},
+  ): DetailQueryResult<T> {
+    const auth = resolveAuth();
+    const token = auth.token;
+    let opts = options;
+    if (auth.organizationId && !opts.organizationId) {
+      opts = { ...opts, organizationId: auth.organizationId };
+    }
+    const { organizationId, params: queryParams, request: requestOpts, ...restOptions } = opts;
+
+    const detailKey = KEYS.scopedDetail(id, organizationId ?? null);
+    const fullDetailKey = queryParams ? [...detailKey, queryParams] : detailKey;
+
+    const queryClient = useQueryClient();
+    const detailResult = useSuspenseDetailQuery<T>({
+      queryKey: fullDetailKey,
+      queryFn: ({ signal }) =>
+        api.getById({ id, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
+      options: {
+        staleTime: restOptions.staleTime ?? config.staleTime,
+        gcTime: restOptions.gcTime ?? config.gcTime,
+        refetchOnWindowFocus: restOptions.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
+        structuralSharing: restOptions.structuralSharing ?? config.structuralSharing,
+        refetchInterval: restOptions.refetchInterval,
+        refetchIntervalInBackground: restOptions.refetchIntervalInBackground,
+      },
+      select: restOptions.select,
+    });
+
+    // Same detail → list fan-out as `useDetail` so list views stay in sync.
+    useEffect(() => {
+      if (!detailResult.item) return;
+      syncDetailToLists(
+        queryClient,
+        KEYS.lists(),
+        detailResult.item as unknown as Record<string, unknown>,
+        idField ? { idField } : {},
+      );
+    }, [detailResult.item, queryClient]);
 
     return detailResult;
   }
@@ -1498,6 +1598,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     cache,
     useList,
     useDetail,
+    useSuspenseList,
+    useSuspenseDetail,
     useInfiniteList,
     useActions,
     useBulkActions,

@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -37,6 +37,10 @@
     "./client": {
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
+    },
+    "./encryption": {
+      "types": "./dist/encryption.d.ts",
+      "default": "./dist/encryption.js"
     },
     "./api": {
       "types": "./dist/api.d.ts",
@@ -124,12 +128,14 @@
   "peerDependencies": {
     "@classytic/repo-core": ">=0.4.0",
     "@tanstack/react-query": ">=5.62.0",
+    "jose": ">=5.0.0",
     "react": ">=19.0.0"
   },
   "peerDependenciesMeta": {
     "react": { "optional": false },
     "@tanstack/react-query": { "optional": false },
-    "@classytic/repo-core": { "optional": false }
+    "@classytic/repo-core": { "optional": false },
+    "jose": { "optional": true }
   },
   "devDependencies": {
     "@classytic/dev-tools": "^0.2.0",
@@ -139,6 +145,7 @@
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "jose": "^6.2.3",
     "jsdom": "^29.0.2",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
