@@ -3,7 +3,7 @@ import type {
   DeleteManyResult,
   UpdateManyResult,
 } from '@classytic/repo-core/repository';
-import type { BaseApi, ScopedArgs } from '../api.js';
+import type { AnyBaseApi, CreateOf, DocOf, ScopedArgs, UpdateOf } from '../api.js';
 
 // ============================================================================
 // Methods added by the bulk preset
@@ -50,9 +50,12 @@ export interface BulkMethods<TDoc, TCreate = Partial<TDoc>, TUpdate = Partial<TD
  * await todos.bulkUpdate({ filter: { status: 'pending' }, data: { status: 'archived' } });
  * await todos.bulkDelete({ filter: { archivedBefore: '2024-01-01' } });
  */
-export function withBulk<TDoc, TCreate, TUpdate>(
-  api: BaseApi<TDoc, TCreate, TUpdate>,
-): BaseApi<TDoc, TCreate, TUpdate> & BulkMethods<TDoc, TCreate, TUpdate> {
+export function withBulk<TApi extends AnyBaseApi>(
+  api: TApi,
+): TApi & BulkMethods<DocOf<TApi>, CreateOf<TApi>, UpdateOf<TApi>> {
+  type TDoc = DocOf<TApi>;
+  type TCreate = CreateOf<TApi>;
+  type TUpdate = UpdateOf<TApi>;
   const ext: BulkMethods<TDoc, TCreate, TUpdate> = {
     async bulkCreate({ token = null, organizationId = null, data, options = {} }) {
       // Wire shape (arc bulk preset): `POST /:resource/bulk { items: [...] }`.
@@ -83,5 +86,6 @@ export function withBulk<TDoc, TCreate, TUpdate>(
       });
     },
   };
-  return Object.assign(api, ext);
+  return Object.assign(api, ext) as TApi &
+    BulkMethods<DocOf<TApi>, CreateOf<TApi>, UpdateOf<TApi>>;
 }

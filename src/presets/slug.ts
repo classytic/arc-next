@@ -1,5 +1,6 @@
 import type {
-  BaseApi,
+  AnyBaseApi,
+  DocOf,
   ScopedArgs,
 } from '../api.js';
 
@@ -31,9 +32,10 @@ export interface SlugLookupMethods<TDoc> {
  *
  * const cat = await categories.getBySlug({ slug: 'engineering' });
  */
-export function withSlugLookup<TDoc, TCreate, TUpdate>(
-  api: BaseApi<TDoc, TCreate, TUpdate>,
-): BaseApi<TDoc, TCreate, TUpdate> & SlugLookupMethods<TDoc> {
+export function withSlugLookup<TApi extends AnyBaseApi>(
+  api: TApi,
+): TApi & SlugLookupMethods<DocOf<TApi>> {
+  type TDoc = DocOf<TApi>;
   const ext: SlugLookupMethods<TDoc> = {
     async getBySlug({ token = null, organizationId = null, slug, params = {}, options = {} }) {
       if (!slug) throw new Error('Slug is required');
@@ -45,5 +47,5 @@ export function withSlugLookup<TDoc, TCreate, TUpdate>(
       });
     },
   };
-  return Object.assign(api, ext);
+  return Object.assign(api, ext) as TApi & SlugLookupMethods<TDoc>;
 }

@@ -1,6 +1,7 @@
 import type { PaginatedResult } from '@classytic/repo-core/pagination';
 import type {
-  BaseApi,
+  AnyBaseApi,
+  DocOf,
   ScopedArgs,
 } from '../api.js';
 
@@ -78,9 +79,10 @@ export interface SearchPresetMethods<TDoc> {
  * await places.searchSimilar({ vector: [0.1, 0.2, ...], body: { topK: 5 } });
  * await places.embed({ input: 'hello world' });
  */
-export function withSearchPreset<TDoc, TCreate, TUpdate>(
-  api: BaseApi<TDoc, TCreate, TUpdate>,
-): BaseApi<TDoc, TCreate, TUpdate> & SearchPresetMethods<TDoc> {
+export function withSearchPreset<TApi extends AnyBaseApi>(
+  api: TApi,
+): TApi & SearchPresetMethods<DocOf<TApi>> {
+  type TDoc = DocOf<TApi>;
   const ext: SearchPresetMethods<TDoc> = {
     async searchEngine({ token = null, organizationId = null, query, body, path = '/search', options = {} } = {}) {
       const requestBody: Record<string, unknown> = { ...(body ?? {}) };
@@ -113,5 +115,5 @@ export function withSearchPreset<TDoc, TCreate, TUpdate>(
       });
     },
   };
-  return Object.assign(api, ext);
+  return Object.assign(api, ext) as TApi & SearchPresetMethods<TDoc>;
 }

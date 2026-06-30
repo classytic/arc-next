@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -123,7 +123,8 @@
     "push": "classytic-push",
     "release:tag": "node -e \"require('child_process').execSync('npm run push -- v'+require('./package.json').version,{stdio:'inherit'})\"",
     "release": "npm run push -- main && npm run release:tag && npm publish",
-    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.test.json"
   },
   "peerDependencies": {
     "@classytic/repo-core": ">=0.4.0",
@@ -132,10 +133,18 @@
     "react": ">=19.0.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": false },
-    "@tanstack/react-query": { "optional": false },
-    "@classytic/repo-core": { "optional": false },
-    "jose": { "optional": true }
+    "react": {
+      "optional": false
+    },
+    "@tanstack/react-query": {
+      "optional": false
+    },
+    "@classytic/repo-core": {
+      "optional": false
+    },
+    "jose": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@classytic/dev-tools": "^0.2.0",

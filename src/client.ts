@@ -980,13 +980,41 @@ export interface TextResponse {
   response: Response;
 }
 
+/**
+ * Next.js App Router `fetch` cache directives — forwarded verbatim as
+ * `fetch(url, { next })`. This is the idiomatic Next shape; a host using the
+ * App Router can pass it 1:1 with what they'd hand to `fetch`. The flattened
+ * `revalidate` / `tags` options remain for back-compat and are merged into
+ * this object before the request (flattened values win / append).
+ *
+ * @see https://nextjs.org/docs/app/api-reference/functions/fetch
+ */
+export interface NextFetchOptions {
+  /**
+   * Seconds before the cached response is considered stale and revalidated.
+   * `false` caches indefinitely (Next's `force-cache` semantics); `0` opts
+   * out of caching. Omit to inherit the route's default.
+   */
+  revalidate?: number | false;
+  /** Cache tags for on-demand `revalidateTag(tag)` invalidation. */
+  tags?: string[];
+}
+
 export interface ApiRequestOptions {
   body?: unknown;
   token?: string | null;
   organizationId?: string | null;
-  revalidate?: number;
+  /** Flattened Next `revalidate` (see `next`). `false` = cache indefinitely. */
+  revalidate?: number | false;
   headerOptions?: Record<string, string>;
+  /** Flattened Next cache `tags` (see `next`). */
   tags?: string[];
+  /**
+   * Idiomatic Next App Router fetch cache config — passed straight to
+   * `fetch(url, { next })`. Prefer this over the flattened `revalidate`/`tags`
+   * when a Next host wants full control; both are merged.
+   */
+  next?: NextFetchOptions;
   cache?: RequestCache;
   signal?: AbortSignal;
   /** Explicit idempotency key for this request. Sent as `Idempotency-Key` header. */
@@ -1337,6 +1365,7 @@ async function executeAttempt<T = unknown>(
     revalidate,
     headerOptions,
     tags,
+    next,
     cache,
     signal,
     idempotencyKey,
@@ -1439,7 +1468,7 @@ async function executeAttempt<T = unknown>(
       serializedBody = ctx.body;
     }
 
-    const fetchOptions: RequestInit & { next?: { revalidate?: number; tags?: string[] } } = {
+    const fetchOptions: RequestInit & { next?: NextFetchOptions } = {
       method,
       headers,
       credentials,
@@ -1453,11 +1482,14 @@ async function executeAttempt<T = unknown>(
     if (cache) {
       fetchOptions.cache = cache;
     }
-    if (revalidate !== undefined) {
-      fetchOptions.next = { ...fetchOptions.next, revalidate };
-    }
-    if (tags) {
-      fetchOptions.next = { ...fetchOptions.next, tags };
+    // Merge the idiomatic `next` object with the flattened `revalidate`/`tags`.
+    // Flattened values take precedence for `revalidate`; `tags` are unioned so a
+    // caller passing both doesn't silently drop either set.
+    const nextCfg: NextFetchOptions = { ...next };
+    if (revalidate !== undefined) nextCfg.revalidate = revalidate;
+    if (tags) nextCfg.tags = nextCfg.tags ? [...nextCfg.tags, ...tags] : tags;
+    if (nextCfg.revalidate !== undefined || nextCfg.tags) {
+      fetchOptions.next = nextCfg;
     }
 
     // Fail loud on the silent 404 cascade: if baseUrl is empty AND the
@@ -1794,10 +1826,12 @@ export interface ArcFetchOptions extends Omit<RequestInit, 'body' | 'headers'> {
   elevated?: boolean;
   /** Per-call `Idempotency-Key` header. */
   idempotencyKey?: string;
-  /** Next.js fetch `revalidate` pass-through. */
-  revalidate?: number;
-  /** Next.js fetch `tags` pass-through. */
+  /** Flattened Next `revalidate` pass-through. `false` = cache indefinitely. */
+  revalidate?: number | false;
+  /** Flattened Next cache `tags` pass-through. */
   tags?: string[];
+  /** Idiomatic Next App Router fetch config — merged with `revalidate`/`tags`. */
+  next?: NextFetchOptions;
   /** `cache` pass-through (browser fetch + Next.js). */
   cache?: RequestCache;
   /**
@@ -1896,6 +1930,7 @@ export function arcFetch<T = unknown>(
     idempotencyKey,
     revalidate,
     tags,
+    next,
     cache,
     client,
   } = options;
@@ -1910,6 +1945,7 @@ export function arcFetch<T = unknown>(
     ...(idempotencyKey ? { idempotencyKey } : {}),
     ...(revalidate !== undefined ? { revalidate } : {}),
     ...(tags ? { tags } : {}),
+    ...(next ? { next } : {}),
     ...(cache ? { cache } : {}),
   };
 

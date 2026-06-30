@@ -22,7 +22,25 @@ export interface PrefetchAuthContext {
 
 export interface PrefetchOptions extends PrefetchAuthContext {
   staleTime?: number;
+  /**
+   * Next.js fetch caching forwarded to the underlying API call. A Server
+   * Component that prefetches with `revalidate` lets that data participate in
+   * ISR — without it the SDK's default `no-store` pins the whole route to
+   * dynamic rendering (e.g. a shared layout prefetch silently disables ISR on
+   * every page under it). Inert off-Next (React Native / plain browser fetch).
+   */
+  cache?: RequestCache;
+  revalidate?: number | false;
+  tags?: string[];
 }
+
+/** Per-call API `options` the prefetcher forwards (caching + custom headers). */
+type ForwardedApiOptions = {
+  headerOptions?: Record<string, string>;
+  cache?: RequestCache;
+  revalidate?: number | false;
+  tags?: string[];
+};
 
 export interface PrefetchDetailOptions extends PrefetchOptions {
   /** Query params (select, populate) — key must match useDetail's params to share cache */
@@ -157,44 +175,56 @@ export function createCrudPrefetcher(
       params?: Record<string, unknown>;
       token?: string | null;
       organizationId?: string | null;
-      options?: { headerOptions?: Record<string, string> };
+      options?: ForwardedApiOptions;
     }) => Promise<unknown>;
     getById: (opts: {
       id: string;
       token?: string | null;
       organizationId?: string | null;
-      options?: { headerOptions?: Record<string, string> };
+      options?: ForwardedApiOptions;
     }) => Promise<unknown>;
     getBySlug?: (opts: {
       slug: string;
       token?: string | null;
       organizationId?: string | null;
       params?: Record<string, unknown>;
-      options?: { headerOptions?: Record<string, string> };
+      options?: ForwardedApiOptions;
     }) => Promise<unknown>;
     getDeleted?: (opts: {
       params?: Record<string, unknown>;
       token?: string | null;
       organizationId?: string | null;
-      options?: { headerOptions?: Record<string, string> };
+      options?: ForwardedApiOptions;
     }) => Promise<unknown>;
     aggregate?: (opts: {
       name: string;
       filter?: Record<string, unknown>;
       token?: string | null;
       organizationId?: string | null;
-      options?: { headerOptions?: Record<string, string> };
+      options?: ForwardedApiOptions;
     }) => Promise<unknown>;
     getTree?: (opts: {
       params?: Record<string, unknown>;
       token?: string | null;
       organizationId?: string | null;
-      options?: { headerOptions?: Record<string, string> };
+      options?: ForwardedApiOptions;
     }) => Promise<unknown>;
   },
   entityKey: string,
 ): CrudPrefetcher {
   const KEYS = createQueryKeys(entityKey);
+
+  // Build the per-call API `options` from prefetch options: forward Next.js
+  // fetch caching (cache/revalidate/tags) + any custom headers. Returns `{}`
+  // when there's nothing to forward so call sites can spread unconditionally.
+  const apiOptions = (o: PrefetchOptions): { options?: ForwardedApiOptions } => {
+    const opt: ForwardedApiOptions = {};
+    if (o.headers) opt.headerOptions = o.headers;
+    if (o.cache !== undefined) opt.cache = o.cache;
+    if (o.revalidate !== undefined) opt.revalidate = o.revalidate;
+    if (o.tags !== undefined) opt.tags = o.tags;
+    return Object.keys(opt).length ? { options: opt } : {};
+  };
 
   return {
     async prefetchList(queryClient, params = {}, options = {}) {
@@ -209,7 +239,7 @@ export function createCrudPrefetcher(
           params: restParams,
           token: options.token ?? null,
           organizationId: orgId,
-          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+          ...apiOptions(options),
         }),
         staleTime: options.staleTime,
       });
@@ -227,7 +257,7 @@ export function createCrudPrefetcher(
           token: token ?? null,
           organizationId: organizationId ?? null,
           ...(params ? { params } : {}),
-          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+          ...apiOptions(options),
         }),
         staleTime,
       });
@@ -247,7 +277,7 @@ export function createCrudPrefetcher(
           token: token ?? null,
           organizationId: organizationId ?? null,
           ...(params ? { params } : {}),
-          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+          ...apiOptions(options),
         }),
         staleTime,
       });
@@ -267,7 +297,7 @@ export function createCrudPrefetcher(
           params: restParams,
           token: options.token ?? null,
           organizationId: orgId,
-          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+          ...apiOptions(options),
         }),
         staleTime: options.staleTime,
       });
@@ -289,7 +319,7 @@ export function createCrudPrefetcher(
           filter,
           token: options.token ?? null,
           organizationId: orgId,
-          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+          ...apiOptions(options),
         }),
         staleTime: options.staleTime,
       });
@@ -309,7 +339,7 @@ export function createCrudPrefetcher(
           params: restParams,
           token: options.token ?? null,
           organizationId: orgId,
-          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+          ...apiOptions(options),
         }),
         staleTime: options.staleTime,
       });
@@ -332,7 +362,7 @@ export function createCrudPrefetcher(
           params: { ...restParams, ...(pageParam ? { page: pageParam } : {}) } as Record<string, unknown>,
           token: options.token ?? null,
           organizationId: orgId,
-          ...(options.headers ? { options: { headerOptions: options.headers } } : {}),
+          ...apiOptions(options),
         }),
         initialPageParam: 1 as unknown,
         // useInfiniteQuery requires getNextPageParam at runtime, but for SSR

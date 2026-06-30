@@ -1,6 +1,7 @@
 import type { PaginatedResult } from '@classytic/repo-core/pagination';
 import type {
-  BaseApi,
+  AnyBaseApi,
+  DocOf,
   QueryParams,
   ScopedArgs,
 } from '../api.js';
@@ -38,9 +39,10 @@ export interface SoftDeleteMethods<TDoc> {
  * await todos.restore({ id });            // undo
  * const trash = await todos.getDeleted();
  */
-export function withSoftDelete<TDoc, TCreate, TUpdate>(
-  api: BaseApi<TDoc, TCreate, TUpdate>,
-): BaseApi<TDoc, TCreate, TUpdate> & SoftDeleteMethods<TDoc> {
+export function withSoftDelete<TApi extends AnyBaseApi>(
+  api: TApi,
+): TApi & SoftDeleteMethods<DocOf<TApi>> {
+  type TDoc = DocOf<TApi>;
   const ext: SoftDeleteMethods<TDoc> = {
     async getDeleted({ token = null, organizationId = null, params = {}, options = {} } = {}) {
       const merged = { ...api.config.defaultParams, ...params };
@@ -60,5 +62,5 @@ export function withSoftDelete<TDoc, TCreate, TUpdate>(
       });
     },
   };
-  return Object.assign(api, ext);
+  return Object.assign(api, ext) as TApi & SoftDeleteMethods<TDoc>;
 }

@@ -1,6 +1,7 @@
 import type { PaginatedResult } from '@classytic/repo-core/pagination';
 import type {
-  BaseApi,
+  AnyBaseApi,
+  DocOf,
   QueryParams,
   ScopedArgs,
 } from '../api.js';
@@ -38,9 +39,10 @@ export interface TreeMethods<TDoc> {
  * const root = await categories.getTree();
  * const kids = await categories.getChildren({ parentId: 'engineering' });
  */
-export function withTree<TDoc, TCreate, TUpdate>(
-  api: BaseApi<TDoc, TCreate, TUpdate>,
-): BaseApi<TDoc, TCreate, TUpdate> & TreeMethods<TDoc> {
+export function withTree<TApi extends AnyBaseApi>(
+  api: TApi,
+): TApi & TreeMethods<DocOf<TApi>> {
+  type TDoc = DocOf<TApi>;
   const ext: TreeMethods<TDoc> = {
     async getTree({ token = null, organizationId = null, params = {}, options = {} } = {}) {
       // Tree endpoint can return many nodes — merge defaultParams (limit/page)
@@ -63,5 +65,5 @@ export function withTree<TDoc, TCreate, TUpdate>(
       );
     },
   };
-  return Object.assign(api, ext);
+  return Object.assign(api, ext) as TApi & TreeMethods<DocOf<TApi>>;
 }

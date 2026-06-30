@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.9.0
+
+### Fixed — presets now COMPOSE (generic-preserving)
+
+Each `withX(api)` previously returned `BaseApi<TDoc> & XMethods`, which widened
+the input back to a bare `BaseApi` — so chaining presets, or composing a preset
+over a subclass with custom methods, silently dropped every other method **at
+the type level**. `withSearchPreset(withBulk(withSlugLookup(withSoftDelete(api))))`
+typed as just `BaseApi & SearchPresetMethods`.
+
+All five presets (`withSlugLookup`, `withSoftDelete`, `withBulk`, `withSearchPreset`,
+`withTree`) are now generic over the API type:
+
+```ts
+export function withSlugLookup<TApi extends AnyBaseApi>(
+  api: TApi,
+): TApi & SlugLookupMethods<DocOf<TApi>>
+```
+
+So presets stack and the resource's own methods survive. New type helpers
+exported from `@classytic/arc-next/api`: `AnyBaseApi`, `DocOf`, `CreateOf`,
+`UpdateOf`. **Backward-compatible** — a single-preset call returns the same
+shape it always did. Locked in by `tests/presets/compose.test.ts` +
+`npm run typecheck:tests`.
+
+### Added — first-class Next.js App Router fetch options
+
+`RequestOptions` / `ApiRequestOptions` / `ArcFetchOptions` now accept the
+idiomatic `next: { revalidate, tags }` object — passed verbatim as
+`fetch(url, { next })` — so a Next host can hand it 1:1 with what they'd give
+`fetch`. The flattened `revalidate` / `tags` still work and are merged
+(flattened `revalidate` wins; `tags` are unioned). `revalidate` now accepts
+`false` (cache indefinitely). `cache` continues to pass through. Locked in by
+`tests/next-fetch-options.test.ts`.
+
 ## 0.7.1
 
 ### Fixed — `createAuthAwareClient()` reads `configureClient()` lazily

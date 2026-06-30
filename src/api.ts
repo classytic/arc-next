@@ -13,7 +13,7 @@ import type {
   UpdateManyResult,
 } from '@classytic/repo-core/repository';
 import { handleApiRequest, createQueryString } from './client.js';
-import type { ApiRequestOptions, ArcClient } from './client.js';
+import type { ApiRequestOptions, ArcClient, NextFetchOptions } from './client.js';
 
 // ============================================================================
 // Populate Types
@@ -132,8 +132,14 @@ export interface RequestOptions {
   token?: string | null;
   organizationId?: string | null;
   cache?: RequestCache;
-  revalidate?: number;
+  /** Flattened Next `revalidate`. `false` = cache indefinitely. */
+  revalidate?: number | false;
   tags?: string[];
+  /**
+   * Idiomatic Next App Router fetch config — passed to `fetch(url, { next })`.
+   * Merged with the flattened `revalidate`/`tags`. Prefer this from Next hosts.
+   */
+  next?: NextFetchOptions;
   headerOptions?: Record<string, string>;
   responseType?: 'json' | 'blob' | 'text';
   signal?: AbortSignal;
@@ -217,6 +223,35 @@ export class BaseApi<
     };
   }
 
+  /**
+   * Apply the instance's default `cache` to a per-call options object — but
+   * ONLY when the caller expressed no caching intent of their own.
+   *
+   * A per-call `revalidate`/`next` (time-based ISR) or an explicit `cache`
+   * takes precedence. The default is `no-store`; forcing it alongside a
+   * `revalidate` makes Next.js throw ("cache: 'no-store' and revalidate are
+   * contradictory") and otherwise silently pins the route to dynamic
+   * rendering — so a consumer can never opt a single read into ISR. Gating the
+   * default here lets `getBySlug({ slug, options: { revalidate: 60 } })` become
+   * statically cacheable without every other call losing its no-store default.
+   *
+   * Framework-agnostic: `cache` / `revalidate` / `next` are inert pass-throughs
+   * on runtimes (React Native, plain browser fetch) that don't implement the
+   * Next.js fetch extensions, so this never assumes a Next host.
+   */
+  private withCacheDefault(
+    options: Omit<RequestOptions, 'token' | 'organizationId'> = {},
+  ): Omit<RequestOptions, 'token' | 'organizationId'> {
+    if (
+      options.cache !== undefined ||
+      options.revalidate !== undefined ||
+      options.next !== undefined
+    ) {
+      return options;
+    }
+    return { cache: this.config.cache, ...options };
+  }
+
   createQueryString(params: Record<string, unknown> = {}): string {
     return createQueryString(params);
   }
@@ -298,8 +333,7 @@ export class BaseApi<
     const queryString = this.createQueryString(processedParams);
 
     const requestOptions: ApiRequestOptions = {
-      cache: this.config.cache,
-      ...options,
+      ...this.withCacheDefault(options),
     };
 
     if (token) requestOptions.token = token;
@@ -327,8 +361,7 @@ export class BaseApi<
     const url = queryString ? `${this.baseUrl}/${id}?${queryString}` : `${this.baseUrl}/${id}`;
 
     const requestOptions: ApiRequestOptions = {
-      cache: this.config.cache,
-      ...options,
+      ...this.withCacheDefault(options),
     };
 
     if (token) requestOptions.token = token;
@@ -459,8 +492,7 @@ export class BaseApi<
 
     const requestOptions: ApiRequestOptions = {
       body: data,
-      cache: this.config.cache,
-      ...options,
+      ...this.withCacheDefault(options),
     };
 
     if (token) requestOptions.token = token;
@@ -629,6 +661,27 @@ export function createCrudApi<
 // ============================================================================
 
 export type ExtractDoc<T> = T extends PaginatedResult<infer D> ? D : never;
+
+// ----------------------------------------------------------------------------
+// Preset composition helpers — extract the doc/create/update types from a
+// (possibly preset-augmented) BaseApi so `withX()` can PRESERVE the input type
+// instead of widening it back to a bare `BaseApi`. This is what lets presets
+// chain: `withSearch(withBulk(withSlug(api)))` keeps every prior preset's
+// methods AND the resource's own custom methods.
+// ----------------------------------------------------------------------------
+
+/** Any preset-augmented BaseApi — the constraint preset factories accept. */
+// biome-ignore lint/suspicious/noExplicitAny: positional inference placeholders
+export type AnyBaseApi = BaseApi<any, any, any>;
+/** Document type of a (possibly augmented) BaseApi. */
+// biome-ignore lint/suspicious/noExplicitAny: positional inference placeholders
+export type DocOf<A> = A extends BaseApi<infer D, any, any> ? D : never;
+/** Create-payload type of a (possibly augmented) BaseApi. */
+// biome-ignore lint/suspicious/noExplicitAny: positional inference placeholders
+export type CreateOf<A> = A extends BaseApi<any, infer C, any> ? C : never;
+/** Update-payload type of a (possibly augmented) BaseApi. */
+// biome-ignore lint/suspicious/noExplicitAny: positional inference placeholders
+export type UpdateOf<A> = A extends BaseApi<any, any, infer U> ? U : never;
 
 // `PaginatedResult` includes a `BareListResult<T>` branch (no `method`
 // field — for endpoints that don't paginate). The predicates below narrow

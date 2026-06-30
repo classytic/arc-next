@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": "." },
+  "include": [
+    "src/**/*",
+    "tests/presets/compose.test.ts",
+    "tests/next-fetch-options.test.ts"
+  ]
+}
