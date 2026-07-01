@@ -284,4 +284,36 @@ describe('createCrudPrefetcher', () => {
     const prefetcher = createCrudPrefetcher(mockApi, 'categories');
     await expect(prefetcher.prefetchTree(queryClient)).rejects.toThrow('getTree');
   });
+
+  // A shared layout that prefetches with the default (no-store) forces EVERY
+  // page under it to dynamic rendering, silently disabling ISR. Forwarding
+  // `revalidate` to the underlying API call is what keeps the storefront
+  // ISR-eligible — guard it.
+  it('prefetchTree forwards revalidate to the underlying API call (ISR-eligible)', async () => {
+    const treeApi = { ...mockApi, getTree: vi.fn().mockResolvedValue([]) };
+    const prefetcher = createCrudPrefetcher(treeApi, 'categories');
+
+    await prefetcher.prefetchTree(queryClient, {}, { revalidate: 300 });
+
+    expect(treeApi.getTree).toHaveBeenCalledWith(
+      expect.objectContaining({ options: expect.objectContaining({ revalidate: 300 }) }),
+    );
+  });
+
+  it('prefetchTree omits options entirely when no caching directive is given', async () => {
+    const treeApi = { ...mockApi, getTree: vi.fn().mockResolvedValue([]) };
+    const prefetcher = createCrudPrefetcher(treeApi, 'categories');
+
+    await prefetcher.prefetchTree(queryClient);
+
+    expect(treeApi.getTree).toHaveBeenCalledWith(expect.not.objectContaining({ options: expect.anything() }));
+  });
+
+  it('prefetchList forwards revalidate too (generic passthrough)', async () => {
+    const prefetcher = createCrudPrefetcher(mockApi, 'products');
+    await prefetcher.prefetchList(queryClient, { limit: 5 }, { revalidate: 120 });
+    expect(mockApi.getAll).toHaveBeenCalledWith(
+      expect.objectContaining({ options: expect.objectContaining({ revalidate: 120 }) }),
+    );
+  });
 });

@@ -61,3 +61,49 @@ describe('Next.js fetch options', () => {
     expect(lastInit().next).toBeUndefined();
   });
 });
+
+/**
+ * Regression: the instance `cache` default (`no-store`) must be ISR-aware.
+ *
+ * A bare read defaults to `no-store` (correct — dynamic by default). But a
+ * caller asking for `revalidate` is opting into ISR, and forcing `no-store`
+ * alongside it makes Next.js throw ("cache: 'no-store' and revalidate are
+ * contradictory") and otherwise pins the route dynamic — so a single read can
+ * never be cached. `withCacheDefault` gates the default on caller intent. This
+ * is what lets a storefront product page's per-call `revalidate` produce an
+ * actually-cacheable fetch instead of a silently-dynamic one.
+ */
+describe('no-store default is revalidate-aware (withCacheDefault)', () => {
+  const api = () => createCrudApi('things', { basePath: '/api' });
+
+  it('a bare read defaults to cache:no-store (dynamic) with no next', async () => {
+    await api().getAll({});
+    expect(lastInit().cache).toBe('no-store');
+    expect(lastInit().next).toBeUndefined();
+  });
+
+  it('per-call revalidate is NOT clobbered by the no-store default → ISR', async () => {
+    await api().getAll({ options: { revalidate: 60 } });
+    expect(lastInit().cache).toBeUndefined(); // the fix — never no-store here
+    expect(lastInit().next).toEqual({ revalidate: 60 });
+  });
+
+  it('explicit cache wins over the no-store default', async () => {
+    await api().getAll({ options: { cache: 'force-cache' } });
+    expect(lastInit().cache).toBe('force-cache');
+  });
+
+  it('request() (the path getBySlug/custom routes use) is ISR-aware too', async () => {
+    // getBySlug rides BaseApi.request via the slugLookup preset; this is the
+    // exact call shape the product detail page issues.
+    await api().request('GET', '/api/things/slug/widget', { options: { revalidate: 300 } });
+    expect(lastInit().cache).toBeUndefined();
+    expect(lastInit().next).toEqual({ revalidate: 300 });
+  });
+
+  it('request() with no options stays no-store (dynamic) by default', async () => {
+    await api().request('GET', '/api/things/slug/widget');
+    expect(lastInit().cache).toBe('no-store');
+    expect(lastInit().next).toBeUndefined();
+  });
+});

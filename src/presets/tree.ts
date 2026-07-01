@@ -45,13 +45,17 @@ export function withTree<TApi extends AnyBaseApi>(
   type TDoc = DocOf<TApi>;
   const ext: TreeMethods<TDoc> = {
     async getTree({ token = null, organizationId = null, params = {}, options = {} } = {}) {
-      // Tree endpoint can return many nodes — merge defaultParams (limit/page)
-      // for parity with getChildren and the always-on getAll.
-      const merged = { ...api.config.defaultParams, ...params };
+      // A tree is the FULL hierarchy, not a paginated list — so do NOT merge the
+      // list `defaultParams` (limit/page). Those have no meaning here: at best
+      // they're dead query string (`?limit=10&page=1`), at worst a backend that
+      // honours them silently truncates the tree to the first page. Pass ONLY
+      // the caller's explicit params (e.g. a `depth`/filter, if the resource
+      // supports one). `getChildren` below is a real paginated level and keeps
+      // the merge.
       return api.request<TDoc[]>('GET', `${api.baseUrl}/tree`, {
         token,
         organizationId,
-        params: merged,
+        params,
         options,
       });
     },

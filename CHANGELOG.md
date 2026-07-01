@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.1
+
+### Fixed — `getTree` no longer paginates the hierarchy
+
+The `withTree` preset's `getTree()` merged the API's list `defaultParams`
+(`limit`/`page`) into the tree request "for parity with `getChildren`/`getAll`".
+That's wrong by contract: a **tree is the full hierarchy, not a paginated list**.
+At best it emitted a dead query string (`GET /:resource/tree?limit=10&page=1`);
+at worst, a backend that *honours* `limit` on its tree route would silently
+**truncate the hierarchy to the first page** — a latent data-loss footgun.
+
+`getTree()` now passes only the caller's explicit `params` (e.g. a `depth` or
+filter, if the resource supports one). `getChildren()` is a real paginated level
+and is unchanged. **Behaviour change, not a signature change** — callers that
+relied on pagination on the tree endpoint (they shouldn't have) must pass those
+params explicitly now.
+
 ## 0.9.0
 
 ### Fixed — presets now COMPOSE (generic-preserving)

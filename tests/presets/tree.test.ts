@@ -28,6 +28,28 @@ describe('withTree', () => {
     );
   });
 
+  it('getTree does NOT merge defaultParams — a tree is the full hierarchy, not paginated', async () => {
+    const api = withTree(
+      createCrudApi('categories', { basePath: '/api', defaultParams: { limit: 7, page: 1 } }),
+    );
+    await api.getTree();
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).not.toContain('limit=');
+    expect(url).not.toContain('page=');
+  });
+
+  it('getTree still forwards EXPLICIT caller params (e.g. depth/filter)', async () => {
+    const api = withTree(
+      createCrudApi('categories', { basePath: '/api', defaultParams: { limit: 7 } }),
+    );
+    await api.getTree({ params: { depth: 2 } });
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain('depth=2');
+    expect(url).not.toContain('limit=');
+  });
+
   it('getChildren GETs /:resource/:parentId/children', async () => {
     const api = withTree(createCrudApi('categories', { basePath: '/api' }));
     await api.getChildren({ parentId: 'parent-1' });
