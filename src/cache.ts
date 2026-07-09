@@ -376,6 +376,29 @@ export interface QueryKeys {
  * is identical between server (prefetch) and client (hooks), so RSC SSR
  * hydration matches what client-side `useList`/`useDetail` produce.
  */
+/**
+ * Org-normalized key params — the ONE way hooks AND prefetchers merge
+ * `organizationId` into a query-key params object.
+ *
+ * Why this exists: TanStack's key hash (`hashKey`) drops `undefined` object
+ * values but KEEPS `null` — so `{ organizationId: null }` and `{}` are
+ * DIFFERENT cache entries. Auth resolution returns `organizationId: null`
+ * for org-less callers (public storefronts), while server prefetchers
+ * conditionally omitted the field — producing keys that never matched and
+ * silently defeating SSR hydration (the client refetched everything).
+ * Normalizing here (omit when nullish) makes hook and prefetch keys equal
+ * by construction. Covered by tests/key-parity.test.ts.
+ */
+export function withOrgParams(
+  organizationId: string | null | undefined,
+  params: Record<string, unknown> = {},
+): Record<string, unknown> {
+  // Strip any explicit organizationId in params too (null or otherwise) so a
+  // caller-passed `organizationId: null` can't split the cache either.
+  const { organizationId: _drop, ...rest } = params;
+  return organizationId ? { organizationId, ...rest } : rest;
+}
+
 export function createQueryKeys(entityKey: string): QueryKeys {
   return {
     all: [entityKey],

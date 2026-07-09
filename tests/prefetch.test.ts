@@ -300,13 +300,19 @@ describe('createCrudPrefetcher', () => {
     );
   });
 
-  it('prefetchTree omits options entirely when no caching directive is given', async () => {
+  it('prefetchTree forwards no caching directives when none are given (signal-only options allowed)', async () => {
     const treeApi = { ...mockApi, getTree: vi.fn().mockResolvedValue([]) };
     const prefetcher = createCrudPrefetcher(treeApi, 'categories');
 
     await prefetcher.prefetchTree(queryClient);
 
-    expect(treeApi.getTree).toHaveBeenCalledWith(expect.not.objectContaining({ options: expect.anything() }));
+    // Since the queryOptions-factory refactor, TanStack's AbortSignal is
+    // forwarded on every read (prefetches are cancellable) — but NO caching
+    // directive (cache/revalidate/tags/headerOptions) may appear uninvited:
+    // an accidental `revalidate` here would silently change ISR behavior.
+    const call = treeApi.getTree.mock.calls[0][0] as { options?: Record<string, unknown> };
+    const forwarded = Object.keys(call.options ?? {});
+    expect(forwarded.filter((k) => k !== 'signal')).toEqual([]);
   });
 
   it('prefetchList forwards revalidate too (generic passthrough)', async () => {

@@ -31,6 +31,7 @@ import {
   DEFAULT_QUERY_CONFIG,
   extractItem,
   syncDetailToLists,
+  withOrgParams,
 } from "./cache.js";
 import type { PaginatedResult } from "@classytic/repo-core/pagination";
 import type { QueryKeys, CacheUtils } from "./cache.js";
@@ -142,6 +143,14 @@ export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> 
     gcTime?: number;
     refetchOnWindowFocus?: boolean;
     structuralSharing?: boolean;
+    /**
+     * Declare this resource's read endpoints PUBLIC (`allowPublic` on the
+     * server — e.g. a storefront catalog). Read hooks then enable token-less
+     * requests by default, so callers never have to pass `{ public: true }`
+     * per hook. Leave unset for auth-gated resources (cart, orders, account) —
+     * they keep the bearer token-gate. An explicit per-call `public` wins.
+     */
+    defaultPublic?: boolean;
     messages?: {
       createSuccess?: string;
       createError?: string;
@@ -461,6 +470,28 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     },
   };
 
+  // `enabled` for every read hook below. When this resource is declared
+  // `defaultPublic: true` (its endpoints are `allowPublic` — e.g. a storefront
+  // catalog), a token-less read is enabled by DEFAULT, so consumers never have
+  // to remember `{ public: true }` per call (the bug class where a public read
+  // silently returns empty for unauthenticated visitors). Crucially this is
+  // PER-RESOURCE, not per-subtree: catalog defaults public; cart/orders/account
+  // stay token-gated. An explicit per-call `public`/`enabled` still wins. A
+  // plain function (not a hook) so it composes with each hook's own `extraGate`
+  // (`!!id`, `!!api.getTree`) with no rules-of-hooks hazard. The auth token is
+  // still SENT when present, so an authed caller (dashboard) is unaffected.
+  const computeEnabled = (
+    token: string | null,
+    options: { public?: boolean; enabled?: boolean },
+    extraGate = true,
+  ): boolean => {
+    const merged =
+      options.public === undefined && config.defaultPublic
+        ? { ...options, public: true }
+        : options;
+    return extraGate && createEnabledRule(token, merged, resolveAuthMode(), resolveHasStaticAuth());
+  };
+
   // ========== useList ==========
 
   function useList(
@@ -496,9 +527,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { request: requestOpts, ...queryOpts } = options;
 
     return useListQuery<T>({
-      queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
+      // withOrgParams: omit nullish org from the KEY (hash parity with the
+      // server prefetcher — `{organizationId: null}` would be a distinct hash).
+      queryKey: KEYS.scopedList(scope, withOrgParams(organizationId as string | null | undefined, restParams)),
       queryFn: ({ signal }) => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
-      enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
+      enabled: computeEnabled(token, queryOpts),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -567,7 +600,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const detailResult = useDetailQuery<T>({
       queryKey: fullDetailKey,
       queryFn: ({ signal }) => api.getById({ id: id!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
-      enabled: !!id && createEnabledRule(token, restOptions, resolveAuthMode(), resolveHasStaticAuth()),
+      enabled: computeEnabled(token, restOptions, !!id),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
@@ -909,7 +942,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { request: requestOpts, ...queryOpts } = options;
 
     return useInfiniteListQuery<T>({
-      queryKey: [...KEYS.scopedList(scope, { organizationId, ...restParams }), 'infinite'],
+      // Same org-normalized key as useList (see withOrgParams) + 'infinite'.
+      queryKey: [...KEYS.scopedList(scope, withOrgParams(organizationId as string | null | undefined, restParams)), 'infinite'],
       queryFn: ({ pageParam, signal }) => {
         const paginationParams = typeof pageParam === 'string'
           ? { after: pageParam }
@@ -922,7 +956,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           options: { signal, ...requestOpts },
         });
       },
-      enabled: createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
+      enabled: computeEnabled(token, queryOpts),
       initialPageParam: restParams.after ? restParams.after : 1,
       getNextPageParam: (lastPage) => {
         const page = lastPage as PaginatedResult<T>;
@@ -1027,12 +1061,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { request: requestOpts, ...queryOpts } = options ?? {};
 
     return useListQuery<T>({
-      queryKey: KEYS.custom('deleted', { organizationId, ...restParams }),
+      queryKey: KEYS.custom('deleted', withOrgParams(organizationId, restParams)),
       queryFn: ({ signal }) => {
         if (!api.getDeleted) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getDeleted method`));
         return api.getDeleted({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getDeleted && createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
+      enabled: computeEnabled(token, queryOpts, !!api.getDeleted),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -1067,7 +1101,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         if (!api.getBySlug) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getBySlug method`));
         return api.getBySlug({ slug: slug!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getBySlug && !!slug && createEnabledRule(token, restOptions, resolveAuthMode(), resolveHasStaticAuth()),
+      enabled: computeEnabled(token, restOptions, !!api.getBySlug && !!slug),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
@@ -1109,12 +1143,15 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { request: requestOpts, ...queryOpts } = options ?? {};
 
     return useListQuery<T>({
-      queryKey: KEYS.custom('tree', { organizationId, ...restParams }),
+      // Org-normalized (withOrgParams): `{organizationId: null}` here used to
+      // hash differently from the prefetcher's omitted field — SSR-prefetched
+      // trees never hydrated for org-less (public storefront) visitors.
+      queryKey: KEYS.custom('tree', withOrgParams(organizationId, restParams)),
       queryFn: ({ signal }) => {
         if (!api.getTree) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getTree method`));
         return api.getTree({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getTree && createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
+      enabled: computeEnabled(token, queryOpts, !!api.getTree),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -1138,12 +1175,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { request: requestOpts, ...queryOpts } = options ?? {};
 
     return useListQuery<T>({
-      queryKey: KEYS.custom('children', parentId, { organizationId, ...restParams }),
+      queryKey: KEYS.custom('children', parentId, withOrgParams(organizationId, restParams)),
       queryFn: ({ signal }) => {
         if (!api.getChildren) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getChildren method`));
         return api.getChildren({ token, organizationId, parentId: parentId!, params: restParams, options: { signal, ...requestOpts } });
       },
-      enabled: !!api.getChildren && !!parentId && createEnabledRule(token, queryOpts, resolveAuthMode(), resolveHasStaticAuth()),
+      enabled: computeEnabled(token, queryOpts, !!api.getChildren && !!parentId),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,

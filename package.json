@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -41,6 +41,10 @@
     "./encryption": {
       "types": "./dist/encryption.d.ts",
       "default": "./dist/encryption.js"
+    },
+    "./field-encryption": {
+      "types": "./dist/field-encryption.d.ts",
+      "default": "./dist/field-encryption.js"
     },
     "./api": {
       "types": "./dist/api.d.ts",
@@ -102,7 +106,11 @@
       "types": "./dist/presets/search.d.ts",
       "default": "./dist/presets/search.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./query-options": {
+      "types": "./dist/query-options.d.ts",
+      "default": "./dist/query-options.js"
+    }
   },
   "files": [
     "dist"

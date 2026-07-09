@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.10.0
+
+### Fixed — SSR hydration: `organizationId: null` no longer splits the cache
+
+TanStack's `hashKey` keeps `null` values in the hash but drops `undefined`.
+Hooks that resolved `organizationId: null` (unauthenticated / public storefront
+callers) produced a DIFFERENT cache key from server prefetchers that omitted the
+field entirely — silently defeating SSR hydration and causing a full client
+refetch on every page load.
+
+New `withOrgParams(organizationId, params)` helper (`cache.ts`) normalises the
+key: when `organizationId` is nullish the field is OMITTED from the params
+object rather than included as `null`. Applied across every read hook — `useList`,
+`useInfiniteList`, `useDetail`, `useTree`, `useChildren`, `useBySlug`,
+`useDeleted` — so hook keys and server-prefetch keys now match by construction.
+Covered by `tests/key-parity.test.ts`.
+
+### Added — `CrudHooksConfig.defaultPublic`
+
+Declare a resource's read endpoints as public (`allowPublic` on the arc server)
+once at hook-factory time instead of per call-site. When `defaultPublic: true`,
+token-less reads are enabled by default — callers on unauthenticated pages (public
+storefront product listings, category pages, brand pages) never need to remember
+`{ public: true }` on every `useList`/`useDetail`. An explicit per-call `public`
+or `enabled` still wins. Auth-gated resources (cart, orders, account) are
+unaffected — `defaultPublic` is opt-in and defaults to `false`.
+
+### Added — `@classytic/arc-next/query-options` subpath
+
+Server-safe **queryOptions factory** following the TanStack v5 query-factory
+convention. `createEntityQueries(api, entityKey)` returns `{ list, detail,
+infiniteList, tree, children, bySlug }` helpers — each produces a
+`{ queryKey, queryFn }` pair usable anywhere TanStack accepts options objects:
+
+```ts
+const products = createEntityQueries(productApi, 'products');
+
+useQuery(products.list({ limit: 20 }))
+useSuspenseQuery(products.detail('p1'))
+queryClient.prefetchQuery(products.list({}, { token }))   // RSC prefetch
+queryClient.ensureQueryData(products.detail('p1'))        // router loader
+queryClient.setQueryData(products.detail('p1').queryKey, next)
+```
+
+Keys are built from the same primitives as `createCrudHooks` (`createQueryKeys`
++ `withOrgParams`), so a factory-seeded server cache always hydrates the
+corresponding client hook — enforced by `tests/key-parity.test.ts`.
+
+### Added — `@classytic/arc-next/field-encryption` subpath
+
+Client-side decryption for arc's field-mode application-layer encryption
+(`@classytic/arc/encryption` with `mode: 'fields'`). Field-mode responses stay
+`application/json`; only the configured field values arrive as authenticated
+`arc.v1.<kid>.<iv>.<ct>.<tag>` envelopes (AES-256-GCM). This subpath parses
+and decrypts those envelopes via **Web Crypto** — zero dependencies, works in
+Node 22+, Bun, Deno, and React Native.
+
+**SECURITY — trusted runtimes only.** Field mode is symmetric: whoever holds
+the key can decrypt every envelope ever produced. The key belongs in a Node BFF
+or Server Component. This subpath must **never** be imported in a browser bundle.
+For payloads a browser must decrypt, use `@classytic/arc-next/encryption` (JWE
+asymmetric path). Fail-closed: unknown `kid`, tampered ciphertext, or a malformed
+token throws — an encrypted field is never silently passed through.
+
 ## 0.9.1
 
 ### Fixed — `getTree` no longer paginates the hierarchy

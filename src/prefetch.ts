@@ -1,5 +1,5 @@
 import { dehydrate, type QueryClient, type InfiniteData } from '@tanstack/react-query';
-import { createQueryKeys } from './cache.js';
+import { createEntityQueries, type EntityReadApi, type QueryFnContext } from './query-options.js';
 
 // Re-exports for convenience in Server Components.
 // `HydrationBoundary` is the canonical wrapper around the Client Component
@@ -34,14 +34,6 @@ export interface PrefetchOptions extends PrefetchAuthContext {
   tags?: string[];
 }
 
-/** Per-call API `options` the prefetcher forwards (caching + custom headers). */
-type ForwardedApiOptions = {
-  headerOptions?: Record<string, string>;
-  cache?: RequestCache;
-  revalidate?: number | false;
-  tags?: string[];
-};
-
 export interface PrefetchDetailOptions extends PrefetchOptions {
   /** Query params (select, populate) — key must match useDetail's params to share cache */
   params?: { select?: string; populate?: string | string[] };
@@ -62,11 +54,8 @@ export interface CrudPrefetcher {
   ) => Promise<void>;
 
   /**
-   * Prefetch a detail query on the server. Uses the same query keys as useDetail.
-   *
-   * @example
-   * const queryClient = getQueryClient();
-   * await productsPrefetcher.prefetchDetail(queryClient, productId);
+   * Prefetch a detail query on the server. Uses the same query keys as useDetail
+   * (tenant-scoped when `organizationId` is provided).
    */
   prefetchDetail: (
     queryClient: QueryClient,
@@ -105,16 +94,6 @@ export interface CrudPrefetcher {
   ) => Promise<void>;
 
   /**
-   * Prefetch an infinite list query (cursor / page-based pagination). Uses the
-   * same query keys as `useInfiniteList` and seeds the `{ pages, pageParams }`
-   * shape TanStack Query expects for `useInfiniteQuery` — a flat
-   * `prefetchQuery` would NOT match the cache shape and the client hook would
-   * re-fetch from scratch, defeating the prefetch.
-   *
-   * @example
-   * await productsPrefetcher.prefetchInfiniteList(queryClient, { limit: 20 });
-   */
-  /**
    * Prefetch a declared aggregation (arc 2.13+). Uses the same query key as
    * `useAggregation` so RSC-pre-rendered dashboard rows hydrate without a
    * client refetch.
@@ -133,6 +112,17 @@ export interface CrudPrefetcher {
     filter?: Record<string, unknown>,
     options?: PrefetchOptions,
   ) => Promise<void>;
+
+  /**
+   * Prefetch an infinite list query (cursor / page-based pagination). Uses the
+   * same query keys as `useInfiniteList` and seeds the `{ pages, pageParams }`
+   * shape TanStack Query expects for `useInfiniteQuery` — a flat
+   * `prefetchQuery` would NOT match the cache shape and the client hook would
+   * re-fetch from scratch, defeating the prefetch.
+   *
+   * @example
+   * await productsPrefetcher.prefetchInfiniteList(queryClient, { limit: 20 });
+   */
   prefetchInfiniteList: (
     queryClient: QueryClient,
     params?: Record<string, unknown>,
@@ -144,9 +134,24 @@ export interface CrudPrefetcher {
 // Factory
 // ============================================================================
 
+/** Extract the queryFn context (auth + fetch caching) from prefetch options. */
+function toCtx(options: PrefetchOptions): QueryFnContext {
+  const { staleTime: _staleTime, ...ctx } = options;
+  return ctx;
+}
+
 /**
  * Create server-safe prefetch helpers for CRUD queries.
  * Use in Next.js server components to pre-populate the query cache before rendering.
+ *
+ * Since 0.10 this is a thin layer over `createEntityQueries`
+ * (@classytic/arc-next/query-options) — the queryOptions factories are the
+ * single source of key + queryFn, shared with the client CRUD hooks, so
+ * prefetch keys can never drift from hook keys. Prefer the factories directly
+ * for new code that also needs `ensureQueryData` / router-loader integration:
+ *
+ *   const products = createEntityQueries(productApi, 'products');
+ *   await queryClient.prefetchQuery({ ...products.list({ limit: 20 }, { token }), staleTime: 60_000 });
  *
  * @example
  * // products-prefetch.ts
@@ -169,96 +174,21 @@ export interface CrudPrefetcher {
  *   );
  * }
  */
-export function createCrudPrefetcher(
-  api: {
-    getAll: (opts: {
-      params?: Record<string, unknown>;
-      token?: string | null;
-      organizationId?: string | null;
-      options?: ForwardedApiOptions;
-    }) => Promise<unknown>;
-    getById: (opts: {
-      id: string;
-      token?: string | null;
-      organizationId?: string | null;
-      options?: ForwardedApiOptions;
-    }) => Promise<unknown>;
-    getBySlug?: (opts: {
-      slug: string;
-      token?: string | null;
-      organizationId?: string | null;
-      params?: Record<string, unknown>;
-      options?: ForwardedApiOptions;
-    }) => Promise<unknown>;
-    getDeleted?: (opts: {
-      params?: Record<string, unknown>;
-      token?: string | null;
-      organizationId?: string | null;
-      options?: ForwardedApiOptions;
-    }) => Promise<unknown>;
-    aggregate?: (opts: {
-      name: string;
-      filter?: Record<string, unknown>;
-      token?: string | null;
-      organizationId?: string | null;
-      options?: ForwardedApiOptions;
-    }) => Promise<unknown>;
-    getTree?: (opts: {
-      params?: Record<string, unknown>;
-      token?: string | null;
-      organizationId?: string | null;
-      options?: ForwardedApiOptions;
-    }) => Promise<unknown>;
-  },
-  entityKey: string,
-): CrudPrefetcher {
-  const KEYS = createQueryKeys(entityKey);
-
-  // Build the per-call API `options` from prefetch options: forward Next.js
-  // fetch caching (cache/revalidate/tags) + any custom headers. Returns `{}`
-  // when there's nothing to forward so call sites can spread unconditionally.
-  const apiOptions = (o: PrefetchOptions): { options?: ForwardedApiOptions } => {
-    const opt: ForwardedApiOptions = {};
-    if (o.headers) opt.headerOptions = o.headers;
-    if (o.cache !== undefined) opt.cache = o.cache;
-    if (o.revalidate !== undefined) opt.revalidate = o.revalidate;
-    if (o.tags !== undefined) opt.tags = o.tags;
-    return Object.keys(opt).length ? { options: opt } : {};
-  };
+export function createCrudPrefetcher(api: EntityReadApi, entityKey: string): CrudPrefetcher {
+  const queries = createEntityQueries(api, entityKey);
 
   return {
     async prefetchList(queryClient, params = {}, options = {}) {
-      const { organizationId: paramOrgId, ...restParams } = params;
-      const orgId = (paramOrgId as string | null) ?? options.organizationId ?? null;
-      const scope = orgId ? 'tenant' : 'super-admin';
-      const queryKey = KEYS.scopedList(scope, { ...(orgId ? { organizationId: orgId } : {}), ...restParams });
-
       await queryClient.prefetchQuery({
-        queryKey,
-        queryFn: () => api.getAll({
-          params: restParams,
-          token: options.token ?? null,
-          organizationId: orgId,
-          ...apiOptions(options),
-        }),
+        ...queries.list(params, toCtx(options)),
         staleTime: options.staleTime,
       });
     },
 
     async prefetchDetail(queryClient, id, options = {}) {
-      const { params, staleTime, token, organizationId } = options as PrefetchDetailOptions;
-      const baseKey = KEYS.detail(id);
-      const queryKey = params ? [...baseKey, params] : baseKey;
-
+      const { staleTime, ...detailOpts } = options;
       await queryClient.prefetchQuery({
-        queryKey,
-        queryFn: () => api.getById({
-          id,
-          token: token ?? null,
-          organizationId: organizationId ?? null,
-          ...(params ? { params } : {}),
-          ...apiOptions(options),
-        }),
+        ...queries.detail(id, detailOpts),
         staleTime,
       });
     },
@@ -267,18 +197,9 @@ export function createCrudPrefetcher(
       if (!api.getBySlug) {
         throw new Error(`[arc-next] prefetchBySlug requires an api with getBySlug (slugLookup preset)`);
       }
-      const { params, staleTime, token, organizationId } = options as PrefetchDetailOptions;
-      const queryKey = params ? KEYS.custom('slug', slug, params) : KEYS.custom('slug', slug);
-
+      const { staleTime, ...detailOpts } = options;
       await queryClient.prefetchQuery({
-        queryKey,
-        queryFn: () => api.getBySlug!({
-          slug,
-          token: token ?? null,
-          organizationId: organizationId ?? null,
-          ...(params ? { params } : {}),
-          ...apiOptions(options),
-        }),
+        ...queries.bySlug(slug, detailOpts),
         staleTime,
       });
     },
@@ -287,18 +208,8 @@ export function createCrudPrefetcher(
       if (!api.getDeleted) {
         throw new Error(`[arc-next] prefetchDeleted requires an api with getDeleted (softDelete preset)`);
       }
-      const { organizationId: paramOrgId, ...restParams } = params;
-      const orgId = (paramOrgId as string | null) ?? options.organizationId ?? null;
-      const queryKey = KEYS.custom('deleted', { ...(orgId ? { organizationId: orgId } : {}), ...restParams });
-
       await queryClient.prefetchQuery({
-        queryKey,
-        queryFn: () => api.getDeleted!({
-          params: restParams,
-          token: options.token ?? null,
-          organizationId: orgId,
-          ...apiOptions(options),
-        }),
+        ...queries.deleted(params, toCtx(options)),
         staleTime: options.staleTime,
       });
     },
@@ -308,19 +219,8 @@ export function createCrudPrefetcher(
         throw new Error(`[arc-next] prefetchAggregation requires an api with aggregate (arc 2.13+)`);
       }
       if (!name) throw new Error('[arc-next] prefetchAggregation: aggregation name is required');
-      const orgId = options.organizationId ?? null;
-      // Mirror useAggregation's tenant-scoped filter key so hydration matches.
-      const filterKey = orgId ? { _org: orgId, ...(filter ?? {}) } : (filter ?? {});
-
       await queryClient.prefetchQuery({
-        queryKey: KEYS.aggregation(name, filterKey),
-        queryFn: () => api.aggregate!({
-          name,
-          filter,
-          token: options.token ?? null,
-          organizationId: orgId,
-          ...apiOptions(options),
-        }),
+        ...queries.aggregation(name, filter, toCtx(options)),
         staleTime: options.staleTime,
       });
     },
@@ -329,46 +229,15 @@ export function createCrudPrefetcher(
       if (!api.getTree) {
         throw new Error(`[arc-next] prefetchTree requires an api with getTree (tree preset)`);
       }
-      const { organizationId: paramOrgId, ...restParams } = params;
-      const orgId = (paramOrgId as string | null) ?? options.organizationId ?? null;
-      const queryKey = KEYS.custom('tree', { ...(orgId ? { organizationId: orgId } : {}), ...restParams });
-
       await queryClient.prefetchQuery({
-        queryKey,
-        queryFn: () => api.getTree!({
-          params: restParams,
-          token: options.token ?? null,
-          organizationId: orgId,
-          ...apiOptions(options),
-        }),
+        ...queries.tree(params, toCtx(options)),
         staleTime: options.staleTime,
       });
     },
 
     async prefetchInfiniteList(queryClient, params = {}, options = {}) {
-      const { organizationId: paramOrgId, ...restParams } = params;
-      const orgId = (paramOrgId as string | null) ?? options.organizationId ?? null;
-      // Match useInfiniteList's scoped key so client + server share the cache.
-      const scope = orgId ? 'tenant' : 'super-admin';
-      const queryKey = [
-        ...KEYS.scopedList(scope, { ...(orgId ? { organizationId: orgId } : {}), ...restParams }),
-        'infinite',
-      ];
-
       await queryClient.prefetchInfiniteQuery({
-        queryKey,
-        queryFn: ({ pageParam }) => api.getAll({
-          // Cursor pagination + offset both supported; the hook decides which to use.
-          params: { ...restParams, ...(pageParam ? { page: pageParam } : {}) } as Record<string, unknown>,
-          token: options.token ?? null,
-          organizationId: orgId,
-          ...apiOptions(options),
-        }),
-        initialPageParam: 1 as unknown,
-        // useInfiniteQuery requires getNextPageParam at runtime, but for SSR
-        // prefetch we only need the first page to seed `{ pages: [first] }`.
-        // `getNextPageParam` is purely advisory at this stage.
-        getNextPageParam: () => undefined,
+        ...queries.infiniteList(params, toCtx(options)),
         staleTime: options.staleTime,
       });
     },
