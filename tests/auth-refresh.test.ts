@@ -69,9 +69,10 @@ describe('configureAuth({ onAuthError }) — lazy 401 recovery', () => {
 
   it('401 + retry → request re-issued with the setToken-injected token, second response delivered', async () => {
     // Drive through createClient so the per-client auth injection mirrors
-    // what real consumers wire — the global `handleApiRequest` doesn't auto-
-    // inject tokens (callers pass `options.token`). createClient reads
-    // `getToken` on every request, which is also what re-fires after recovery.
+    // what real consumers wire. (The global `handleApiRequest` now ALSO
+    // auto-injects from configureAuth — see global-auth-injection.test.ts —
+    // but per-client `getToken` re-reads on every request, which is also
+    // what re-fires after recovery.)
     const { createClient } = await import('../src/client.js');
     configureAuth({
       getToken: () => 'stale-token',

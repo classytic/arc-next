@@ -8,6 +8,20 @@ React + TanStack Query SDK for the Arc backend framework. Typed CRUD hooks, opti
 npm install @classytic/arc-next
 ```
 
+## Type flow — use WIRE types for `T`
+
+`createCrudApi<T>`'s generic should be the kernel/module's exported **wire type**
+(plain JSON shape) — never a mongoose-flavored document type. Kernel → API →
+frontend then stays one type flow with zero casts:
+
+```ts
+import type { OrderWire } from '@classytic/order/wire'; // plain JSON shape
+const orders = createCrudApi<OrderWire>('orders');
+```
+
+Server-side counterpart: arc-* modules export their wire types per the
+module-publishing convention.
+
 ## Setup
 
 Call once at app init from a `"use client"` provider:

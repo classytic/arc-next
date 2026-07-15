@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0 — arc 2.22 parity
+
+- **Global auth auto-injection on the default request path** (`handleApiRequest`): direct `BaseApi` calls (`invokeRoute`, `aggregate`, `getAll`, … outside hooks) now inherit `configureAuth()` token + orgId exactly like the query hooks and per-client instances — previously they fired unauthenticated and burned a 401 → `onAuthError` refresh → retry cycle per call (3× round-trips; the "post-login loading storm"). Contract: `undefined` = inherit, explicit `null` = deliberately public, explicit value wins. Pinned by `tests/global-auth-injection.test.ts`; `ApiRequestOptions.token`/`organizationId` JSDoc documents the three-state semantics. **Behavior change**: callers that relied on direct calls being unauthenticated-by-default must pass `token: null` at the request-options level.
+- **Dispatch verbs**: `api.count()` / `api.exists()` / `api.distinct(field)` + `useCount` hook — arc's `?_count=true` family on the list route (same permissions/filters/tenant scoping, ZERO documents fetched). Defensive envelope parsing.
+- **`withHistory` preset** (`./presets/history`): `api.history(id, { limit, offset })` for arc 2.22 `history: true` audit timelines (`HistoryEntry`/`HistoryPage` wire types).
+- **Typed quota 429s**: `isQuotaExceeded(err)` + `getQuotaDetails(err)` (`{ kind, used, limit, period, resetsAt }`); mutation toasts render the meter ("50 of 50 export.runs used — resets 8/1"); the shared query client NEVER retries `quota.exceeded` even when host retries are enabled (retry is now a guard function — cap semantics unchanged).
+- **Wire-type convention** documented (README): `createCrudApi<T>` takes kernel WIRE types, never mongoose doc types.
+- **`llms.txt`** ships in the package — push-based agent guidance ("hand-rolled fetch against an arc API is a bug"), mirroring arc 2.22's server-side move.
+
+
 ## 0.10.0
 
 ### Fixed — SSR hydration: `organizationId: null` no longer splits the cache

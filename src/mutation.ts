@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient, type QueryClient, type QueryKey, type UseMutateFunction, type UseMutateAsyncFunction } from "@tanstack/react-query";
 import { useTransition, useRef, useCallback } from "react";
-import { isArcApiError, isAutoIdempotency } from "./client.js";
+import { getQuotaDetails, isArcApiError, isAutoIdempotency } from "./client.js";
 import type { ToastHandler } from "./client.js";
 
 // ============================================================================
@@ -93,7 +93,12 @@ function showToast(
   } else {
     const msg = messages?.error;
     let defaultMsg = error?.message || "An error occurred";
-    if (isArcApiError(error) && error.fieldErrors) {
+    // Quota 429s (arc 2.22) carry a renderable meter — show it instead of
+    // the raw message ("Quota exceeded for 'ai.tokens': 12400 of 10000...").
+    const quota = getQuotaDetails(error);
+    if (quota) {
+      defaultMsg = `${quota.used.toLocaleString()} of ${quota.limit.toLocaleString()} ${quota.kind} used this period — resets ${new Date(quota.resetsAt).toLocaleDateString()}`;
+    } else if (isArcApiError(error) && error.fieldErrors) {
       const fields = Object.entries(error.fieldErrors);
       if (fields.length > 0) {
         defaultMsg = fields.map(([k, v]) => `${k}: ${v}`).join(', ');

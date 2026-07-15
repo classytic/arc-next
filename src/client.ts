@@ -275,6 +275,50 @@ export function isArcErrorCode(error: unknown, code: ArcErrorCode): error is Arc
   return isArcApiError(error) && error.code === code;
 }
 
+// ============================================================================
+// Quota / plan-limit 429s (arc 2.22)
+// ============================================================================
+
+/** `details` payload of arc's `quota.exceeded` 429 (`requireQuota`). */
+export interface QuotaDetails {
+  /** The metered counter, e.g. `ai.tokens`, `export.runs`. */
+  kind: string;
+  used: number;
+  limit: number;
+  /** Billing period key, `YYYY-MM`. */
+  period: string;
+  /** ISO timestamp of the next period start — render "resets {date}". */
+  resetsAt: string;
+}
+
+/**
+ * Type guard for arc's quota denial (429 `quota.exceeded` from
+ * `requireQuota`). Render a meter, not a generic failure:
+ *
+ * @example
+ * if (isQuotaExceeded(err)) {
+ *   const q = getQuotaDetails(err);
+ *   toast(`${q.used.toLocaleString()} of ${q.limit.toLocaleString()} ${q.kind} used — resets ${new Date(q.resetsAt).toLocaleDateString()}`);
+ * }
+ *
+ * NEVER auto-retry these — a monthly quota doesn't reset between retries
+ * (the shared query client already refuses; see query-client.ts).
+ */
+export function isQuotaExceeded(error: unknown): error is ArcApiError {
+  return isArcApiError(error) && error.status === 429 && error.code === 'quota.exceeded';
+}
+
+/** Structured quota details from a `quota.exceeded` error (null when absent/malformed). */
+export function getQuotaDetails(error: unknown): QuotaDetails | null {
+  if (!isQuotaExceeded(error)) return null;
+  // Quota details is an OBJECT — the `.details` getter is validation-shaped
+  // (ErrorDetail[]) and returns null here; read the raw wire envelope.
+  const j = error.json as { details?: Partial<QuotaDetails> } | null;
+  const d = j?.details;
+  if (!d || typeof d.kind !== 'string' || typeof d.limit !== 'number') return null;
+  return d as QuotaDetails;
+}
+
 /**
  * Specific predicate for arc's bulk-preset + orgGuard safety code.
  *
@@ -1002,7 +1046,19 @@ export interface NextFetchOptions {
 
 export interface ApiRequestOptions {
   body?: unknown;
+  /**
+   * Bearer token for this request. THREE-STATE contract:
+   * - **omitted / `undefined`** → inherit the global `configureAuth()` context
+   *   (auto-injected by `handleApiRequest`, per-client instances, and hooks)
+   * - **explicit `null`** → deliberately unauthenticated (public endpoint)
+   * - **string** → use exactly this token (wins over the global context)
+   */
   token?: string | null;
+  /**
+   * Tenant/org id sent as `x-organization-id`. Same three-state contract as
+   * `token`: `undefined` = inherit `configureAuth().getOrgId`, `null` = send
+   * no org header (platform-scope calls), string = exactly this org.
+   */
   organizationId?: string | null;
   /** Flattened Next `revalidate` (see `next`). `false` = cache indefinitely. */
   revalidate?: number | false;
@@ -1642,6 +1698,22 @@ export async function handleApiRequest<T = unknown>(
     throw new Error(
       'arc-next: Client not configured. Call configureClient({ baseUrl }) before making API requests.'
     );
+  }
+  // Auto-inject global auth context (configureAuth) when the caller didn't
+  // pass an explicit token/orgId — the SAME contract the per-client path
+  // (createClient) and the query hooks already follow. Without this, direct
+  // BaseApi calls (invokeRoute / aggregate / getAll outside hooks) fired
+  // unauthenticated and burned a 401 → onAuthError refresh → retry cycle on
+  // every call. `undefined` = inherit; explicit `null` = deliberately public.
+  if (authConfig) {
+    const resolved = { ...options };
+    if (resolved.token === undefined) {
+      resolved.token = readToken(authConfig.getToken);
+    }
+    if (resolved.organizationId === undefined) {
+      resolved.organizationId = authConfig.getOrgId?.() ?? null;
+    }
+    return executeRequest<T>(clientConfig, method, endpoint, resolved);
   }
   return executeRequest<T>(clientConfig, method, endpoint, options);
 }

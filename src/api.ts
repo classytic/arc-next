@@ -342,6 +342,82 @@ export class BaseApi<
     return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
   }
 
+  /**
+   * Count records matching the filters — arc's list-route dispatch verb
+   * (`?_count=true`): same permissions/row-filters/tenant scoping as
+   * `getAll`, ZERO documents fetched. Cheapest way to answer "how many".
+   */
+  async count({
+    token = null,
+    organizationId = null,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  } = {}): Promise<number> {
+    const res = await this.getAllRaw({ token, organizationId, params: { ...params, _count: true }, options });
+    return extractVerbField<number>(res, 'count');
+  }
+
+  /** Whether ANY record matches the filters (`?_exists=true`). */
+  async exists({
+    token = null,
+    organizationId = null,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  } = {}): Promise<boolean> {
+    const res = await this.getAllRaw({ token, organizationId, params: { ...params, _exists: true }, options });
+    return extractVerbField<boolean>(res, 'exists');
+  }
+
+  /** Distinct values of a field across matching records (`?_distinct=field`). */
+  async distinct<TValue = unknown>({
+    token = null,
+    organizationId = null,
+    field,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    field: string;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<TValue[]> {
+    if (!field) throw new Error('field is required');
+    const res = await this.getAllRaw({ token, organizationId, params: { ...params, _distinct: field }, options });
+    return extractVerbField<TValue[]>(res, 'values');
+  }
+
+  /** Shared raw GET against the list route (dispatch verbs bypass pagination parsing). */
+  private async getAllRaw({
+    token = null,
+    organizationId = null,
+    params = {},
+    options = {},
+  }: {
+    token?: string | null;
+    organizationId?: string | null;
+    params?: QueryParams;
+    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  }): Promise<unknown> {
+    const mergedParams = { ...this.config.defaultParams, ...params };
+    const processedParams = this.prepareParams(mergedParams);
+    const queryString = this.createQueryString(processedParams);
+    const requestOptions: ApiRequestOptions = { ...this.withCacheDefault(options) };
+    if (token) requestOptions.token = token;
+    if (organizationId) requestOptions.organizationId = organizationId;
+    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
+  }
+
   async getById({
     token = null,
     organizationId = null,
@@ -704,4 +780,17 @@ export function isAggregatePagination<T>(
   response: PaginatedResult<T>,
 ): response is AggregatePaginationResult<T> {
   return 'method' in response && response.method === 'aggregate';
+}
+
+/**
+ * Dispatch-verb responses are small objects (`{ count }`, `{ exists }`,
+ * `{ values }`). Parse defensively across envelope variants (bare vs
+ * `{ data: ... }`) so minor server envelope changes don't break clients.
+ */
+function extractVerbField<TOut>(res: unknown, field: string): TOut {
+  const r = res as Record<string, unknown> | null;
+  if (r && field in r) return r[field] as TOut;
+  const d = (r?.data ?? null) as Record<string, unknown> | null;
+  if (d && field in d) return d[field] as TOut;
+  throw new Error(`[arc-next] unexpected dispatch-verb response shape (missing '${field}')`);
 }

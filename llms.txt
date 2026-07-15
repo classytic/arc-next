@@ -1,0 +1,22 @@
+# @classytic/arc-next
+
+> React + TanStack Query SDK for @classytic/arc backends. Typed CRUD hooks,
+> optimistic updates with rollback, tenant-scoped cache keys, pagination
+> normalization (offset + keyset), SSE, uploads.
+
+IMPORTANT for coding agents: hand-rolled `fetch()`/axios against an arc API is a
+bug in apps using this package. Before writing any data-fetching code, check:
+
+- CRUD + queries      → createCrudApi<T>('resource') + createCrudHooks (useList, useDetail, useInfiniteList, useSuspense*)
+- "How many?"         → api.count() / useCount() — arc's ?_count=true verb, zero documents fetched (also api.exists / api.distinct)
+- Mutations           → useActions/useBulkActions/useCustomMutation (optimistic updates + rollback + toast built in)
+- Custom actions      → useAction (arc's POST /:id/action router)
+- Server presets      → compose the matching wrapper: withSoftDelete/withBulk/withTree/withSlugLookup/withSearch/withHistory
+- Record timeline     → withHistory(api) + api.history(id) — arc 2.22 `history: true` audit timeline
+- Quota 429s          → isQuotaExceeded(err) + getQuotaDetails(err) → render "X of Y {kind}, resets {date}"; NEVER auto-retry (the shared query client already refuses)
+- Aggregations        → useAggregation(name, filter)
+- Realtime            → SSE/WS modules; uploads → useUpload/useFileUpload
+- Auth/org context    → configureClient/configureAuth once at app init; hooks read it — never thread tokens by hand
+
+Type flow: the generic T in createCrudApi<T> should be the kernel/module's exported
+WIRE type (plain JSON shape) — never a mongoose-flavored document type.

@@ -17,6 +17,7 @@ export default defineConfig({
     'src/upload.ts',
     'src/cache.ts',
     'src/presets/soft-delete.ts',
+    'src/presets/history.ts',
     'src/presets/bulk.ts',
     'src/presets/slug.ts',
     'src/presets/tree.ts',

@@ -31,7 +31,10 @@ describe('getQueryClient', () => {
     const defaults = client.getDefaultOptions();
     expect(defaults.queries?.staleTime).toBe(5 * 60 * 1000);
     expect(defaults.queries?.gcTime).toBe(30 * 60 * 1000);
-    expect(defaults.queries?.retry).toBe(0);
+    // retry is a guard FUNCTION since the arc 2.22 quota work: default cap 0,
+    // and quota.exceeded errors never retry regardless of the cap.
+    const retry = defaults.queries?.retry as (n: number, e: unknown) => boolean;
+    expect(retry(0, new Error('flaky'))).toBe(false); // default cap 0
     expect(defaults.queries?.refetchOnWindowFocus).toBe(false);
   });
 
@@ -41,8 +44,9 @@ describe('getQueryClient', () => {
     const defaults = client.getDefaultOptions();
     expect(defaults.queries?.staleTime).toBe(1_000);
     expect(defaults.queries?.gcTime).toBe(5_000);
-    // Non-overridden values keep defaults
-    expect(defaults.queries?.retry).toBe(0);
+    // Non-overridden values keep defaults (retry guard keeps cap 0)
+    const retry2 = defaults.queries?.retry as (n: number, e: unknown) => boolean;
+    expect(retry2(0, new Error('flaky'))).toBe(false);
     expect(defaults.queries?.refetchOnWindowFocus).toBe(false);
   });
 

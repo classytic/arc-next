@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -90,6 +90,10 @@
       "types": "./dist/presets/soft-delete.d.ts",
       "default": "./dist/presets/soft-delete.js"
     },
+    "./presets/history": {
+      "types": "./dist/presets/history.d.ts",
+      "default": "./dist/presets/history.js"
+    },
     "./presets/bulk": {
       "types": "./dist/presets/bulk.d.ts",
       "default": "./dist/presets/bulk.js"
@@ -113,7 +117,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "llms.txt"
   ],
   "publishConfig": {
     "access": "public",

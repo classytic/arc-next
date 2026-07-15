@@ -9,6 +9,7 @@ User-facing API docs live in [README.md](README.md). This file is for agents wor
 | `useQuery` / `useMutation` / cache keys / invalidation | `/tanstack-query-best-practices` |
 | New hooks, `use()`, Actions, `useTransition`, refs, server components | `/react-19` |
 | `useMemo` / `useCallback` / re-render audits / list virtualization | `/react-performance-optimization` |
+| Data-fetching waterfalls, bundle size, Next.js perf (Vercel Engineering rules) | `/vercel-react-best-practices` |
 | Writing or refactoring vitest hook tests in `tests/` | `/react-testing-library` |
 | TS generics, `Pick`/`Omit` discipline, type drift | `/typescript-best-practices` |
 | Reviewing your own diff before commit | `/simplify` |

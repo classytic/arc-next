@@ -67,7 +67,7 @@ import { connectWs } from "./ws.js";
  */
 export type CrudApi<T = unknown, TCreate = Partial<T>, TUpdate = Partial<T>> = Pick<
   BaseApi<T, TCreate, TUpdate>,
-  'getAll' | 'getById' | 'create' | 'update' | 'delete'
+  'getAll' | 'getById' | 'create' | 'update' | 'delete' | 'count'
 > & {
   upload?: BaseApi<T, TCreate, TUpdate>['upload'];
   dispatchAction?: BaseApi<T, TCreate, TUpdate>['dispatchAction'];
@@ -262,6 +262,8 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
   useActions: () => CrudActions<T, TCreate, TUpdate>;
   useBulkActions: () => BulkActions<T, TCreate>;
   useDeleted: (params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
+  /** Count-only query via arc's `?_count=true` dispatch verb — zero documents fetched. */
+  useCount: (params?: Record<string, unknown>, options?: { enabled?: boolean; staleTime?: number; gcTime?: number }) => UseQueryResult<number, Error>;
   useDetailBySlug: (slug: string | null, options?: DetailQueryOptions<T>) => DetailQueryResult<T>;
   useTree: (params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
   useChildren: (parentId: string | null, params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
@@ -1075,6 +1077,26 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     });
   }
 
+  // ========== useCount (arc list dispatch verb `?_count=true`) ==========
+
+  function useCount(
+    params?: Record<string, unknown>,
+    options?: { enabled?: boolean; staleTime?: number; gcTime?: number },
+  ): UseQueryResult<number, Error> {
+    const auth = resolveAuth();
+    const mergedParams = params ?? {};
+    const organizationId = (mergedParams.organizationId as string | null) ?? auth.organizationId;
+    const { organizationId: _, ...restParams } = mergedParams;
+
+    return useQuery<number, Error>({
+      queryKey: KEYS.custom('count', withOrgParams(organizationId, restParams)),
+      queryFn: () => api.count({ token: auth.token, organizationId, params: restParams }),
+      enabled: options?.enabled ?? true,
+      staleTime: options?.staleTime ?? config.staleTime,
+      gcTime: options?.gcTime ?? config.gcTime,
+    });
+  }
+
   // ========== useDetailBySlug ==========
 
   function useDetailBySlug(
@@ -1640,6 +1662,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     useInfiniteList,
     useActions,
     useBulkActions,
+    useCount,
     useDeleted,
     useDetailBySlug,
     useTree,

@@ -3,6 +3,7 @@ import {
   QueryClient,
   defaultShouldDehydrateQuery,
 } from '@tanstack/react-query';
+import { isQuotaExceeded } from './client.js';
 
 // ============================================================================
 // Types
@@ -36,7 +37,11 @@ function makeQueryClient(overrides?: QueryClientOverrides): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        retry: opts.retry as number,
+        // Hosts may opt into retries, but quota 429s (arc 2.22
+        // `quota.exceeded`) NEVER retry — a monthly quota doesn't reset
+        // between attempts; retrying is noise against the counter.
+        retry: (failureCount, error) =>
+          !isQuotaExceeded(error) && failureCount < ((opts.retry as number) || 0),
         staleTime: opts.staleTime,
         gcTime: opts.gcTime,
         refetchOnWindowFocus: opts.refetchOnWindowFocus,
