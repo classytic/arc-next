@@ -9,9 +9,16 @@ import type { ToastHandler } from "./client.js";
 // Types
 // ============================================================================
 
-export interface MutationMessages {
-  success?: string | ((data: unknown, variables: unknown) => string);
-  error?: string | ((error: Error, variables: unknown) => string);
+/**
+ * Toast copy for a mutation. Generic over the mutation's result/variables so
+ * `success: (result) => ...` sees the TYPED FLAT action result (arc 2.13+
+ * returns results with no `{ data }` envelope) — the stale-envelope
+ * `(data as { data: T }).data` cast class is a compile error now. Defaults
+ * keep pre-0.11.1 unparameterized usage compiling unchanged.
+ */
+export interface MutationMessages<TData = unknown, TVariables = unknown> {
+  success?: string | ((data: TData, variables: TVariables) => string);
+  error?: string | ((error: Error, variables: TVariables) => string);
 }
 
 export interface MutationCallbacks<TData, TVariables, TContext = unknown> {
@@ -74,11 +81,13 @@ export function getToastHandler(): ToastHandler {
   return toastHandler;
 }
 
-function showToast(
+function showToast<TData, TVariables>(
   type: "success" | "error",
-  messages: MutationMessages | undefined,
-  data: unknown,
-  variables: unknown,
+  messages: MutationMessages<TData, TVariables> | undefined,
+  // null on the error path (no result exists); the success branch always
+  // receives the real TData.
+  data: TData | null,
+  variables: TVariables,
   error?: Error,
   handler?: ToastHandler,
 ) {
@@ -88,7 +97,7 @@ function showToast(
     const msg = messages?.success;
     if (!msg) return;
 
-    const text = typeof msg === "function" ? msg(data, variables) : msg;
+    const text = typeof msg === "function" ? msg(data as TData, variables) : msg;
     activeHandler.success(text);
   } else {
     const msg = messages?.error;
@@ -122,7 +131,7 @@ export interface TransitionMutationConfig<TData, TVariables> {
   onSuccess?: (data: TData, variables: TVariables) => void;
   onError?: (error: Error, variables: TVariables) => void;
   onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
-  messages?: MutationMessages;
+  messages?: MutationMessages<TData, TVariables>;
   useTransition?: boolean;
   showToast?: boolean;
   /** Per-call toast guard — return false to suppress toast for this invocation */
@@ -217,7 +226,7 @@ export interface OptimisticMutationConfig<TData, TVariables> {
   onSuccess?: (data: TData, variables: TVariables) => void;
   onError?: (error: Error, variables: TVariables) => void;
   onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
-  messages?: MutationMessages;
+  messages?: MutationMessages<TData, TVariables>;
   showToast?: boolean;
   toastHandler?: ToastHandler;
 }
@@ -300,7 +309,7 @@ export interface CreateOptimisticMutationConfig<TData, TVariables> {
   onSuccess?: (data: TData, variables: TVariables) => void;
   onError?: (error: Error, variables: TVariables) => void;
   onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
-  messages?: MutationMessages;
+  messages?: MutationMessages<TData, TVariables>;
   /** Per-call toast guard — return false to suppress toast for this invocation */
   shouldToast?: () => boolean;
   toastHandler?: ToastHandler;

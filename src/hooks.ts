@@ -276,7 +276,7 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     invalidateQueries?: QueryKey[];
     /** Default action name. Can be overridden per-call via `mutate({ action })`. */
     action?: string;
-    messages?: MutationMessages;
+    messages?: MutationMessages<TResult, { id: string; action?: string; data?: TBody }>;
     onSuccess?: (data: TResult, variables: { id: string; action: string; data?: TBody }) => void;
     onError?: (error: Error, variables: { id: string; action: string; data?: TBody }) => void;
     onSettled?: (data: TResult | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
@@ -284,15 +284,15 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
   /** Mutation against the search-preset POST `/search` route. */
   useSearchEngine: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
     path?: string;
-    messages?: MutationMessages;
+    messages?: MutationMessages<TResult[] | PaginatedResult<TResult>, { query?: string; body?: TBody }>;
     invalidateQueries?: QueryKey[];
-  }) => TransitionMutationReturn<unknown, { query?: string; body?: TBody }>;
+  }) => TransitionMutationReturn<TResult[] | PaginatedResult<TResult>, { query?: string; body?: TBody }>;
   /** Mutation against the search-preset POST `/search-similar` route. */
   useSearchSimilar: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
     path?: string;
-    messages?: MutationMessages;
+    messages?: MutationMessages<TResult[] | PaginatedResult<TResult>, { query?: string; vector?: number[]; body?: TBody }>;
     invalidateQueries?: QueryKey[];
-  }) => TransitionMutationReturn<unknown, { query?: string; vector?: number[]; body?: TBody }>;
+  }) => TransitionMutationReturn<TResult[] | PaginatedResult<TResult>, { query?: string; vector?: number[]; body?: TBody }>;
   /** Mutation against the search-preset POST `/embed` route. */
   useEmbed: (options?: {
     path?: string;
@@ -331,7 +331,7 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
   useCustomMutation: <TData = unknown, TVariables = unknown>(config: {
     mutationFn: (variables: TVariables) => Promise<TData>;
     invalidateQueries?: QueryKey[];
-    messages?: MutationMessages;
+    messages?: MutationMessages<TData, TVariables>;
     onSuccess?: (data: TData, variables: TVariables) => void;
     onError?: (error: Error, variables: TVariables) => void;
     onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
@@ -1033,7 +1033,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   function useCustomMutation<TData = unknown, TVariables = unknown>(mutationConfig: {
     mutationFn: (variables: TVariables) => Promise<TData>;
     invalidateQueries?: QueryKey[];
-    messages?: MutationMessages;
+    messages?: MutationMessages<TData, TVariables>;
     onSuccess?: (data: TData, variables: TVariables) => void;
     onError?: (error: Error, variables: TVariables) => void;
     onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
@@ -1303,7 +1303,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   function useAction<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
     invalidateQueries?: QueryKey[];
     action?: string;
-    messages?: MutationMessages;
+    messages?: MutationMessages<TResult, { id: string; action?: string; data?: TBody }>;
     onSuccess?: (data: TResult, variables: { id: string; action: string; data?: TBody }) => void;
     onError?: (error: Error, variables: { id: string; action: string; data?: TBody }) => void;
     onSettled?: (data: TResult | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
@@ -1357,10 +1357,10 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
   function useSearchEngine<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
     path?: string;
-    messages?: MutationMessages;
+    messages?: MutationMessages<TResult[] | PaginatedResult<TResult>, { query?: string; body?: TBody }>;
     invalidateQueries?: QueryKey[];
   }) {
-    return useMutationWithTransition<unknown, { query?: string; body?: TBody }>({
+    return useMutationWithTransition<TResult[] | PaginatedResult<TResult>, { query?: string; body?: TBody }>({
       mutationFn: (vars) => {
         if (!api.searchEngine) {
           return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a searchEngine method`));
@@ -1382,10 +1382,10 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
   function useSearchSimilar<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
     path?: string;
-    messages?: MutationMessages;
+    messages?: MutationMessages<TResult[] | PaginatedResult<TResult>, { query?: string; vector?: number[]; body?: TBody }>;
     invalidateQueries?: QueryKey[];
   }) {
-    return useMutationWithTransition<unknown, { query?: string; vector?: number[]; body?: TBody }>({
+    return useMutationWithTransition<TResult[] | PaginatedResult<TResult>, { query?: string; vector?: number[]; body?: TBody }>({
       mutationFn: (vars) => {
         if (!api.searchSimilar) {
           return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a searchSimilar method`));

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11.1
+
+- **`MutationMessages<TData, TVariables>`** — success/error callbacks now
+  receive typed result and variables instead of `unknown`, so toast factories
+  like `success: (result) => result.name` typecheck without casts. Backwards-
+  compatible: the unparameterised form defaults to `MutationMessages<unknown, unknown>`.
+- **`useAction`** return type narrowed to `TransitionMutationReturn<TResult, …>`
+  (was `unknown`).
+- **`useSearchEngine` / `useSearchSimilar`** return types narrowed to
+  `TransitionMutationReturn<TResult[] | PaginatedResult<TResult>, …>`
+  (were `unknown`).
+- **`useCustomMutation`** `messages` option typed with the hook's own
+  `TData` / `TVariables` generics.
+
 ## 0.11.0 — arc 2.22 parity
 
 - **Global auth auto-injection on the default request path** (`handleApiRequest`): direct `BaseApi` calls (`invokeRoute`, `aggregate`, `getAll`, … outside hooks) now inherit `configureAuth()` token + orgId exactly like the query hooks and per-client instances — previously they fired unauthenticated and burned a 401 → `onAuthError` refresh → retry cycle per call (3× round-trips; the "post-login loading storm"). Contract: `undefined` = inherit, explicit `null` = deliberately public, explicit value wins. Pinned by `tests/global-auth-injection.test.ts`; `ApiRequestOptions.token`/`organizationId` JSDoc documents the three-state semantics. **Behavior change**: callers that relied on direct calls being unauthenticated-by-default must pass `token: null` at the request-options level.
