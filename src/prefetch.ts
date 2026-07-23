@@ -1,11 +1,11 @@
-import { dehydrate, type QueryClient, type InfiniteData } from '@tanstack/react-query';
-import { createEntityQueries, type EntityReadApi, type QueryFnContext } from './query-options.js';
+import type { InfiniteData, QueryClient } from "@tanstack/react-query";
+import { createEntityQueries, type EntityReadApi, type QueryFnContext } from "./query-options.js";
 
 // Re-exports for convenience in Server Components.
 // `HydrationBoundary` is the canonical wrapper around the Client Component
 // child that consumes the prefetched cache — re-exporting saves callers a
 // second @tanstack/react-query import in their RSC files.
-export { dehydrate, HydrationBoundary } from '@tanstack/react-query';
+export { dehydrate, HydrationBoundary } from "@tanstack/react-query";
 
 // ============================================================================
 // Types
@@ -195,7 +195,9 @@ export function createCrudPrefetcher(api: EntityReadApi, entityKey: string): Cru
 
     async prefetchBySlug(queryClient, slug, options = {}) {
       if (!api.getBySlug) {
-        throw new Error(`[arc-next] prefetchBySlug requires an api with getBySlug (slugLookup preset)`);
+        throw new Error(
+          `[arc-next] prefetchBySlug requires an api with getBySlug (slugLookup preset)`,
+        );
       }
       const { staleTime, ...detailOpts } = options;
       await queryClient.prefetchQuery({
@@ -206,7 +208,9 @@ export function createCrudPrefetcher(api: EntityReadApi, entityKey: string): Cru
 
     async prefetchDeleted(queryClient, params = {}, options = {}) {
       if (!api.getDeleted) {
-        throw new Error(`[arc-next] prefetchDeleted requires an api with getDeleted (softDelete preset)`);
+        throw new Error(
+          `[arc-next] prefetchDeleted requires an api with getDeleted (softDelete preset)`,
+        );
       }
       await queryClient.prefetchQuery({
         ...queries.deleted(params, toCtx(options)),
@@ -216,9 +220,11 @@ export function createCrudPrefetcher(api: EntityReadApi, entityKey: string): Cru
 
     async prefetchAggregation(queryClient, name, filter, options = {}) {
       if (!api.aggregate) {
-        throw new Error(`[arc-next] prefetchAggregation requires an api with aggregate (arc 2.13+)`);
+        throw new Error(
+          `[arc-next] prefetchAggregation requires an api with aggregate (arc 2.13+)`,
+        );
       }
-      if (!name) throw new Error('[arc-next] prefetchAggregation: aggregation name is required');
+      if (!name) throw new Error("[arc-next] prefetchAggregation: aggregation name is required");
       await queryClient.prefetchQuery({
         ...queries.aggregation(name, filter, toCtx(options)),
         staleTime: options.staleTime,

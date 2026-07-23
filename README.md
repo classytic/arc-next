@@ -1,5 +1,7 @@
 # @classytic/arc-next
 
+[![Sponsor](https://img.shields.io/github/sponsors/classytic?style=flat-square&label=Sponsor&logo=GitHub&color=EA4AAA)](https://github.com/sponsors/classytic)
+
 React + TanStack Query SDK for the Arc backend framework. Typed CRUD hooks, optimistic updates with rollback, multi-tenant cache scoping, pagination normalization, real-time SSE.
 
 **Peers:** React 19+, TanStack React Query 5+
@@ -36,6 +38,10 @@ configureAuth({ getToken: () => session?.token ?? null, getOrgId: () => org?.id 
 configureToast({ success: toast.success, error: toast.error });
 configureNavigation(useRouter);
 ```
+
+Without `configureToast`, mutation feedback is a silent no-op (0.12+) — the SDK never writes to your console; errors still reach `onError` / the rejected promise.
+
+> **Targets:** React 19 browser apps + Next.js App Router. React Native is NOT officially supported — the fetch client may work, but SSE needs an `EventSource` polyfill, uploads depend on RN's XHR/FormData behavior, and field encryption needs Web Crypto. File an issue if you need an RN adapter.
 
 `getToken` **must be synchronous** — cache async tokens out-of-band. Promise returns are dropped + warned in dev.
 
@@ -388,6 +394,44 @@ Pure helpers (`createQueryKeys`, `extractItem`, `updateListCache`, etc.) live in
 
 TanStack Query manages a client-side cache; data fetched through arc-next hooks should NOT be wrapped in a Server Component's `'use cache'` directive (which would bake the hook output into the static render). Use `'use cache'` for non-arc Server Component fetches (e.g., direct DB queries, third-party APIs). The two layers compose cleanly because they target different cache tiers.
 
+## Request-Scoped Server Clients (0.12+)
+
+`configureClient` / `configureAuth` set module singletons — correct for the browser, wrong for servers where concurrent requests would share state. On the server, build a **request-scoped** client instead. The SDK never imports `next` or reads cookies itself: your framework code reads the request, the SDK gets plain values.
+
+```ts
+// app/orders/page.tsx (Server Component) — host reads cookies, SDK stays framework-free
+import { cookies } from 'next/headers';
+import { createServerClient } from '@classytic/arc-next/client';
+import { createCrudApi } from '@classytic/arc-next/api';
+
+export default async function OrdersPage() {
+  const client = createServerClient({
+    baseUrl: process.env.API_URL!,
+    token: (await cookies()).get('session')?.value ?? null,
+    organizationId: null,
+  });
+  const orders = createCrudApi<Order>('orders', { client });
+  const page = await orders.getAll({
+    options: { next: { revalidate: 60, tags: ['orders'] } },  // Next fetch-cache passthrough
+  });
+  // render...
+}
+```
+
+`next: { tags, revalidate }` and `cache:` are typed pass-throughs to `fetch` — inert on non-Next runtimes, no `next` peer dependency.
+
+## Optimistic Updates — the guarantees (0.12+)
+
+`useActions()` mutations uphold, in order:
+
+1. **Cancel-before-write** — in-flight refetches for affected keys are cancelled before the snapshot, so a late response can't be captured as "previous" state.
+2. **Every affected cache** — detail (bare + org-scoped + parameterized), flat lists, **infinite lists** (per-page; a create inserts into the first page only), while aggregation caches are never optimistically mutated (refetch-only).
+3. **Exact rollback** — on failure every touched entry is restored to its snapshot; untouched entries are never rewritten.
+4. **Temp-ID reconciliation** — `create` inserts a `_optimistic` placeholder with a `temp-…` id, then swaps it in place for the server document on success (and seeds `KEYS.detail(realId)`), so the row never flickers and the real id is immediately navigable.
+5. **Per-record ordering** — sequential `update`/`remove`/`restore` calls to the same record are chained (call order = server order); different records stay parallel.
+6. **Last-standing invalidation** — rapid sequential writes trigger ONE settled refetch (from the last pending write), so an early write's refetch can never overwrite a later write's optimistic state.
+7. **Bulk partial success** — `bulkUpdate`/`bulkRemove` reporting zero changes skip invalidation entirely; `bulkCreate` seeds detail caches from the returned documents.
+
 ## Errors
 
 ```ts
@@ -425,11 +469,17 @@ Network resilience for mutations + direct `handleApiRequest` calls (TanStack Que
 ```ts
 configureClient({
   baseUrl: process.env.NEXT_PUBLIC_API_URL!,
+  timeoutMs: 15_000,                   // per-attempt request timeout; hung fetches fail
+                                       // with a RETRYABLE TimeoutError. Default: disabled.
+                                       // Per-request override: options.timeoutMs (0 disables).
   retry: {
     attempts: 3,                       // 1 initial + 2 retries; default off
     backoff: 'exponential',            // 'exponential' | 'linear' | (attempt) => ms
+    jitter: 'full',                    // randomize delays in [0, computed] — anti-stampede. Default 'none'.
     // retryOn: [502, 503, 504],       // optional whitelist; default = network failures + 5xx, never 4xx, never AbortError
   },
+  // 429/503 responses with a Retry-After header override computed backoff —
+  // the parsed value is also exposed as ArcApiError.retryAfterMs.
   // Mutate outgoing requests (per attempt — retries re-run this)
   beforeRequest: (ctx) => ({
     ...ctx,

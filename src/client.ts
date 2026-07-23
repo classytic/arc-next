@@ -16,7 +16,8 @@ export type UseRouterHook = () => {
 // ArcApiError — unified on `@classytic/repo-core` ErrorContract
 // ============================================================================
 
-import type { ErrorContract, ErrorDetail } from '@classytic/repo-core/errors';
+import type { ErrorContract, ErrorDetail } from "@classytic/repo-core/errors";
+import { ERROR_CODES } from "@classytic/repo-core/errors";
 
 /**
  * Canonical error codes arc and repo-core emit on `json.code`. Single
@@ -40,42 +41,34 @@ import type { ErrorContract, ErrorDetail } from '@classytic/repo-core/errors';
  * `errorMappers` codes still satisfy it.
  */
 export const KNOWN_ARC_ERROR_CODES = [
-  // repo-core canonical (lowercase, RFC 7807)
-  'validation_error',
-  'not_found',
-  'conflict',
-  'unauthorized',
-  'forbidden',
-  'rate_limited',
-  'idempotency_conflict',
-  'precondition_failed',
-  'internal_error',
-  'service_unavailable',
-  'timeout',
+  // repo-core canonical (lowercase, RFC 7807) — imported, not re-typed, so a
+  // repo-core code rename/addition surfaces here as a type change instead of
+  // silent drift.
+  ...Object.values(ERROR_CODES),
   // arc hierarchical (lowercase, dot-separated)
-  'arc.bad_request',
-  'arc.unauthorized',
-  'arc.forbidden',
-  'arc.not_found',
-  'arc.conflict',
-  'arc.unprocessable_entity',
-  'arc.rate_limited',
-  'arc.internal_error',
-  'arc.bad_gateway',
-  'arc.service_unavailable',
-  'arc.gateway_timeout',
-  'arc.validation_error',
-  'arc.invalid_id',
-  'arc.org.selection_required',
-  'arc.org.access_denied',
+  "arc.bad_request",
+  "arc.unauthorized",
+  "arc.forbidden",
+  "arc.not_found",
+  "arc.conflict",
+  "arc.unprocessable_entity",
+  "arc.rate_limited",
+  "arc.internal_error",
+  "arc.bad_gateway",
+  "arc.service_unavailable",
+  "arc.gateway_timeout",
+  "arc.validation_error",
+  "arc.invalid_id",
+  "arc.org.selection_required",
+  "arc.org.access_denied",
   // arc business (UPPER_SNAKE) — emitted by mixins + org guards
-  'ORG_CONTEXT_REQUIRED',
-  'ORG_ROLE_REQUIRED',
-  'OWNERSHIP_DENIED',
-  'MIXED_UPDATE_SHAPE',
-  'ALL_FIELDS_STRIPPED',
-  'BEFORE_RESTORE_HOOK_ERROR',
-  'duplicate_key',
+  "ORG_CONTEXT_REQUIRED",
+  "ORG_ROLE_REQUIRED",
+  "OWNERSHIP_DENIED",
+  "MIXED_UPDATE_SHAPE",
+  "ALL_FIELDS_STRIPPED",
+  "BEFORE_RESTORE_HOOK_ERROR",
+  "duplicate_key",
 ] as const;
 
 /**
@@ -91,6 +84,8 @@ export interface ArcApiErrorOptions {
   json: unknown;
   endpoint: string;
   method: HttpMethod;
+  /** Parsed `Retry-After` response header in ms (429/503 pacing), if present. */
+  retryAfterMs?: number | null;
 }
 
 /**
@@ -113,15 +108,23 @@ export class ArcApiError extends Error {
   readonly json: unknown;
   readonly endpoint: string;
   readonly method: HttpMethod;
+  /**
+   * Server-directed retry pacing from the `Retry-After` response header
+   * (seconds or HTTP-date form, normalized to ms). Populated on 429/503;
+   * the SDK's retry loop honors it INSTEAD of computed backoff so clients
+   * come back exactly when the server says capacity returns.
+   */
+  readonly retryAfterMs: number | null;
 
   constructor(message: string, options: ArcApiErrorOptions) {
     super(message);
-    this.name = 'ArcApiError';
+    this.name = "ArcApiError";
     this.status = options.status;
     this.statusText = options.statusText;
     this.json = options.json;
     this.endpoint = options.endpoint;
     this.method = options.method;
+    this.retryAfterMs = options.retryAfterMs ?? null;
   }
 
   /**
@@ -138,7 +141,7 @@ export class ArcApiError extends Error {
    */
   get code(): ArcErrorCode | null {
     const j = this.json as { code?: unknown } | null;
-    return j && typeof j.code === 'string' ? (j.code as ArcErrorCode) : null;
+    return j && typeof j.code === "string" ? (j.code as ArcErrorCode) : null;
   }
 
   /**
@@ -150,7 +153,7 @@ export class ArcApiError extends Error {
    */
   get details(): readonly ErrorDetail[] | null {
     const j = this.json as { details?: unknown } | null;
-    return Array.isArray(j?.details) ? (j!.details as ErrorDetail[]) : null;
+    return Array.isArray(j?.details) ? (j.details as ErrorDetail[]) : null;
   }
 
   /**
@@ -165,28 +168,26 @@ export class ArcApiError extends Error {
    *  4. `errors: [...]` at the top level — third-party frameworks.
    */
   get fieldErrors(): Record<string, string> | null {
-    const j = this.json as
-      | {
-          errors?: Record<string, string> | unknown[];
-          details?: ErrorDetail[] | { errors?: unknown[] } | unknown[];
-        }
-      | null;
+    const j = this.json as {
+      errors?: Record<string, string> | unknown[];
+      details?: ErrorDetail[] | { errors?: unknown[] } | unknown[];
+    } | null;
     if (!j) return null;
 
     // Shape 1 (canonical): `details: ErrorDetail[]` with `{ path, code, message }`.
     if (Array.isArray(j.details) && j.details.length > 0) {
       const map: Record<string, string> = {};
       for (const d of j.details as ErrorDetail[]) {
-        if (!d || typeof d !== 'object') continue;
-        const key = typeof d.path === 'string' ? d.path : '';
-        const msg = typeof d.message === 'string' ? d.message : 'Invalid value';
+        if (!d || typeof d !== "object") continue;
+        const key = typeof d.path === "string" ? d.path : "";
+        const msg = typeof d.message === "string" ? d.message : "Invalid value";
         if (key && !(key in map)) map[key] = msg;
       }
       if (Object.keys(map).length > 0) return map;
     }
 
     // Shape 2 (legacy record form): `errors: { field: 'message' }`.
-    if (j.errors && !Array.isArray(j.errors) && typeof j.errors === 'object') {
+    if (j.errors && !Array.isArray(j.errors) && typeof j.errors === "object") {
       return j.errors as Record<string, string>;
     }
 
@@ -195,13 +196,13 @@ export class ArcApiError extends Error {
     const errorList = Array.isArray(j.errors)
       ? j.errors
       : Array.isArray(detailsObj?.errors)
-        ? detailsObj!.errors
+        ? detailsObj.errors
         : null;
     if (!errorList) return null;
 
     const map: Record<string, string> = {};
     for (const item of errorList) {
-      if (!item || typeof item !== 'object') continue;
+      if (!item || typeof item !== "object") continue;
       const e = item as {
         field?: unknown;
         instancePath?: unknown;
@@ -210,13 +211,13 @@ export class ArcApiError extends Error {
         params?: { missingProperty?: unknown };
       };
       const key =
-        (typeof e.field === 'string' && e.field) ||
-        (typeof e.instancePath === 'string' && e.instancePath.replace(/^\//, '')) ||
-        (typeof e.path === 'string' && e.path) ||
-        (typeof e.params?.missingProperty === 'string' && e.params.missingProperty) ||
-        '';
+        (typeof e.field === "string" && e.field) ||
+        (typeof e.instancePath === "string" && e.instancePath.replace(/^\//, "")) ||
+        (typeof e.path === "string" && e.path) ||
+        (typeof e.params?.missingProperty === "string" && e.params.missingProperty) ||
+        "";
       if (!key) continue;
-      const msg = typeof e.message === 'string' ? e.message : 'Invalid value';
+      const msg = typeof e.message === "string" ? e.message : "Invalid value";
       if (!(key in map)) map[key] = msg;
     }
     return Object.keys(map).length > 0 ? map : null;
@@ -253,10 +254,10 @@ export function isArcApiError(error: unknown): error is ArcApiError {
  */
 export function isAbortError(error: unknown): boolean {
   if (!error) return false;
-  if (typeof error !== 'object') return false;
+  if (typeof error !== "object") return false;
   const e = error as { name?: unknown; code?: unknown };
-  if (e.name === 'AbortError') return true;
-  if (e.code === 'ERR_ABORTED') return true;
+  if (e.name === "AbortError") return true;
+  if (e.code === "ERR_ABORTED") return true;
   return false;
 }
 
@@ -305,7 +306,7 @@ export interface QuotaDetails {
  * (the shared query client already refuses; see query-client.ts).
  */
 export function isQuotaExceeded(error: unknown): error is ArcApiError {
-  return isArcApiError(error) && error.status === 429 && error.code === 'quota.exceeded';
+  return isArcApiError(error) && error.status === 429 && error.code === "quota.exceeded";
 }
 
 /** Structured quota details from a `quota.exceeded` error (null when absent/malformed). */
@@ -315,7 +316,7 @@ export function getQuotaDetails(error: unknown): QuotaDetails | null {
   // (ErrorDetail[]) and returns null here; read the raw wire envelope.
   const j = error.json as { details?: Partial<QuotaDetails> } | null;
   const d = j?.details;
-  if (!d || typeof d.kind !== 'string' || typeof d.limit !== 'number') return null;
+  if (!d || typeof d.kind !== "string" || typeof d.limit !== "number") return null;
   return d as QuotaDetails;
 }
 
@@ -336,7 +337,7 @@ export function getQuotaDetails(error: unknown): QuotaDetails | null {
  * }
  */
 export function isOrgContextRequiredError(error: unknown): error is ArcApiError {
-  return isArcErrorCode(error, 'ORG_CONTEXT_REQUIRED');
+  return isArcErrorCode(error, "ORG_CONTEXT_REQUIRED");
 }
 
 /**
@@ -347,7 +348,7 @@ export function isOrgContextRequiredError(error: unknown): error is ArcApiError 
  */
 export function isValidationError(error: unknown): error is ArcApiError {
   if (!isArcApiError(error)) return false;
-  return error.code === 'arc.validation_error' || error.code === 'validation_error';
+  return error.code === "arc.validation_error" || error.code === "validation_error";
 }
 
 /**
@@ -357,11 +358,15 @@ export function isValidationError(error: unknown): error is ArcApiError {
  */
 export function isDuplicateKeyError(error: unknown): error is ArcApiError {
   if (!isArcApiError(error)) return false;
-  if (error.code === 'arc.conflict' || error.code === 'duplicate_key' || error.code === 'conflict') {
+  if (
+    error.code === "arc.conflict" ||
+    error.code === "duplicate_key" ||
+    error.code === "conflict"
+  ) {
     // arc.conflict can also represent non-duplicate conflicts (lease, version) —
     // narrow further by checking details[].code === 'duplicate_key' when present.
-    if (error.code === 'arc.conflict') {
-      return error.details?.some((d) => d.code === 'duplicate_key') ?? false;
+    if (error.code === "arc.conflict") {
+      return error.details?.some((d) => d.code === "duplicate_key") ?? false;
     }
     return true;
   }
@@ -415,7 +420,7 @@ export interface ClientConfig {
    * - 'bearer' (default): Requires a token for authenticated requests. Queries are disabled until a token is provided.
    * - 'cookie': Auth is handled via HTTP-only cookies (e.g. Better Auth). Queries are always enabled — no token needed.
    */
-  authMode?: 'bearer' | 'cookie' | 'header';
+  authMode?: "bearer" | "cookie" | "header";
   /**
    * Fetch credentials policy.
    * - 'include': Always send cookies cross-origin (required for cookie-based auth).
@@ -446,6 +451,17 @@ export interface ClientConfig {
    * Per-request override: set `elevated: true | false` on `RequestOptions`.
    */
   elevated?: boolean;
+  /**
+   * Per-attempt request timeout in ms. When set (> 0), every fetch attempt is
+   * aborted after this long and fails with a retryable `TimeoutError` —
+   * WITHOUT it, a hung connection pends forever unless the caller wires an
+   * `AbortSignal` themselves. Composed with the caller's signal (whichever
+   * fires first wins); each retry attempt gets a fresh timeout window.
+   * Default: disabled (0) — deliberate, to avoid killing legitimately slow
+   * report/export endpoints; set it explicitly (10–30s is typical).
+   * Per-request override: `ApiRequestOptions.timeoutMs` (0 disables).
+   */
+  timeoutMs?: number;
   /**
    * Network-failure + 5xx retry policy. Off by default — TanStack Query already
    * retries query reads (3× by default), but the SDK's mutation flow and any
@@ -510,7 +526,7 @@ export interface RetryConfig {
    * - `'linear'`: `300 * (n + 1)` ms
    * - `(attempt) => number`: custom delay in ms; receives the 0-indexed retry attempt
    */
-  backoff?: 'exponential' | 'linear' | ((attempt: number) => number);
+  backoff?: "exponential" | "linear" | ((attempt: number) => number);
   /**
    * Whitelist of statuses to retry on, OR a predicate. Defaults to a function
    * that returns true for: any non-`ArcApiError` (network failure / fetch
@@ -518,6 +534,13 @@ export interface RetryConfig {
    * AbortError or 4xx.
    */
   retryOn?: number[] | ((error: unknown) => boolean);
+  /**
+   * Backoff jitter. `'full'` randomizes each delay uniformly in
+   * `[0, computed]` (AWS full-jitter) so a fleet of clients recovering from
+   * the same outage doesn't retry in lockstep and re-stampede the backend.
+   * Default `'none'` keeps the historical deterministic delays.
+   */
+  jitter?: "none" | "full";
 }
 
 /** Context handed to {@link ClientConfig.beforeRequest}. Mutate + return to override. */
@@ -575,8 +598,8 @@ export function configureClient(config: ClientConfig): void {
   if (typeof window === "undefined") {
     console.warn(
       "[arc-next] configureClient() called on the server. " +
-      "This sets module-level state that persists across requests. " +
-      "Call only in client-side code (e.g., a 'use client' provider)."
+        "This sets module-level state that persists across requests. " +
+        "Call only in client-side code (e.g., a 'use client' provider).",
     );
   }
   clientConfig = config;
@@ -585,13 +608,13 @@ export function configureClient(config: ClientConfig): void {
 /**
  * Get the configured auth mode. Returns 'bearer' if not configured.
  */
-export function getAuthMode(): 'bearer' | 'cookie' | 'header' {
-  return clientConfig?.authMode ?? 'bearer';
+export function getAuthMode(): "bearer" | "cookie" | "header" {
+  return clientConfig?.authMode ?? "bearer";
 }
 
 /** Get the configured base URL. Returns empty string if not configured. */
 export function getBaseUrl(): string {
-  return clientConfig?.baseUrl ?? '';
+  return clientConfig?.baseUrl ?? "";
 }
 
 /** Whether auto-idempotency is enabled on the global client. */
@@ -611,9 +634,10 @@ export function isAutoIdempotency(): boolean {
  */
 export function hasGlobalStaticAuth(): boolean {
   if (!clientConfig) return false;
-  if (clientConfig.authMode === 'cookie') return true;
+  if (clientConfig.authMode === "cookie") return true;
   if (clientConfig.internalApiKey) return true;
-  if (clientConfig.defaultHeaders && Object.keys(clientConfig.defaultHeaders).length > 0) return true;
+  if (clientConfig.defaultHeaders && Object.keys(clientConfig.defaultHeaders).length > 0)
+    return true;
   return false;
 }
 
@@ -703,7 +727,7 @@ export interface AuthErrorContext {
 }
 
 /** {@link AuthConfig.onAuthError} signature. */
-export type AuthErrorHandler = (ctx: AuthErrorContext) => Promise<'retry' | 'skip'>;
+export type AuthErrorHandler = (ctx: AuthErrorContext) => Promise<"retry" | "skip">;
 
 let authConfig: AuthConfig | null = null;
 let hasWarnedAsyncToken = false;
@@ -732,18 +756,18 @@ export function configureAuth(config: AuthConfig): void {
   if (typeof window === "undefined") {
     console.warn(
       "[arc-next] configureAuth() called on the server. " +
-      "This sets module-level state that persists across requests. " +
-      "Call only in client-side code (e.g., a 'use client' provider)."
+        "This sets module-level state that persists across requests. " +
+        "Call only in client-side code (e.g., a 'use client' provider).",
     );
   }
   authConfig = config;
   hasWarnedAsyncToken = false;
 }
 
-function readToken(getToken: AuthConfig['getToken']): string | null {
+function readToken(getToken: AuthConfig["getToken"]): string | null {
   if (!getToken) return null;
   const result = getToken();
-  if (result && typeof (result as { then?: unknown }).then === 'function') {
+  if (result && typeof (result as { then?: unknown }).then === "function") {
     if (!hasWarnedAsyncToken) {
       hasWarnedAsyncToken = true;
       // Console.error (not warn) because the failure is silent in the UI:
@@ -754,11 +778,11 @@ function readToken(getToken: AuthConfig['getToken']): string | null {
       console.error(
         new Error(
           "[arc-next] configureAuth({ getToken }) returned a Promise. " +
-          "Tokens MUST resolve synchronously — async returns are dropped and " +
-          "every authenticated query will be silently disabled (no GET fires, " +
-          "isLoading:false, item:null). Fix: cache the token outside getToken " +
-          "(localStorage, memory, signal, useState) and have getToken() return " +
-          "the cached value. See README → 'Authentication'."
+            "Tokens MUST resolve synchronously — async returns are dropped and " +
+            "every authenticated query will be silently disabled (no GET fires, " +
+            "isLoading:false, item:null). Fix: cache the token outside getToken " +
+            "(localStorage, memory, signal, useState) and have getToken() return " +
+            "the cached value. See README → 'Authentication'.",
         ),
       );
     }
@@ -793,7 +817,7 @@ export function _resetAuthWarnings(): void {
  * "retry without a token" (rare but valid for public endpoints).
  */
 interface AuthRecoveryResult {
-  decision: 'retry' | 'skip';
+  decision: "retry" | "skip";
   overrideToken: string | null | undefined;
 }
 
@@ -837,7 +861,7 @@ export function _getAuthErrorHandler(): {
  */
 export function _runAuthRecovery(
   handler: AuthErrorHandler,
-  ctx: Omit<AuthErrorContext, 'setToken'>,
+  ctx: Omit<AuthErrorContext, "setToken">,
 ): Promise<AuthRecoveryResult> {
   return runAuthRecovery(handler, ctx);
 }
@@ -848,9 +872,7 @@ export function _runAuthRecovery(
  * auth loop — `setToken` override beats re-reading `getToken()`. Exported so
  * transports outside the fetch path apply the same precedence.
  */
-export function _resolveRefreshedToken(
-  overrideToken: string | null | undefined,
-): string | null {
+export function _resolveRefreshedToken(overrideToken: string | null | undefined): string | null {
   if (overrideToken !== undefined) return overrideToken;
   return readToken(authConfig?.getToken);
 }
@@ -880,12 +902,12 @@ function isAuthRecoverable(error: unknown, retryOn403: boolean): boolean {
  */
 function runAuthRecovery(
   handler: AuthErrorHandler,
-  ctx: Omit<AuthErrorContext, 'setToken'>,
+  ctx: Omit<AuthErrorContext, "setToken">,
 ): Promise<AuthRecoveryResult> {
   if (pendingAuthRecovery) return pendingAuthRecovery;
 
   const promise = (async (): Promise<AuthRecoveryResult> => {
-    let overrideToken: string | null | undefined = undefined;
+    let overrideToken: string | null | undefined;
     const setToken = (token: string | null): void => {
       overrideToken = token;
     };
@@ -944,17 +966,17 @@ export function createAuthRefreshHandler(opts: {
    * Behavior when the `refresh()` call itself throws. Default: `'skip'`
    * (the original 401 surfaces; consumers handle "session expired" once).
    */
-  onRefreshError?: 'skip' | 'throw';
+  onRefreshError?: "skip" | "throw";
 }): AuthErrorHandler {
   return async ({ setToken }) => {
     try {
       const token = await opts.refresh();
-      if (token == null) return 'skip';
+      if (token == null) return "skip";
       setToken(token);
-      return 'retry';
+      return "retry";
     } catch (err) {
-      if (opts.onRefreshError === 'throw') throw err;
-      return 'skip';
+      if (opts.onRefreshError === "throw") throw err;
+      return "skip";
     }
   };
 }
@@ -964,7 +986,7 @@ export function createAuthRefreshHandler(opts: {
 // ============================================================================
 
 /** Protocol family the URL should target. `http` keeps `getBaseUrl()` as-is; `ws` rewrites `http(s)://` → `ws(s)://`. */
-export type StreamUrlProtocol = 'http' | 'ws';
+export type StreamUrlProtocol = "http" | "ws";
 
 /**
  * Build an auth-aware URL using the global client + auth singletons.
@@ -981,36 +1003,34 @@ export type StreamUrlProtocol = 'http' | 'ws';
 export function buildStreamUrl(
   path: string,
   params: Record<string, string | number | boolean | null | undefined> = {},
-  protocol: StreamUrlProtocol = 'http',
+  protocol: StreamUrlProtocol = "http",
 ): string {
   const auth = getAuthContext();
   const qs = new URLSearchParams();
 
   for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === '') continue;
+    if (value === undefined || value === null || value === "") continue;
     qs.set(key, String(value));
   }
 
-  if (auth.organizationId && !qs.has('organizationId')) {
-    qs.set('organizationId', auth.organizationId);
+  if (auth.organizationId && !qs.has("organizationId")) {
+    qs.set("organizationId", auth.organizationId);
   }
-  if (auth.token && getAuthMode() !== 'cookie' && !qs.has('token')) {
-    qs.set('token', auth.token);
+  if (auth.token && getAuthMode() !== "cookie" && !qs.has("token")) {
+    qs.set("token", auth.token);
   }
 
   const origin =
-    protocol === 'ws'
-      ? getBaseUrl().replace(/^http(s?):\/\//, 'ws$1://')
-      : getBaseUrl();
+    protocol === "ws" ? getBaseUrl().replace(/^http(s?):\/\//, "ws$1://") : getBaseUrl();
   const suffix = qs.toString();
-  return `${origin}${path}${suffix ? `?${suffix}` : ''}`;
+  return `${origin}${path}${suffix ? `?${suffix}` : ""}`;
 }
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 /** Returned by `handleApiRequest` for PDF, image, and CSV responses. */
 export interface BlobResponse {
@@ -1073,6 +1093,8 @@ export interface ApiRequestOptions {
   next?: NextFetchOptions;
   cache?: RequestCache;
   signal?: AbortSignal;
+  /** Per-request timeout in ms — overrides `ClientConfig.timeoutMs`. `0` disables for this request. */
+  timeoutMs?: number;
   /** Explicit idempotency key for this request. Sent as `Idempotency-Key` header. */
   idempotencyKey?: string;
   /**
@@ -1098,7 +1120,11 @@ export interface ArcClientConfig extends ClientConfig {
 }
 
 export interface ArcClient {
-  request: <T = unknown>(method: HttpMethod, endpoint: string, options?: ApiRequestOptions) => Promise<T>;
+  request: <T = unknown>(
+    method: HttpMethod,
+    endpoint: string,
+    options?: ApiRequestOptions,
+  ) => Promise<T>;
   config: ClientConfig;
   toast?: ToastHandler;
   navigation?: UseRouterHook;
@@ -1127,9 +1153,8 @@ export interface ArcClient {
  */
 export function createClient(config: ArcClientConfig): ArcClient {
   const { toast, navigation, getToken, getOrgId, headerName, ...clientCfg } = config;
-  const clientAuth = (getToken || getOrgId || headerName)
-    ? { getToken, getOrgId, headerName }
-    : undefined;
+  const clientAuth =
+    getToken || getOrgId || headerName ? { getToken, getOrgId, headerName } : undefined;
 
   return {
     request: <T = unknown>(method: HttpMethod, endpoint: string, options?: ApiRequestOptions) => {
@@ -1143,8 +1168,8 @@ export function createClient(config: ArcClientConfig): ArcClient {
           resolved.organizationId = clientAuth.getOrgId();
         }
         // For header auth mode: inject token as custom header directly
-        if (clientCfg.authMode === 'header' && resolved.token) {
-          const name = clientAuth.headerName ?? 'x-api-key';
+        if (clientCfg.authMode === "header" && resolved.token) {
+          const name = clientAuth.headerName ?? "x-api-key";
           resolved.headerOptions = { [name]: resolved.token, ...(resolved.headerOptions ?? {}) };
           resolved.token = undefined; // prevent double-injection via Bearer
         }
@@ -1235,8 +1260,8 @@ export function createAuthAwareClient(overrides: Partial<ArcClientConfig> = {}):
       const resolved: ApiRequestOptions = { ...options };
       if (resolved.token === undefined) resolved.token = readToken(authGetToken);
       if (resolved.organizationId === undefined) resolved.organizationId = authGetOrgId();
-      if (cfg.authMode === 'header' && resolved.token) {
-        const name = authHeaderName ?? 'x-api-key';
+      if (cfg.authMode === "header" && resolved.token) {
+        const name = authHeaderName ?? "x-api-key";
         resolved.headerOptions = { [name]: resolved.token, ...(resolved.headerOptions ?? {}) };
         resolved.token = undefined;
       }
@@ -1255,9 +1280,63 @@ export function createAuthAwareClient(overrides: Partial<ArcClientConfig> = {}):
 }
 
 /**
+ * Request-scoped server client config — static credentials for exactly one
+ * request, no module singletons.
+ */
+export interface ServerClientConfig
+  extends Omit<ArcClientConfig, "getToken" | "getOrgId" | "toast" | "navigation"> {
+  /** Bearer token for this request. `null`/omitted = unauthenticated. */
+  token?: string | null;
+  /** Tenant/org for this request, sent as `x-organization-id`. */
+  organizationId?: string | null;
+}
+
+/**
+ * Create a **request-scoped** client for server environments (Next.js App
+ * Router route handlers / Server Components, or any SSR runtime).
+ *
+ * Unlike `configureClient`/`configureAuth` — which set module-level state
+ * that leaks across concurrent server requests — this returns an isolated
+ * client whose credentials live only in the returned instance. Construct one
+ * per request, read cookies/headers in YOUR framework code, and pass the
+ * values in. The SDK stays framework-free: no `next` dependency, no
+ * `next/headers` import, no hidden cookie access.
+ *
+ * @example Next.js App Router (Server Component or route handler)
+ * ```ts
+ * import { cookies, headers } from 'next/headers';   // host code, not SDK code
+ * import { createServerClient } from '@classytic/arc-next/client';
+ * import { createCrudApi } from '@classytic/arc-next/api';
+ *
+ * export async function loadOrders() {
+ *   const jar = await cookies();
+ *   const client = createServerClient({
+ *     baseUrl: process.env.API_URL!,
+ *     token: jar.get('session')?.value ?? null,
+ *     organizationId: (await headers()).get('x-organization-id'),
+ *   });
+ *   const orders = createCrudApi<Order>('orders', { client });
+ *   // Next fetch-cache passthrough works per call:
+ *   return orders.getAll({ options: { next: { revalidate: 60, tags: ['orders'] } } });
+ * }
+ * ```
+ */
+export function createServerClient(config: ServerClientConfig): ArcClient {
+  const { token = null, organizationId = null, ...rest } = config;
+  return createClient({
+    ...rest,
+    getToken: () => token,
+    getOrgId: () => organizationId,
+  });
+}
+
+/**
  * Get auth context for a specific client instance, falling back to global.
  */
-export function getClientAuthContext(client?: ArcClient): { token: string | null; organizationId: string | null } {
+export function getClientAuthContext(client?: ArcClient): {
+  token: string | null;
+  organizationId: string | null;
+} {
   if (client?.auth) {
     return {
       token: readToken(client.auth.getToken) ?? readToken(authConfig?.getToken),
@@ -1282,12 +1361,26 @@ function defaultShouldRetry(error: unknown): boolean {
 }
 
 /** Compute the delay in ms before the Nth retry. */
-function computeBackoff(retry: RetryConfig, attempt: number): number {
-  const strategy = retry.backoff ?? 'exponential';
-  if (typeof strategy === 'function') return Math.max(0, strategy(attempt));
-  if (strategy === 'linear') return 300 * (attempt + 1);
-  // exponential: 300, 600, 1200, ... capped at 10s
-  return Math.min(300 * Math.pow(2, attempt), 10_000);
+function computeBackoff(retry: RetryConfig, attempt: number, error?: unknown): number {
+  // Server-directed pacing wins: a 429/503 carrying `Retry-After` states
+  // exactly when capacity returns — retrying sooner is wasted load, and the
+  // header already staggers clients, so no jitter is applied on top.
+  if (
+    isArcApiError(error) &&
+    error.retryAfterMs != null &&
+    (error.status === 429 || error.status === 503)
+  ) {
+    return error.retryAfterMs;
+  }
+  const strategy = retry.backoff ?? "exponential";
+  const base =
+    typeof strategy === "function"
+      ? Math.max(0, strategy(attempt))
+      : strategy === "linear"
+        ? 300 * (attempt + 1)
+        : // exponential: 300, 600, 1200, ... capped at 10s
+          Math.min(300 * 2 ** attempt, 10_000);
+  return retry.jitter === "full" ? Math.random() * base : base;
 }
 
 /**
@@ -1306,7 +1399,7 @@ async function executeWithBackoff<T = unknown>(
   const totalAttempts = Math.max(1, config.retry?.attempts ?? 1);
   const shouldRetry = (() => {
     const r = config.retry?.retryOn;
-    if (typeof r === 'function') return r;
+    if (typeof r === "function") return r;
     if (Array.isArray(r)) return (e: unknown) => isArcApiError(e) && r.includes(e.status);
     return defaultShouldRetry;
   })();
@@ -1320,7 +1413,7 @@ async function executeWithBackoff<T = unknown>(
       const isLastAttempt = attempt === totalAttempts - 1;
       if (isLastAttempt || !shouldRetry(error)) throw error;
       // Honor abort across the backoff sleep — don't keep retrying after cancellation.
-      const delay = computeBackoff(config.retry ?? {}, attempt);
+      const delay = computeBackoff(config.retry ?? {}, attempt, error);
       if (delay > 0) await sleepAbortable(delay, options.signal);
     }
   }
@@ -1346,6 +1439,20 @@ async function executeRequest<T = unknown>(
   endpoint: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
+  // Auto-idempotency is an EXECUTOR concern: the key is generated once per
+  // logical request, here at the top, so every backoff retry AND every
+  // auth-recovery retry of the same call reuses the same `Idempotency-Key`.
+  // (Generating inside the attempt would mint a fresh key per retry and
+  // defeat the dedup.) Caller-supplied keys always win; GET/DELETE are
+  // naturally idempotent and excluded.
+  if (
+    config.autoIdempotency &&
+    options.idempotencyKey === undefined &&
+    (method === "POST" || method === "PUT" || method === "PATCH")
+  ) {
+    options = { ...options, idempotencyKey: globalThis.crypto.randomUUID() };
+  }
+
   const handler = authConfig?.onAuthError;
   // Fast path — most apps haven't wired onAuthError; skip the wrapper entirely.
   if (!handler) return executeWithBackoff<T>(config, method, endpoint, options);
@@ -1371,39 +1478,81 @@ async function executeRequest<T = unknown>(
         attempt: authAttempt + 1,
       });
 
-      if (decision !== 'retry') throw error;
+      if (decision !== "retry") throw error;
 
       // Token resolution priority: setToken override > re-read getToken > current.
       // `undefined` means handler didn't touch setToken; `null` is a valid choice
       // (retry unauthenticated). The distinction matters for public endpoints.
       const nextToken =
-        overrideToken !== undefined
-          ? overrideToken
-          : readToken(authConfig?.getToken);
+        overrideToken !== undefined ? overrideToken : readToken(authConfig?.getToken);
       currentOptions = { ...currentOptions, token: nextToken };
     }
   }
   // Unreachable — the loop either returns or throws. TypeScript needs the line.
-  throw new Error('arc-next: auth retry loop terminated without resolution');
+  throw new Error("arc-next: auth retry loop terminated without resolution");
+}
+
+/** Parse `Retry-After` (delta-seconds or HTTP-date) to ms; null when absent/invalid. */
+function parseRetryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return null;
 }
 
 /** Sleep that resolves early if the signal aborts. */
 function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+      reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
       return;
     }
     const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
+      signal?.removeEventListener("abort", onAbort);
       resolve();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
-      reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+      reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
     };
-    signal?.addEventListener('abort', onAbort, { once: true });
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/**
+ * Compose the caller's AbortSignal with a per-attempt timeout. Returns the
+ * effective signal plus a `timedOut()` probe so the catch path can tell a
+ * timeout abort (retryable failure) apart from a deliberate caller abort
+ * (silent cancellation).
+ */
+function withTimeoutSignal(
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal | undefined; timedOut: () => boolean; cleanup: () => void } {
+  if (!(timeoutMs > 0)) {
+    return { signal, timedOut: () => false, cleanup: () => {} };
+  }
+  const controller = new AbortController();
+  let timedOut = false;
+  const onCallerAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
 }
 
 /** A single fetch attempt — used by executeRequest's retry loop. */
@@ -1423,50 +1572,54 @@ async function executeAttempt<T = unknown>(
     tags,
     next,
     cache,
-    signal,
+    signal: callerSignal,
     idempotencyKey,
     elevated,
   } = options;
+
+  const timeoutMs = options.timeoutMs ?? config.timeoutMs ?? 0;
+  const timeout = withTimeoutSignal(callerSignal, timeoutMs);
+  const signal = timeout.signal;
 
   const startTime = Date.now();
 
   try {
     let headers: Record<string, string> = {
-      ...(organizationId ? { 'x-organization-id': organizationId } : {}),
+      ...(organizationId ? { "x-organization-id": organizationId } : {}),
       ...(config.defaultHeaders ?? {}),
     };
 
     if (config.internalApiKey) {
-      headers['x-internal-api-key'] = config.internalApiKey;
+      headers["x-internal-api-key"] = config.internalApiKey;
     }
 
     if (token) {
-      if (config.authMode === 'header') {
-        const headerName = authConfig?.headerName ?? 'x-api-key';
+      if (config.authMode === "header") {
+        const headerName = authConfig?.headerName ?? "x-api-key";
         headers[headerName] = token;
-      } else if (config.authMode !== 'cookie') {
+      } else if (config.authMode !== "cookie") {
         // Cookie mode carries auth via Set-Cookie / `credentials: 'include'`.
         // Adding `Authorization: Bearer …` on top is redundant at best and
         // can trip servers that strictly validate one auth mechanism
         // per request (e.g. Better Auth's session validator). Matches the
         // upload-path + `arcAuthHeaders` convention so all three transports
         // agree on the cookie-mode contract.
-        headers['Authorization'] = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${token}`;
       }
     }
 
     if (config.apiVersion) {
-      headers['Accept-Version'] = config.apiVersion;
+      headers["Accept-Version"] = config.apiVersion;
     }
 
     if (idempotencyKey) {
-      headers['Idempotency-Key'] = idempotencyKey;
+      headers["Idempotency-Key"] = idempotencyKey;
     }
 
     // Per-request `elevated` overrides client-level config (false suppresses, true forces).
     const elevatedActive = elevated ?? config.elevated ?? false;
     if (elevatedActive) {
-      headers['x-arc-scope'] = 'platform';
+      headers["x-arc-scope"] = "platform";
     }
 
     // Detect bodies that carry their own Content-Type (FormData computes a
@@ -1477,7 +1630,7 @@ async function executeAttempt<T = unknown>(
     // are the only shapes we JSON-stringify ourselves, so they're the only
     // ones that need the JSON content-type.
     if (body !== undefined && body !== null && !isNonJsonBody(body)) {
-      headers['Content-Type'] = 'application/json';
+      headers["Content-Type"] = "application/json";
     }
 
     if (headerOptions) {
@@ -1485,14 +1638,12 @@ async function executeAttempt<T = unknown>(
     }
 
     // Derive credentials: explicit config > authMode-based default
-    const credentials = config.credentials
-      ?? (config.authMode === 'cookie' ? 'include' : 'same-origin');
+    const credentials =
+      config.credentials ?? (config.authMode === "cookie" ? "include" : "same-origin");
 
-    let serializedBody: BodyInit | undefined = undefined;
+    let serializedBody: BodyInit | undefined;
     if (body !== undefined && body !== null) {
-      serializedBody = isNonJsonBody(body)
-        ? (body as BodyInit)
-        : JSON.stringify(body);
+      serializedBody = isNonJsonBody(body) ? (body as BodyInit) : JSON.stringify(body);
     }
 
     // Application-Layer Encryption — encrypt outbound JSON bodies. Only the
@@ -1500,13 +1651,9 @@ async function executeAttempt<T = unknown>(
     // Blob / raw bytes pass through untouched. The Content-Type flips to the
     // JWE media type so the backend's content-type parser decrypts it.
     const encryption = config.encryption;
-    if (
-      encryption?.encryptRequests &&
-      encryption.encrypt &&
-      typeof serializedBody === 'string'
-    ) {
+    if (encryption?.encryptRequests && encryption.encrypt && typeof serializedBody === "string") {
       serializedBody = await encryption.encrypt(serializedBody);
-      headers['Content-Type'] = encryption.requestContentType ?? 'application/jose';
+      headers["Content-Type"] = encryption.requestContentType ?? "application/jose";
     }
 
     // beforeRequest interceptor: mutate headers/body before fetch. Runs per
@@ -1561,10 +1708,10 @@ async function executeAttempt<T = unknown>(
     if (!isAbsolute && !config.baseUrl) {
       throw new Error(
         `[arc-next] handleApiRequest(${method} ${endpoint}): baseUrl is empty. ` +
-        `Call configureClient({ baseUrl: '...' }) BEFORE the first request. ` +
-        `If you use createAuthAwareClient() at module top-level, make sure the ` +
-        `Providers component runs configureClient() first (e.g. in a useState() ` +
-        `initializer, before the children render).`,
+          `Call configureClient({ baseUrl: '...' }) BEFORE the first request. ` +
+          `If you use createAuthAwareClient() at module top-level, make sure the ` +
+          `Providers component runs configureClient() first (e.g. in a useState() ` +
+          `initializer, before the children render).`,
       );
     }
     const response = await fetch(`${config.baseUrl}${endpoint}`, fetchOptions);
@@ -1580,17 +1727,19 @@ async function executeAttempt<T = unknown>(
         // routed through it AND `{ error }` for controller-emitted IControllerResponse
         // failures. Some hosts / non-arc backends use `{ message }` instead.
         // Read both, preferring `error` (arc native), falling back to `message`.
-        const j = json as
-          | { error?: unknown; message?: unknown; meta?: { message?: unknown } }
-          | null;
+        const j = json as {
+          error?: unknown;
+          message?: unknown;
+          meta?: { message?: unknown };
+        } | null;
         errorMessage =
-          (typeof j?.error === 'string' && j.error) ||
+          (typeof j?.error === "string" && j.error) ||
           // Arc wraps hook-thrown errors as `{ message: 'Hook execution failed',
           // meta: { message: <the real, author-written message> } }`. Surface the
           // real message so the user sees "Your organization is pending approval…"
           // instead of the generic wrapper text. (No-op when `meta.message` absent.)
-          (typeof j?.meta?.message === 'string' && j.meta.message) ||
-          (typeof j?.message === 'string' && j.message) ||
+          (typeof j?.meta?.message === "string" && j.meta.message) ||
+          (typeof j?.message === "string" && j.message) ||
           response.statusText;
       } catch {
         // Non-JSON error (HTML from CDN, plain text, empty body) — capture as text
@@ -1611,10 +1760,11 @@ async function executeAttempt<T = unknown>(
         json,
         endpoint,
         method,
+        retryAfterMs: parseRetryAfterMs(response.headers.get("Retry-After")),
       });
     }
 
-    const contentType = response.headers.get('Content-Type');
+    const contentType = response.headers.get("Content-Type");
 
     let data: unknown;
 
@@ -1622,20 +1772,22 @@ async function executeAttempt<T = unknown>(
     // content-type / repo-core parsing, so the decrypted JSON flows through
     // the normal path and the wire contract (pagination, error shapes) is
     // identical to an unencrypted response.
-    const decryptCt = encryption ? (encryption.responseContentType ?? 'application/jose') : undefined;
+    const decryptCt = encryption
+      ? (encryption.responseContentType ?? "application/jose")
+      : undefined;
     if (encryption && decryptCt && contentType?.includes(decryptCt)) {
       const cipher = await response.text();
-      const plaintext = cipher.length > 0 ? await encryption.decrypt(cipher) : '';
+      const plaintext = cipher.length > 0 ? await encryption.decrypt(cipher) : "";
       data = plaintext.length > 0 ? JSON.parse(plaintext) : undefined;
-    } else if (contentType?.includes('application/json')) {
+    } else if (contentType?.includes("application/json")) {
       data = await response.json();
-    } else if (contentType?.includes('application/pdf') || contentType?.includes('image/')) {
+    } else if (contentType?.includes("application/pdf") || contentType?.includes("image/")) {
       const blobData = await response.blob();
       data = { data: blobData, response };
-    } else if (contentType?.includes('text/csv')) {
+    } else if (contentType?.includes("text/csv")) {
       const csvData = await response.blob();
       data = { data: csvData, response };
-    } else if (contentType?.includes('text/')) {
+    } else if (contentType?.includes("text/")) {
       const text = await response.text();
       data = { data: text, response };
     } else {
@@ -1649,7 +1801,7 @@ async function executeAttempt<T = unknown>(
         } catch {
           throw new Error(
             `Failed to parse response body from ${method} ${endpoint}: ` +
-            `blob error: ${blobError instanceof Error ? blobError.message : String(blobError)}`
+              `blob error: ${blobError instanceof Error ? blobError.message : String(blobError)}`,
           );
         }
       }
@@ -1671,9 +1823,20 @@ async function executeAttempt<T = unknown>(
 
     return data as T;
   } catch (error) {
+    // Timeout aborts surface as a RETRYABLE TimeoutError, distinct from a
+    // deliberate caller abort (which stays an AbortError and is never
+    // retried / toasted).
+    if (timeout.timedOut() && isAbortError(error)) {
+      throw Object.assign(
+        new Error(`[arc-next] Request timed out after ${timeoutMs}ms: ${method} ${endpoint}`),
+        { name: "TimeoutError" },
+      );
+    }
     // Preserve original error type (ArcApiError, AbortError, TypeError, etc.)
     if (error instanceof Error) throw error;
-    throw new Error('An error occurred while fetching data.');
+    throw new Error("An error occurred while fetching data.");
+  } finally {
+    timeout.cleanup();
   }
 }
 
@@ -1696,7 +1859,7 @@ export async function handleApiRequest<T = unknown>(
 ): Promise<T> {
   if (!clientConfig) {
     throw new Error(
-      'arc-next: Client not configured. Call configureClient({ baseUrl }) before making API requests.'
+      "arc-next: Client not configured. Call configureClient({ baseUrl }) before making API requests.",
     );
   }
   // Auto-inject global auth context (configureAuth) when the caller didn't
@@ -1742,52 +1905,52 @@ export function createQueryString<T extends Record<string, unknown>>(params: T =
   const searchParams = new URLSearchParams();
 
   Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === '') return;
+    if (value === undefined || value === "") return;
 
-    if (key === 'populateOptions' && Array.isArray(value)) {
+    if (key === "populateOptions" && Array.isArray(value)) {
       (value as Array<{ path: string; select?: string; match?: Record<string, unknown> }>).forEach(
         (opt) => {
           if (opt.select) {
-            const selectFields = opt.select.replace(/\s+/g, ',');
+            const selectFields = opt.select.replace(/\s+/g, ",");
             searchParams.append(`populate[${opt.path}][select]`, selectFields);
           }
           if (opt.match) {
             searchParams.append(`populate[${opt.path}][match]`, JSON.stringify(opt.match));
           }
           if (!opt.select && !opt.match) {
-            const existing = searchParams.get('populate');
+            const existing = searchParams.get("populate");
             if (existing) {
-              searchParams.set('populate', `${existing},${opt.path}`);
+              searchParams.set("populate", `${existing},${opt.path}`);
             } else {
-              searchParams.append('populate', opt.path);
+              searchParams.append("populate", opt.path);
             }
           }
-        }
+        },
       );
       return;
     }
 
     if (Array.isArray(value)) {
       if (value.length > 1) {
-        searchParams.append(`${key}[in]`, value.join(','));
+        searchParams.append(`${key}[in]`, value.join(","));
       } else if (value.length === 1) {
         searchParams.append(key, String(value[0]));
       }
     } else if (value === null) {
-      searchParams.append(key, 'null');
-    } else if (typeof value === 'object') {
+      searchParams.append(key, "null");
+    } else if (typeof value === "object") {
       // Nested operator object — `{ field: { gte: 18, lt: 65 } }` → `field[gte]=18&field[lt]=65`.
       // Matches `@classytic/repo-core/query-parser` bracket grammar so the
       // server-side `parseUrl()` reverses to the same Filter IR.
       // Array operator values flatten via comma-join (`{ in: [1,2,3] }` → `field[in]=1,2,3`),
       // matching mongokit/sqlitekit URL conventions.
       for (const [op, opValue] of Object.entries(value as Record<string, unknown>)) {
-        if (opValue === undefined || opValue === '') continue;
+        if (opValue === undefined || opValue === "") continue;
         const bracketKey = `${key}[${op}]`;
         if (Array.isArray(opValue)) {
-          if (opValue.length > 0) searchParams.append(bracketKey, opValue.join(','));
+          if (opValue.length > 0) searchParams.append(bracketKey, opValue.join(","));
         } else if (opValue === null) {
-          searchParams.append(bracketKey, 'null');
+          searchParams.append(bracketKey, "null");
         } else {
           searchParams.append(bracketKey, String(opValue));
         }
@@ -1820,13 +1983,14 @@ export function createQueryString<T extends Record<string, unknown>>(params: T =
  */
 function isNonJsonBody(body: unknown): boolean {
   if (body == null) return false;
-  if (typeof body === 'string') return true;
-  if (typeof FormData !== 'undefined' && body instanceof FormData) return true;
-  if (typeof Blob !== 'undefined' && body instanceof Blob) return true;
-  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) return true;
-  if (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer) return true;
-  if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(body as ArrayBufferView)) return true;
-  if (typeof ReadableStream !== 'undefined' && body instanceof ReadableStream) return true;
+  if (typeof body === "string") return true;
+  if (typeof FormData !== "undefined" && body instanceof FormData) return true;
+  if (typeof Blob !== "undefined" && body instanceof Blob) return true;
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) return true;
+  if (typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer) return true;
+  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(body as ArrayBufferView))
+    return true;
+  if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) return true;
   return false;
 }
 
@@ -1849,14 +2013,14 @@ export function arcAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
 
   if (token) {
-    if (authMode === 'header') {
-      headers[authConfig?.headerName ?? 'x-api-key'] = token;
-    } else if (authMode !== 'cookie') {
+    if (authMode === "header") {
+      headers[authConfig?.headerName ?? "x-api-key"] = token;
+    } else if (authMode !== "cookie") {
       headers.Authorization = `Bearer ${token}`;
     }
   }
-  if (organizationId) headers['x-organization-id'] = organizationId;
-  if (clientConfig?.internalApiKey) headers['x-internal-api-key'] = clientConfig.internalApiKey;
+  if (organizationId) headers["x-organization-id"] = organizationId;
+  if (clientConfig?.internalApiKey) headers["x-internal-api-key"] = clientConfig.internalApiKey;
   return headers;
 }
 
@@ -1869,14 +2033,14 @@ export function arcAuthHeaders(): Record<string, string> {
  * honored (`Authorization` vs `authorization` both protected).
  */
 const ARC_FETCH_PROTECTED_HEADERS = new Set<string>([
-  'authorization',
-  'x-organization-id',
-  'x-internal-api-key',
+  "authorization",
+  "x-organization-id",
+  "x-internal-api-key",
   // Custom auth-header-mode header name is protected dynamically below
   // (depends on authConfig.headerName).
 ]);
 
-export interface ArcFetchOptions extends Omit<RequestInit, 'body' | 'headers'> {
+export interface ArcFetchOptions extends Omit<RequestInit, "body" | "headers"> {
   /**
    * Request body. Plain objects and arrays are auto-`JSON.stringify`d and
    * sent with `Content-Type: application/json`. Binary bodies (`FormData`,
@@ -1938,9 +2102,7 @@ export function _resetArcFetchClient(): void {
  * apps that reconfigure auth modes don't lose protection on the renamed
  * header.
  */
-function sanitizeUserHeaders(
-  headers: Record<string, string> | undefined,
-): Record<string, string> {
+function sanitizeUserHeaders(headers: Record<string, string> | undefined): Record<string, string> {
   if (!headers) return {};
   const customHeader = authConfig?.headerName?.toLowerCase();
   const out: Record<string, string> = {};
@@ -1989,12 +2151,9 @@ function sanitizeUserHeaders(
  * // After:
  * const result = await arc.post<{ ok: true }>('/api/statements', statements);
  */
-export function arcFetch<T = unknown>(
-  path: string,
-  options: ArcFetchOptions = {},
-): Promise<T> {
+export function arcFetch<T = unknown>(path: string, options: ArcFetchOptions = {}): Promise<T> {
   const {
-    method = 'GET',
+    method = "GET",
     body,
     headers,
     signal,
@@ -2036,22 +2195,13 @@ export function arcFetch<T = unknown>(
  */
 export const arc = {
   get: <T = unknown>(path: string, opts: ArcFetchOptions = {}) =>
-    arcFetch<T>(path, { ...opts, method: 'GET' }),
-  post: <T = unknown>(
-    path: string,
-    body?: ArcFetchOptions['body'],
-    opts: ArcFetchOptions = {},
-  ) => arcFetch<T>(path, { ...opts, method: 'POST', body }),
-  put: <T = unknown>(
-    path: string,
-    body?: ArcFetchOptions['body'],
-    opts: ArcFetchOptions = {},
-  ) => arcFetch<T>(path, { ...opts, method: 'PUT', body }),
-  patch: <T = unknown>(
-    path: string,
-    body?: ArcFetchOptions['body'],
-    opts: ArcFetchOptions = {},
-  ) => arcFetch<T>(path, { ...opts, method: 'PATCH', body }),
+    arcFetch<T>(path, { ...opts, method: "GET" }),
+  post: <T = unknown>(path: string, body?: ArcFetchOptions["body"], opts: ArcFetchOptions = {}) =>
+    arcFetch<T>(path, { ...opts, method: "POST", body }),
+  put: <T = unknown>(path: string, body?: ArcFetchOptions["body"], opts: ArcFetchOptions = {}) =>
+    arcFetch<T>(path, { ...opts, method: "PUT", body }),
+  patch: <T = unknown>(path: string, body?: ArcFetchOptions["body"], opts: ArcFetchOptions = {}) =>
+    arcFetch<T>(path, { ...opts, method: "PATCH", body }),
   delete: <T = unknown>(path: string, opts: ArcFetchOptions = {}) =>
-    arcFetch<T>(path, { ...opts, method: 'DELETE' }),
+    arcFetch<T>(path, { ...opts, method: "DELETE" }),
 };

@@ -1,31 +1,31 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Each test gets a fresh module to avoid singleton leakage between tests.
 async function loadFresh() {
   vi.resetModules();
-  return import('../src/query-client.js');
+  return import("../src/query-client.js");
 }
 
-describe('getQueryClient', () => {
+describe("getQueryClient", () => {
   beforeEach(() => {
     vi.resetModules();
   });
 
-  it('returns a QueryClient instance', async () => {
+  it("returns a QueryClient instance", async () => {
     const { getQueryClient } = await loadFresh();
     const client = getQueryClient();
     expect(client).toBeInstanceOf(QueryClient);
   });
 
-  it('returns same instance on repeated calls (browser singleton)', async () => {
+  it("returns same instance on repeated calls (browser singleton)", async () => {
     const { getQueryClient } = await loadFresh();
     const a = getQueryClient();
     const b = getQueryClient();
     expect(a).toBe(b);
   });
 
-  it('has correct default options', async () => {
+  it("has correct default options", async () => {
     const { getQueryClient } = await loadFresh();
     const client = getQueryClient();
     const defaults = client.getDefaultOptions();
@@ -34,11 +34,11 @@ describe('getQueryClient', () => {
     // retry is a guard FUNCTION since the arc 2.22 quota work: default cap 0,
     // and quota.exceeded errors never retry regardless of the cap.
     const retry = defaults.queries?.retry as (n: number, e: unknown) => boolean;
-    expect(retry(0, new Error('flaky'))).toBe(false); // default cap 0
+    expect(retry(0, new Error("flaky"))).toBe(false); // default cap 0
     expect(defaults.queries?.refetchOnWindowFocus).toBe(false);
   });
 
-  it('applies overrides on first call', async () => {
+  it("applies overrides on first call", async () => {
     const { getQueryClient } = await loadFresh();
     const client = getQueryClient({ staleTime: 1_000, gcTime: 5_000 });
     const defaults = client.getDefaultOptions();
@@ -46,12 +46,12 @@ describe('getQueryClient', () => {
     expect(defaults.queries?.gcTime).toBe(5_000);
     // Non-overridden values keep defaults (retry guard keeps cap 0)
     const retry2 = defaults.queries?.retry as (n: number, e: unknown) => boolean;
-    expect(retry2(0, new Error('flaky'))).toBe(false);
+    expect(retry2(0, new Error("flaky"))).toBe(false);
     expect(defaults.queries?.refetchOnWindowFocus).toBe(false);
   });
 
-  it('ignores overrides on subsequent calls and warns', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it("ignores overrides on subsequent calls and warns", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { getQueryClient } = await loadFresh();
 
     const first = getQueryClient({ staleTime: 1_000 });
@@ -65,15 +65,13 @@ describe('getQueryClient', () => {
 
     // Warning emitted
     expect(warnSpy).toHaveBeenCalledOnce();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('overrides are ignored'),
-    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("overrides are ignored"));
 
     warnSpy.mockRestore();
   });
 
-  it('does not warn when second call has no overrides', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it("does not warn when second call has no overrides", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { getQueryClient } = await loadFresh();
 
     getQueryClient({ staleTime: 1_000 });
@@ -83,8 +81,8 @@ describe('getQueryClient', () => {
     warnSpy.mockRestore();
   });
 
-  it('returns the singleton even without overrides', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it("returns the singleton even without overrides", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { getQueryClient } = await loadFresh();
 
     const first = getQueryClient();
@@ -96,7 +94,7 @@ describe('getQueryClient', () => {
     warnSpy.mockRestore();
   });
 
-  it('dehydrate config includes pending queries', async () => {
+  it("dehydrate config includes pending queries", async () => {
     const { getQueryClient } = await loadFresh();
     const client = getQueryClient();
     const dehydrateOpts = client.getDefaultOptions().dehydrate;

@@ -1,9 +1,5 @@
-import {
-  isServer,
-  QueryClient,
-  defaultShouldDehydrateQuery,
-} from '@tanstack/react-query';
-import { isQuotaExceeded } from './client.js';
+import { defaultShouldDehydrateQuery, isServer, QueryClient } from "@tanstack/react-query";
+import { isQuotaExceeded } from "./client.js";
 
 // ============================================================================
 // Types
@@ -48,8 +44,7 @@ function makeQueryClient(overrides?: QueryClientOverrides): QueryClient {
       },
       dehydrate: {
         shouldDehydrateQuery: (query) =>
-          defaultShouldDehydrateQuery(query) ||
-          query.state.status === 'pending',
+          defaultShouldDehydrateQuery(query) || query.state.status === "pending",
       },
     },
   });
@@ -78,8 +73,8 @@ export function getQueryClient(overrides?: QueryClientOverrides): QueryClient {
     browserQueryClient = makeQueryClient(overrides);
   } else if (overrides) {
     console.warn(
-      '[arc-next] getQueryClient(): Browser singleton already exists — overrides are ignored. ' +
-      'Pass overrides only on the first call.',
+      "[arc-next] getQueryClient(): Browser singleton already exists — overrides are ignored. " +
+        "Pass overrides only on the first call.",
     );
   }
   return browserQueryClient;

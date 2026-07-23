@@ -29,8 +29,8 @@
  * ```
  */
 
-import { CompactEncrypt, compactDecrypt } from 'jose';
-import type { ClientEncryptionConfig } from './client.js';
+import { CompactEncrypt, compactDecrypt } from "jose";
+import type { ClientEncryptionConfig } from "./client.js";
 
 /** Key material accepted by jose in browser + Node (Web Crypto). */
 type JoseKey = CryptoKey | Uint8Array;
@@ -62,9 +62,9 @@ export interface JoseEncryptionOptions {
  */
 export function createJoseEncryption(
   options: JoseEncryptionOptions,
-): Pick<ClientEncryptionConfig, 'encrypt' | 'decrypt'> {
-  const alg = options.alg ?? 'RSA-OAEP-256';
-  const enc = options.enc ?? 'A256GCM';
+): Pick<ClientEncryptionConfig, "encrypt" | "decrypt"> {
+  const alg = options.alg ?? "RSA-OAEP-256";
+  const enc = options.enc ?? "A256GCM";
   const allowedAlgs = options.allowedAlgs ?? [alg];
   const allowedEncs = options.allowedEncs ?? [enc];
   const decoder = new TextDecoder();
@@ -78,13 +78,13 @@ export function createJoseEncryption(
           const key = header.kid ? options.decryptionKeys[header.kid] : undefined;
           if (!key) {
             throw new Error(
-              `[arc-next/encryption] no decryption key for kid '${header.kid ?? '<none>'}'`,
+              `[arc-next/encryption] no decryption key for kid '${header.kid ?? "<none>"}'`,
             );
           }
           return key;
         }
         if (!options.decryptionKey) {
-          throw new Error('[arc-next/encryption] no decryption key configured');
+          throw new Error("[arc-next/encryption] no decryption key configured");
         }
         return options.decryptionKey;
       },

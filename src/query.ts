@@ -1,6 +1,14 @@
 "use client";
 
-import { useQuery, useSuspenseQuery, useInfiniteQuery, keepPreviousData, type QueryKey, type InfiniteData, type QueryClient } from "@tanstack/react-query";
+import {
+  type InfiniteData,
+  keepPreviousData,
+  type QueryClient,
+  type QueryKey,
+  useInfiniteQuery,
+  useQuery,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { useCallback, useMemo, useRef } from "react";
 
 // Server-safe utilities live in ./cache.ts (no "use client") so Server Components
@@ -8,28 +16,28 @@ import { useCallback, useMemo, useRef } from "react";
 // already pointing at @classytic/arc-next/query — the import path is the
 // boundary, not the directive — but new code SHOULD prefer @classytic/arc-next/cache.
 export {
-  getItemId,
+  type CacheUtils,
+  createCacheUtils,
+  createQueryKeys,
+  DEFAULT_QUERY_CONFIG,
   extractItem,
   extractItems,
-  updateListCache,
+  getItemId,
   normalizePagination,
-  createQueryKeys,
-  createCacheUtils,
-  DEFAULT_QUERY_CONFIG,
+  type PaginationData,
   QUERY_CONFIGS,
   type QueryKeys,
-  type CacheUtils,
-  type PaginationData,
+  updateListCache,
 } from "./cache.js";
 
 import {
-  extractItems,
-  normalizePagination,
-  getItemId,
-  extractItem,
   DEFAULT_QUERY_CONFIG,
-  QUERY_CONFIGS,
+  extractItem,
+  extractItems,
+  getItemId,
+  normalizePagination,
   type PaginationData,
+  QUERY_CONFIGS,
 } from "./cache.js";
 
 // ============================================================================
@@ -252,15 +260,13 @@ export function findItemInListCache<T>(
     // Infinite-query data is `{ pages: unknown[], pageParams: ... }`; flatten
     // pages so callers don't need to special-case the infinite shape.
     const pages =
-      typeof raw === 'object' && raw !== null && Array.isArray((raw as { pages?: unknown }).pages)
-        ? ((raw as { pages: unknown[] }).pages)
+      typeof raw === "object" && raw !== null && Array.isArray((raw as { pages?: unknown }).pages)
+        ? (raw as { pages: unknown[] }).pages
         : [raw];
     for (const page of pages) {
       const items = extractItems<T>(page);
       for (const item of items) {
-        const got = idField
-          ? (item as Record<string, unknown> | null)?.[idField]
-          : getItemId(item);
+        const got = idField ? (item as Record<string, unknown> | null)?.[idField] : getItemId(item);
         if (got != null && String(got) === id) return item;
       }
     }
@@ -519,7 +525,15 @@ export interface UseApiQueryOptions {
   refetchIntervalInBackground?: boolean;
   retry?: boolean | number;
   /** Limit re-renders to changes in these specific fields (perf optimization). */
-  notifyOnChangeProps?: ('data' | 'error' | 'isLoading' | 'isFetching' | 'isError' | 'isSuccess' | 'isStale')[];
+  notifyOnChangeProps?: (
+    | "data"
+    | "error"
+    | "isLoading"
+    | "isFetching"
+    | "isError"
+    | "isSuccess"
+    | "isStale"
+  )[];
 }
 
 export interface UseApiQueryConfig<TResponse, TData> {
@@ -621,4 +635,3 @@ export function useApiQuery<TResponse = unknown, TData = ExtractData<TResponse>>
     refetch: query.refetch,
   };
 }
-

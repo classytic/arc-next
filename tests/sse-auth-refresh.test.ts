@@ -10,15 +10,15 @@
  *  - 'skip' decision → no immediate reconnect via auth path (falls back to backoff)
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  _resetAuthRecovery,
+  _resetAuthWarnings,
   configureAuth,
   configureClient,
   createAuthRefreshHandler,
-  _resetAuthRecovery,
-  _resetAuthWarnings,
-} from '../src/client.js';
-import { subscribeToEvents } from '../src/sse.js';
+} from "../src/client.js";
+import { subscribeToEvents } from "../src/sse.js";
 
 // ── MockEventSource — doesn't auto-open; tests control timing.
 class MockES {
@@ -41,18 +41,34 @@ class MockES {
     MockES.instances.push(this);
   }
 
-  close(): void { this.closed = true; this.readyState = 2; }
-  addEventListener(): void { /* not exercised here */ }
-  removeEventListener(): void { /* not exercised here */ }
+  close(): void {
+    this.closed = true;
+    this.readyState = 2;
+  }
+  addEventListener(): void {
+    /* not exercised here */
+  }
+  removeEventListener(): void {
+    /* not exercised here */
+  }
 
-  triggerOpen(): void { this.readyState = 1; this.onopen?.(new Event('open')); }
-  triggerError(): void { this.onerror?.(new Event('error')); }
+  triggerOpen(): void {
+    this.readyState = 1;
+    this.onopen?.(new Event("open"));
+  }
+  triggerError(): void {
+    this.onerror?.(new Event("error"));
+  }
 
-  static reset(): void { MockES.instances = []; }
-  static all(): MockES[] { return MockES.instances; }
+  static reset(): void {
+    MockES.instances = [];
+  }
+  static all(): MockES[] {
+    return MockES.instances;
+  }
   static latest(): MockES {
     const x = MockES.instances[MockES.instances.length - 1];
-    if (!x) throw new Error('no MockES opened');
+    if (!x) throw new Error("no MockES opened");
     return x;
   }
 }
@@ -60,23 +76,26 @@ class MockES {
 const originalES = (globalThis as Record<string, unknown>).EventSource;
 
 function mockProbeFetch(status: number): ReturnType<typeof vi.spyOn> {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(((
+  return vi.spyOn(globalThis, "fetch").mockImplementation(((
     _input: string | URL | Request,
     _init?: RequestInit,
   ) =>
     Promise.resolve(
-      new Response(JSON.stringify({}), { status, headers: { 'Content-Type': 'application/json' } }),
+      new Response(JSON.stringify({}), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      }),
     )) as typeof globalThis.fetch);
 }
 
 beforeEach(() => {
   MockES.reset();
   (globalThis as Record<string, unknown>).EventSource = MockES;
-  configureClient({ baseUrl: 'http://api.test' });
+  configureClient({ baseUrl: "http://api.test" });
   configureAuth({ getToken: () => null, getOrgId: () => null });
   _resetAuthRecovery();
   _resetAuthWarnings();
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -85,12 +104,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('subscribeToEvents — auth-recovery via pre-flight probe', () => {
-  it('error + probe returns 401 → handler refreshes → reconnect with new token', async () => {
-    let cached = 'stale-tok';
+describe("subscribeToEvents — auth-recovery via pre-flight probe", () => {
+  it("error + probe returns 401 → handler refreshes → reconnect with new token", async () => {
+    let cached = "stale-tok";
     const refresh = vi.fn(async () => {
-      cached = 'fresh-tok';
-      return 'fresh-tok';
+      cached = "fresh-tok";
+      return "fresh-tok";
     });
     configureAuth({
       getToken: () => cached,
@@ -98,7 +117,7 @@ describe('subscribeToEvents — auth-recovery via pre-flight probe', () => {
     });
     mockProbeFetch(401);
 
-    const handle = subscribeToEvents({ resource: 'todo' });
+    const handle = subscribeToEvents({ resource: "todo" });
 
     expect(MockES.all()).toHaveLength(1);
     MockES.latest().triggerOpen();
@@ -106,20 +125,20 @@ describe('subscribeToEvents — auth-recovery via pre-flight probe', () => {
 
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(MockES.all()).toHaveLength(2));
-    expect(MockES.all()[1]!.url).toContain('token=fresh-tok');
+    expect(MockES.all()[1]!.url).toContain("token=fresh-tok");
 
     handle.close();
   });
 
-  it('error + probe returns 200 → handler NOT called, normal backoff reconnect', async () => {
+  it("error + probe returns 200 → handler NOT called, normal backoff reconnect", async () => {
     const refresh = vi.fn();
     configureAuth({
-      getToken: () => 'tok',
+      getToken: () => "tok",
       onAuthError: createAuthRefreshHandler({ refresh }),
     });
     mockProbeFetch(200);
 
-    const handle = subscribeToEvents({ resource: 'todo', reconnectDelay: 10 });
+    const handle = subscribeToEvents({ resource: "todo", reconnectDelay: 10 });
     MockES.latest().triggerOpen();
     MockES.latest().triggerError();
 
@@ -130,15 +149,15 @@ describe('subscribeToEvents — auth-recovery via pre-flight probe', () => {
     handle.close();
   });
 
-  it('error + probe returns 500 → handler NOT called, normal backoff reconnect', async () => {
+  it("error + probe returns 500 → handler NOT called, normal backoff reconnect", async () => {
     const refresh = vi.fn();
     configureAuth({
-      getToken: () => 'tok',
+      getToken: () => "tok",
       onAuthError: createAuthRefreshHandler({ refresh }),
     });
     mockProbeFetch(500);
 
-    const handle = subscribeToEvents({ resource: 'todo', reconnectDelay: 10 });
+    const handle = subscribeToEvents({ resource: "todo", reconnectDelay: 10 });
     MockES.latest().triggerOpen();
     MockES.latest().triggerError();
 
@@ -148,16 +167,16 @@ describe('subscribeToEvents — auth-recovery via pre-flight probe', () => {
     handle.close();
   });
 
-  it('error + probe returns 403 + retryOn403:true → handler runs', async () => {
-    const refresh = vi.fn(async () => 'fresh');
+  it("error + probe returns 403 + retryOn403:true → handler runs", async () => {
+    const refresh = vi.fn(async () => "fresh");
     configureAuth({
-      getToken: () => 'tok',
+      getToken: () => "tok",
       retryOn403: true,
       onAuthError: createAuthRefreshHandler({ refresh }),
     });
     mockProbeFetch(403);
 
-    const handle = subscribeToEvents({ resource: 'todo' });
+    const handle = subscribeToEvents({ resource: "todo" });
     MockES.latest().triggerOpen();
     MockES.latest().triggerError();
 
@@ -165,15 +184,15 @@ describe('subscribeToEvents — auth-recovery via pre-flight probe', () => {
     handle.close();
   });
 
-  it('error + probe returns 403 + retryOn403:false (default) → handler NOT called', async () => {
+  it("error + probe returns 403 + retryOn403:false (default) → handler NOT called", async () => {
     const refresh = vi.fn();
     configureAuth({
-      getToken: () => 'tok',
+      getToken: () => "tok",
       onAuthError: createAuthRefreshHandler({ refresh }),
     });
     mockProbeFetch(403);
 
-    const handle = subscribeToEvents({ resource: 'todo', reconnectDelay: 10 });
+    const handle = subscribeToEvents({ resource: "todo", reconnectDelay: 10 });
     MockES.latest().triggerOpen();
     MockES.latest().triggerError();
 
@@ -185,12 +204,12 @@ describe('subscribeToEvents — auth-recovery via pre-flight probe', () => {
 
   it("'skip' decision → no immediate reconnect via auth path (backoff still kicks in eventually)", async () => {
     configureAuth({
-      getToken: () => 'tok',
-      onAuthError: async () => 'skip',
+      getToken: () => "tok",
+      onAuthError: async () => "skip",
     });
     mockProbeFetch(401);
 
-    const handle = subscribeToEvents({ resource: 'todo', reconnectDelay: 50 });
+    const handle = subscribeToEvents({ resource: "todo", reconnectDelay: 50 });
     MockES.latest().triggerOpen();
     MockES.latest().triggerError();
 
@@ -201,15 +220,15 @@ describe('subscribeToEvents — auth-recovery via pre-flight probe', () => {
     handle.close();
   });
 
-  it('probe network failure (fetch throws) → falls back to backoff reconnect (transient classification)', async () => {
+  it("probe network failure (fetch throws) → falls back to backoff reconnect (transient classification)", async () => {
     const refresh = vi.fn();
     configureAuth({
-      getToken: () => 'tok',
+      getToken: () => "tok",
       onAuthError: createAuthRefreshHandler({ refresh }),
     });
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network down"));
 
-    const handle = subscribeToEvents({ resource: 'todo', reconnectDelay: 10 });
+    const handle = subscribeToEvents({ resource: "todo", reconnectDelay: 10 });
     MockES.latest().triggerOpen();
     MockES.latest().triggerError();
 

@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
-import { useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { type QueryKey, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArcApiError,
-  getAuthMode,
-  buildStreamUrl,
   _getAuthErrorHandler,
   _runAuthRecovery,
+  ArcApiError,
+  buildStreamUrl,
+  getAuthMode,
 } from "./client.js";
 
 // ============================================================================
@@ -30,7 +30,7 @@ export function buildSseUrl(
   path: string,
   params: Record<string, string | number | boolean | null | undefined> = {},
 ): string {
-  return buildStreamUrl(path, params, 'http');
+  return buildStreamUrl(path, params, "http");
 }
 
 // ============================================================================
@@ -109,8 +109,7 @@ export interface SubscribeToEventsHandle {
   isConnected: () => boolean;
 }
 
-export interface EventStreamOptions<TData = unknown>
-  extends SubscribeToEventsOptions<TData> {
+export interface EventStreamOptions<TData = unknown> extends SubscribeToEventsOptions<TData> {
   /** Query keys to invalidate when any matching event arrives. */
   invalidateQueries?: QueryKey[];
   /** Whether the stream is active. Default: true. */
@@ -159,27 +158,27 @@ export interface EventStreamResult<TData = unknown> {
 async function probeForAuthFailure(
   url: string,
   retryOn403: boolean,
-): Promise<'auth-failure' | 'not-auth'> {
+): Promise<"auth-failure" | "not-auth"> {
   try {
     let res = await fetch(url, {
-      method: 'HEAD',
-      credentials: 'include',
+      method: "HEAD",
+      credentials: "include",
     });
     // Some SSE servers (Fastify's sse, Cloudflare) reject HEAD with 405.
     // Fall back to a single-byte GET so we still learn the auth status.
     if (res.status === 405) {
       res = await fetch(url, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { Range: 'bytes=0-0' },
+        method: "GET",
+        credentials: "include",
+        headers: { Range: "bytes=0-0" },
       });
     }
-    if (res.status === 401) return 'auth-failure';
-    if (retryOn403 && res.status === 403) return 'auth-failure';
-    return 'not-auth';
+    if (res.status === 401) return "auth-failure";
+    if (retryOn403 && res.status === 403) return "auth-failure";
+    return "not-auth";
   } catch {
     // Network failure — not an auth issue, let backoff handle it.
-    return 'not-auth';
+    return "not-auth";
   }
 }
 
@@ -234,8 +233,7 @@ export function subscribeToEvents<TData = unknown>(
 
   const buildUrl = (): string => {
     if (url) return url;
-    const effectivePatterns =
-      patterns.length > 0 ? patterns : resource ? [`${resource}.*`] : [];
+    const effectivePatterns = patterns.length > 0 ? patterns : resource ? [`${resource}.*`] : [];
     const params: Record<string, string> = {};
     if (effectivePatterns.length > 0) {
       params.patterns = effectivePatterns.join(",");
@@ -252,7 +250,11 @@ export function subscribeToEvents<TData = unknown>(
 
   const connect = (): void => {
     if (es) {
-      try { es.close(); } catch { /* ignore */ }
+      try {
+        es.close();
+      } catch {
+        /* ignore */
+      }
     }
     manualClose = false;
 
@@ -307,7 +309,11 @@ export function subscribeToEvents<TData = unknown>(
     }
 
     es.onerror = () => {
-      try { es?.close(); } catch { /* ignore */ }
+      try {
+        es?.close();
+      } catch {
+        /* ignore */
+      }
       connected = false;
       options.onConnectionChange?.(false);
 
@@ -326,19 +332,19 @@ export function subscribeToEvents<TData = unknown>(
         sseAuthRetries += 1;
         probeForAuthFailure(buildUrl(), retryOn403)
           .then(async (status) => {
-            if (status === 'auth-failure') {
+            if (status === "auth-failure") {
               const { decision } = await _runAuthRecovery(handler, {
-                error: new ArcApiError('SSE pre-flight auth failure', {
+                error: new ArcApiError("SSE pre-flight auth failure", {
                   status: 401,
-                  statusText: 'SSE auth failure',
-                  json: { code: 'arc.sse.unauthorized' },
+                  statusText: "SSE auth failure",
+                  json: { code: "arc.sse.unauthorized" },
                   endpoint: ssePath,
-                  method: 'GET',
+                  method: "GET",
                 }),
-                request: { method: 'GET', endpoint: ssePath },
+                request: { method: "GET", endpoint: ssePath },
                 attempt: sseAuthRetries,
               });
-              if (decision === 'retry') {
+              if (decision === "retry") {
                 reconnectAttempts = 0;
                 connect();
                 return;
@@ -363,10 +369,7 @@ export function subscribeToEvents<TData = unknown>(
   const scheduleReconnect = (): void => {
     if (reconnectAttempts < maxReconnectAttempts) {
       reconnectAttempts += 1;
-      const delay = Math.min(
-        reconnectDelay * Math.pow(1.5, reconnectAttempts - 1),
-        30000,
-      );
+      const delay = Math.min(reconnectDelay * 1.5 ** (reconnectAttempts - 1), 30000);
       reconnectTimer = setTimeout(connect, delay);
     }
   };
@@ -385,7 +388,11 @@ export function subscribeToEvents<TData = unknown>(
         reconnectTimer = null;
       }
       if (es) {
-        try { es.close(); } catch { /* ignore */ }
+        try {
+          es.close();
+        } catch {
+          /* ignore */
+        }
         es = null;
       }
       connected = false;
@@ -448,9 +455,9 @@ export function useEventStream<TData = unknown>(
   // Stabilize array deps by content so inline `[...]` doesn't re-run effects.
   const patternsKey = JSON.stringify(options.patterns ?? null);
   const eventTypesKey = JSON.stringify(options.eventTypes ?? null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: patternsKey IS options.patterns, content-stabilized so inline arrays don't re-run effects
   const patterns = useMemo(() => options.patterns, [patternsKey]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: eventTypesKey IS options.eventTypes, content-stabilized
   const eventTypes = useMemo(() => options.eventTypes, [eventTypesKey]);
 
   useEffect(() => {

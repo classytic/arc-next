@@ -19,14 +19,14 @@
  *    needing a cast.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ArcApiError,
-  configureClient,
   configureAuth,
+  configureClient,
   createAuthAwareClient,
   isArcApiError,
-} from '../src/client.js';
+} from "../src/client.js";
 
 // ── Reset the global config between tests by re-configuring with a
 // known-empty baseUrl. (`configureClient` is a singleton; there's no
@@ -34,20 +34,18 @@ import {
 function resetGlobalConfig(): void {
   // Set then unset to force a known empty state. Calling configureClient
   // with baseUrl: '' simulates an app that hasn't booted Providers yet.
-  configureClient({ baseUrl: '' });
+  configureClient({ baseUrl: "" });
   configureAuth({ getToken: () => null, getOrgId: () => null });
 }
 
 function mockFetchOk(): { spy: ReturnType<typeof vi.spyOn>; calls: string[] } {
   const calls: string[] = [];
-  const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(((
-    input: string | URL | Request,
-  ) => {
-    calls.push(typeof input === 'string' ? input : input.toString());
+  const spy = vi.spyOn(globalThis, "fetch").mockImplementation(((input: string | URL | Request) => {
+    calls.push(typeof input === "string" ? input : input.toString());
     return Promise.resolve(
       new Response(JSON.stringify({ ok: true }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { "Content-Type": "application/json" },
       }),
     );
   }) as typeof globalThis.fetch);
@@ -56,15 +54,15 @@ function mockFetchOk(): { spy: ReturnType<typeof vi.spyOn>; calls: string[] } {
 
 beforeEach(() => {
   resetGlobalConfig();
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('createAuthAwareClient — baseUrl is lazy, not frozen at construction', () => {
-  it('CRITICAL regression: construct BEFORE configureClient → first request still resolves the latest baseUrl', async () => {
+describe("createAuthAwareClient — baseUrl is lazy, not frozen at construction", () => {
+  it("CRITICAL regression: construct BEFORE configureClient → first request still resolves the latest baseUrl", async () => {
     // Reproduces the prod 404 cascade. Module-load order:
     //   1. import { createAuthAwareClient } from '@classytic/arc-next/client';
     //   2. const client = createAuthAwareClient();           ← here, baseUrl unset
@@ -75,133 +73,134 @@ describe('createAuthAwareClient — baseUrl is lazy, not frozen at construction'
     const client = createAuthAwareClient();
 
     // Now configure — simulates Providers booting AFTER module import.
-    configureClient({ baseUrl: 'https://api.example.com' });
+    configureClient({ baseUrl: "https://api.example.com" });
 
     const { calls } = mockFetchOk();
-    await client.request('GET', '/items/42');
+    await client.request("GET", "/items/42");
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toBe('https://api.example.com/items/42');
+    expect(calls[0]).toBe("https://api.example.com/items/42");
   });
 
-  it('also picks up baseUrl changes mid-session (config reconfigure)', async () => {
+  it("also picks up baseUrl changes mid-session (config reconfigure)", async () => {
     resetGlobalConfig();
-    configureClient({ baseUrl: 'https://first.example.com' });
+    configureClient({ baseUrl: "https://first.example.com" });
     const client = createAuthAwareClient();
 
     const { calls } = mockFetchOk();
-    await client.request('GET', '/a');
+    await client.request("GET", "/a");
 
     // Reconfigure to a DIFFERENT host — should be picked up on the next request.
-    configureClient({ baseUrl: 'https://second.example.com' });
-    await client.request('GET', '/b');
+    configureClient({ baseUrl: "https://second.example.com" });
+    await client.request("GET", "/b");
 
-    expect(calls).toEqual([
-      'https://first.example.com/a',
-      'https://second.example.com/b',
-    ]);
+    expect(calls).toEqual(["https://first.example.com/a", "https://second.example.com/b"]);
   });
 
-  it('explicit override.baseUrl wins over global (literal opt-in semantics)', async () => {
+  it("explicit override.baseUrl wins over global (literal opt-in semantics)", async () => {
     resetGlobalConfig();
-    configureClient({ baseUrl: 'https://global.example.com' });
-    const analyticsClient = createAuthAwareClient({ baseUrl: 'https://analytics.example.com' });
+    configureClient({ baseUrl: "https://global.example.com" });
+    const analyticsClient = createAuthAwareClient({ baseUrl: "https://analytics.example.com" });
 
     const { calls } = mockFetchOk();
-    await analyticsClient.request('GET', '/events');
+    await analyticsClient.request("GET", "/events");
 
     // Global is set to global.example.com, but the per-client override wins —
     // matches the documented "I want a different transport" intent.
-    expect(calls[0]).toBe('https://analytics.example.com/events');
+    expect(calls[0]).toBe("https://analytics.example.com/events");
   });
 
-  it('picks up authMode change mid-session (e.g. cookie → bearer flip)', async () => {
+  it("picks up authMode change mid-session (e.g. cookie → bearer flip)", async () => {
     resetGlobalConfig();
-    configureClient({ baseUrl: 'https://api.example.com', authMode: 'cookie' });
-    configureAuth({ getToken: () => 'tok' });
+    configureClient({ baseUrl: "https://api.example.com", authMode: "cookie" });
+    configureAuth({ getToken: () => "tok" });
     const client = createAuthAwareClient();
 
     const { calls, spy } = mockFetchOk();
-    await client.request('GET', '/me');
+    await client.request("GET", "/me");
     // Cookie mode → no Authorization header even though token is present.
     const firstInit = (spy.mock.calls[0]?.[1] ?? undefined) as RequestInit | undefined;
-    expect((firstInit?.headers as Record<string, string>).Authorization).toBeUndefined();
-    expect(firstInit?.credentials).toBe('include');
+    expect(
+      (firstInit?.headers as Record<string, string> | undefined)?.Authorization,
+    ).toBeUndefined();
+    expect(firstInit?.credentials).toBe("include");
 
     // Reconfigure to bearer; next request should now carry the header.
-    configureClient({ baseUrl: 'https://api.example.com', authMode: 'bearer' });
-    await client.request('GET', '/me');
+    configureClient({ baseUrl: "https://api.example.com", authMode: "bearer" });
+    await client.request("GET", "/me");
     const secondInit = (spy.mock.calls[1]?.[1] ?? undefined) as RequestInit | undefined;
-    expect((secondInit?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+    expect((secondInit?.headers as Record<string, string> | undefined)?.Authorization).toBe(
+      "Bearer tok",
+    );
 
     expect(calls).toHaveLength(2);
   });
 });
 
-describe('executeRequest — diagnostic throw when baseUrl is empty + endpoint is relative', () => {
-  it('throws a SDK-prefixed error instead of silently hitting the wrong origin', async () => {
+describe("executeRequest — diagnostic throw when baseUrl is empty + endpoint is relative", () => {
+  it("throws a SDK-prefixed error instead of silently hitting the wrong origin", async () => {
     resetGlobalConfig();
     // No configureClient — baseUrl stays empty.
     const client = createAuthAwareClient();
     mockFetchOk();
 
-    await expect(client.request('GET', '/items')).rejects.toThrow(
+    await expect(client.request("GET", "/items")).rejects.toThrow(
       /\[arc-next\] handleApiRequest\(GET \/items\): baseUrl is empty/,
     );
     // The error message points the caller at the actual fix.
-    await expect(client.request('GET', '/items')).rejects.toThrow(
+    await expect(client.request("GET", "/items")).rejects.toThrow(
       /configureClient\(\{ baseUrl: '\.\.\.' \}\) BEFORE the first request/,
     );
   });
 
-  it('does NOT throw for absolute endpoints (consumer explicitly wants cross-origin)', async () => {
+  it("does NOT throw for absolute endpoints (consumer explicitly wants cross-origin)", async () => {
     resetGlobalConfig();
     const client = createAuthAwareClient();
     const { calls } = mockFetchOk();
 
     // baseUrl is empty BUT the endpoint is absolute — caller intent is
     // explicit, no diagnostic needed.
-    await client.request('GET', 'https://third-party.example.com/webhook');
+    await client.request("GET", "https://third-party.example.com/webhook");
 
-    expect(calls).toEqual(['https://third-party.example.com/webhook']);
+    expect(calls).toEqual(["https://third-party.example.com/webhook"]);
   });
 
-  it('does NOT throw once configureClient has run (happy path stays clean)', async () => {
+  it("does NOT throw once configureClient has run (happy path stays clean)", async () => {
     resetGlobalConfig();
     const client = createAuthAwareClient();
-    configureClient({ baseUrl: 'https://api.example.com' });
+    configureClient({ baseUrl: "https://api.example.com" });
 
     const { calls } = mockFetchOk();
-    await client.request('GET', '/items');
+    await client.request("GET", "/items");
 
-    expect(calls[0]).toBe('https://api.example.com/items');
+    expect(calls[0]).toBe("https://api.example.com/items");
   });
 });
 
-describe('DetailQueryResult contract — typed-end-to-end, no raw-cache escape hatch', () => {
+describe("DetailQueryResult contract — typed-end-to-end, no raw-cache escape hatch", () => {
   // 0.7 cleanup: `.data: unknown` was removed from `DetailQueryResult` /
   // `ListQueryResult` to match repo-core's typed-end-to-end shape (AggResult,
   // OffsetPaginationResult, etc. don't expose raw alongside typed either).
   // Consumers reaching past the SDK should use `useQueryClient().getQueryData(...)`
   // — the explicit call signals "I'm going to the cache" at the call site,
   // and the type system narrows correctly to whatever `setQueryData` wrote.
-  it('exposes only the typed surface (no .data field on the result)', () => {
+  it("exposes only the typed surface (no .data field on the result)", () => {
     // The actual proof lives in the type definition (src/query.ts) — TS will
     // refuse to compile this file if the interface ever regresses to include
     // `data: unknown`. The set below documents the shipping field set.
     const expected = new Set([
-      'item',
-      'isLoading',
-      'isFetching',
-      'isError',
-      'isSuccess',
-      'isStale',
-      'isPlaceholderData',
-      'error',
-      'refetch',
+      "item",
+      "isLoading",
+      "isFetching",
+      "isError",
+      "isSuccess",
+      "isStale",
+      "isPlaceholderData",
+      "error",
+      "refetch",
     ]);
-    expect(expected.has('item')).toBe(true);
-    expect(expected.has('data' as never)).toBe(false);
+    expect(expected.has("item")).toBe(true);
+    expect(expected.has("data" as never)).toBe(false);
   });
 });
 

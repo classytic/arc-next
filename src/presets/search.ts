@@ -1,9 +1,5 @@
-import type { PaginatedResult } from '@classytic/repo-core/pagination';
-import type {
-  AnyBaseApi,
-  DocOf,
-  ScopedArgs,
-} from '../api.js';
+import type { PaginatedResult } from "@classytic/repo-core/pagination";
+import type { AnyBaseApi, DocOf, ScopedArgs } from "../api.js";
 
 // ============================================================================
 // Methods added by the search preset
@@ -46,14 +42,16 @@ export interface SearchPresetMethods<TDoc> {
    * Convert text/media to a vector embedding via the engine the resource is wired to.
    * Backend mounts `POST /:resource/embed`.
    */
-  embed(args: ScopedArgs & {
-    /** Text or array of texts to embed. */
-    input: string | string[];
-    /** Embed-engine options (`model`, `dimensions`, ...). */
-    body?: Record<string, unknown>;
-    /** Override path (default `/embed`). */
-    path?: string;
-  }): Promise<number[] | number[][]>;
+  embed(
+    args: ScopedArgs & {
+      /** Text or array of texts to embed. */
+      input: string | string[];
+      /** Embed-engine options (`model`, `dimensions`, ...). */
+      body?: Record<string, unknown>;
+      /** Override path (default `/embed`). */
+      path?: string;
+    },
+  ): Promise<number[] | number[][]>;
 }
 
 // ============================================================================
@@ -84,30 +82,52 @@ export function withSearchPreset<TApi extends AnyBaseApi>(
 ): TApi & SearchPresetMethods<DocOf<TApi>> {
   type TDoc = DocOf<TApi>;
   const ext: SearchPresetMethods<TDoc> = {
-    async searchEngine({ token = null, organizationId = null, query, body, path = '/search', options = {} } = {}) {
+    async searchEngine({
+      token = null,
+      organizationId = null,
+      query,
+      body,
+      path = "/search",
+      options = {},
+    } = {}) {
       const requestBody: Record<string, unknown> = { ...(body ?? {}) };
       if (query !== undefined) requestBody.query = query;
-      return api.request('POST', `${api.baseUrl}${path}`, {
+      return api.request("POST", `${api.baseUrl}${path}`, {
         token,
         organizationId,
         data: requestBody,
         options,
       });
     },
-    async searchSimilar({ token = null, organizationId = null, query, vector, body, path = '/search-similar', options = {} } = {}) {
+    async searchSimilar({
+      token = null,
+      organizationId = null,
+      query,
+      vector,
+      body,
+      path = "/search-similar",
+      options = {},
+    } = {}) {
       const requestBody: Record<string, unknown> = { ...(body ?? {}) };
       if (query !== undefined) requestBody.query = query;
       if (vector !== undefined) requestBody.vector = vector;
-      return api.request('POST', `${api.baseUrl}${path}`, {
+      return api.request("POST", `${api.baseUrl}${path}`, {
         token,
         organizationId,
         data: requestBody,
         options,
       });
     },
-    async embed({ token = null, organizationId = null, input, body, path = '/embed', options = {} }) {
+    async embed({
+      token = null,
+      organizationId = null,
+      input,
+      body,
+      path = "/embed",
+      options = {},
+    }) {
       const requestBody: Record<string, unknown> = { input, ...(body ?? {}) };
-      return api.request('POST', `${api.baseUrl}${path}`, {
+      return api.request("POST", `${api.baseUrl}${path}`, {
         token,
         organizationId,
         data: requestBody,

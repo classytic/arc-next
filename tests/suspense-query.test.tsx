@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import React from 'react';
-import { useSuspenseListQuery, useSuspenseDetailQuery } from '../src/query.js';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook, waitFor } from "@testing-library/react";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useSuspenseDetailQuery, useSuspenseListQuery } from "../src/query.js";
 
 // ============================================================================
 // Test setup
@@ -25,7 +25,7 @@ function createSuspenseWrapper(queryClient: QueryClient) {
       { client: queryClient },
       React.createElement(
         React.Suspense,
-        { fallback: React.createElement('div', null, 'loading') },
+        { fallback: React.createElement("div", null, "loading") },
         children,
       ),
     );
@@ -45,9 +45,7 @@ class TestErrorBoundary extends React.Component<
     this.props.onError(error);
   }
   render() {
-    return this.state.hasError
-      ? React.createElement('div', null, 'error')
-      : this.props.children;
+    return this.state.hasError ? React.createElement("div", null, "error") : this.props.children;
   }
 }
 
@@ -55,7 +53,7 @@ class TestErrorBoundary extends React.Component<
 // useSuspenseListQuery
 // ============================================================================
 
-describe('useSuspenseListQuery', () => {
+describe("useSuspenseListQuery", () => {
   let queryClient: QueryClient;
   beforeEach(() => {
     queryClient = createTestQueryClient();
@@ -64,13 +62,13 @@ describe('useSuspenseListQuery', () => {
     queryClient.clear();
   });
 
-  it('suspends, then resolves with items + pagination and isLoading=false', async () => {
+  it("suspends, then resolves with items + pagination and isLoading=false", async () => {
     const wrapper = createSuspenseWrapper(queryClient);
     const payload = {
-      method: 'offset',
+      method: "offset",
       data: [
-        { _id: '1', name: 'A' },
-        { _id: '2', name: 'B' },
+        { _id: "1", name: "A" },
+        { _id: "2", name: "B" },
       ],
       total: 2,
       page: 1,
@@ -84,7 +82,7 @@ describe('useSuspenseListQuery', () => {
     const { result } = renderHook(
       () =>
         useSuspenseListQuery<{ _id: string; name: string }>({
-          queryKey: ['thing', 'list'],
+          queryKey: ["thing", "list"],
           queryFn,
         }),
       { wrapper },
@@ -96,25 +94,25 @@ describe('useSuspenseListQuery', () => {
     await waitFor(() => expect(result.current?.items.length).toBe(2));
     expect(result.current.items).toEqual(payload.data);
     expect(result.current.pagination?.total).toBe(2);
-    expect(result.current.pagination?.method).toBe('offset');
+    expect(result.current.pagination?.method).toBe("offset");
     // Suspense guarantees data before render → no loading branch ever.
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isSuccess).toBe(true);
     expect(result.current.error).toBeNull();
     expect(queryFn).toHaveBeenCalledTimes(1);
     // queryFn receives an AbortSignal (cancellation support preserved).
-    expect(queryFn.mock.calls[0][0]).toHaveProperty('signal');
+    expect(queryFn.mock.calls[0][0]).toHaveProperty("signal");
   });
 
-  it('applies the select projection', async () => {
+  it("applies the select projection", async () => {
     const wrapper = createSuspenseWrapper(queryClient);
-    const payload = { data: [{ _id: '1' }, { _id: '2' }], total: 2 };
+    const payload = { data: [{ _id: "1" }, { _id: "2" }], total: 2 };
     const queryFn = vi.fn().mockResolvedValue(payload);
 
     const { result } = renderHook(
       () =>
         useSuspenseListQuery({
-          queryKey: ['thing', 'list', 'sel'],
+          queryKey: ["thing", "list", "sel"],
           queryFn,
           select: (d: unknown) => ({
             data: (d as { data: unknown[] }).data.slice(0, 1),
@@ -125,7 +123,7 @@ describe('useSuspenseListQuery', () => {
     );
 
     await waitFor(() => expect(result.current?.items.length).toBe(1));
-    expect(result.current.items).toEqual([{ _id: '1' }]);
+    expect(result.current.items).toEqual([{ _id: "1" }]);
   });
 });
 
@@ -133,7 +131,7 @@ describe('useSuspenseListQuery', () => {
 // useSuspenseDetailQuery
 // ============================================================================
 
-describe('useSuspenseDetailQuery', () => {
+describe("useSuspenseDetailQuery", () => {
   let queryClient: QueryClient;
   beforeEach(() => {
     queryClient = createTestQueryClient();
@@ -142,15 +140,15 @@ describe('useSuspenseDetailQuery', () => {
     queryClient.clear();
   });
 
-  it('suspends, then resolves with item, isLoading=false, isPlaceholderData=false', async () => {
+  it("suspends, then resolves with item, isLoading=false, isPlaceholderData=false", async () => {
     const wrapper = createSuspenseWrapper(queryClient);
-    const doc = { _id: '1', name: 'A' };
+    const doc = { _id: "1", name: "A" };
     const queryFn = vi.fn().mockResolvedValue(doc);
 
     const { result } = renderHook(
       () =>
         useSuspenseDetailQuery<{ _id: string; name: string }>({
-          queryKey: ['thing', 'detail', '1'],
+          queryKey: ["thing", "detail", "1"],
           queryFn,
         }),
       { wrapper },
@@ -171,7 +169,7 @@ describe('useSuspenseDetailQuery', () => {
 // Error propagation
 // ============================================================================
 
-describe('suspense query error handling', () => {
+describe("suspense query error handling", () => {
   let queryClient: QueryClient;
   beforeEach(() => {
     queryClient = createTestQueryClient();
@@ -180,7 +178,7 @@ describe('suspense query error handling', () => {
     queryClient.clear();
   });
 
-  it('throws a rejected queryFn to the nearest error boundary (not isError)', async () => {
+  it("throws a rejected queryFn to the nearest error boundary (not isError)", async () => {
     const onError = vi.fn();
     function Wrapper({ children }: { children: React.ReactNode }) {
       return React.createElement(
@@ -191,22 +189,21 @@ describe('suspense query error handling', () => {
           { onError },
           React.createElement(
             React.Suspense,
-            { fallback: React.createElement('div', null, 'loading') },
+            { fallback: React.createElement("div", null, "loading") },
             children,
           ),
         ),
       );
     }
-    const queryFn = vi.fn().mockRejectedValue(new Error('boom'));
+    const queryFn = vi.fn().mockRejectedValue(new Error("boom"));
 
-    renderHook(
-      () => useSuspenseListQuery({ queryKey: ['thing', 'list', 'err'], queryFn }),
-      { wrapper: Wrapper },
-    );
+    renderHook(() => useSuspenseListQuery({ queryKey: ["thing", "list", "err"], queryFn }), {
+      wrapper: Wrapper,
+    });
 
     await waitFor(() => expect(onError).toHaveBeenCalled());
     const err = onError.mock.calls[0][0] as Error;
     expect(err).toBeInstanceOf(Error);
-    expect(err.message).toBe('boom');
+    expect(err.message).toBe("boom");
   });
 });

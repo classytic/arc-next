@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck:tests
+      - run: npm run lint
+      - run: npm run check:dead-code
+      - run: npm test
+      - run: npm run build
+      - run: npm run check:package
+      - run: npm run check:api-surface
+      - run: npm run check:server-import
+      - run: npm run check:bundle
+      - run: npm run check:fixtures
+
+  peer-minimums:
+    name: Declared peer minimums
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Install the EXACT minimum of every declared peer range — the claim
+      # "works with >=X" is tested, not asserted. Bump these alongside
+      # peerDependencies; drift fails the job.
+      - run: >
+          npm install --no-save
+          react@19.0.0
+          react-dom@19.0.0
+          @tanstack/react-query@5.62.0
+          @classytic/repo-core@0.14.0
+          jose@5.0.0
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run check:fixtures

@@ -1,10 +1,5 @@
-import type { PaginatedResult } from '@classytic/repo-core/pagination';
-import type {
-  AnyBaseApi,
-  DocOf,
-  QueryParams,
-  ScopedArgs,
-} from '../api.js';
+import type { PaginatedResult } from "@classytic/repo-core/pagination";
+import type { AnyBaseApi, DocOf, QueryParams, ScopedArgs } from "../api.js";
 
 // ============================================================================
 // Methods added by the tree preset
@@ -15,10 +10,12 @@ export interface TreeMethods<TDoc> {
   getTree(args?: ScopedArgs & { params?: QueryParams }): Promise<TDoc[]>;
 
   /** Fetch direct children of a node. Backend mounts `GET /:resource/:id/children`. */
-  getChildren(args: ScopedArgs & {
-    parentId: string;
-    params?: QueryParams;
-  }): Promise<PaginatedResult<TDoc>>;
+  getChildren(
+    args: ScopedArgs & {
+      parentId: string;
+      params?: QueryParams;
+    },
+  ): Promise<PaginatedResult<TDoc>>;
 }
 
 // ============================================================================
@@ -39,9 +36,7 @@ export interface TreeMethods<TDoc> {
  * const root = await categories.getTree();
  * const kids = await categories.getChildren({ parentId: 'engineering' });
  */
-export function withTree<TApi extends AnyBaseApi>(
-  api: TApi,
-): TApi & TreeMethods<DocOf<TApi>> {
+export function withTree<TApi extends AnyBaseApi>(api: TApi): TApi & TreeMethods<DocOf<TApi>> {
   type TDoc = DocOf<TApi>;
   const ext: TreeMethods<TDoc> = {
     async getTree({ token = null, organizationId = null, params = {}, options = {} } = {}) {
@@ -52,21 +47,28 @@ export function withTree<TApi extends AnyBaseApi>(
       // the caller's explicit params (e.g. a `depth`/filter, if the resource
       // supports one). `getChildren` below is a real paginated level and keeps
       // the merge.
-      return api.request<TDoc[]>('GET', `${api.baseUrl}/tree`, {
+      return api.request<TDoc[]>("GET", `${api.baseUrl}/tree`, {
         token,
         organizationId,
         params,
         options,
       });
     },
-    async getChildren({ token = null, organizationId = null, parentId, params = {}, options = {} }) {
-      if (!parentId) throw new Error('Parent ID is required');
+    async getChildren({
+      token = null,
+      organizationId = null,
+      parentId,
+      params = {},
+      options = {},
+    }) {
+      if (!parentId) throw new Error("Parent ID is required");
       const merged = { ...api.config.defaultParams, ...params };
-      return api.request<PaginatedResult<TDoc>>(
-        'GET',
-        `${api.baseUrl}/${parentId}/children`,
-        { token, organizationId, params: merged, options },
-      );
+      return api.request<PaginatedResult<TDoc>>("GET", `${api.baseUrl}/${parentId}/children`, {
+        token,
+        organizationId,
+        params: merged,
+        options,
+      });
     },
   };
   return Object.assign(api, ext) as TApi & TreeMethods<DocOf<TApi>>;

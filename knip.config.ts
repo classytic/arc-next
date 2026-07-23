@@ -9,14 +9,8 @@ const config: KnipConfig = {
 
   vitest: {
     config: ["vitest.config.ts"],
-    entry: ["tests/**/*.test.ts", "tests/**/*.spec.ts"],
+    entry: ["tests/**/*.test.ts", "tests/**/*.spec.ts", "tests/_setup/*.ts"],
   },
-
-  ignoreDependencies: [
-    "react",
-    "react-dom",
-    "@tanstack/react-query",
-  ],
 };
 
 export default config;

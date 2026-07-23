@@ -15,16 +15,13 @@
  * extra round-trip.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import React from 'react';
-import {
-  syncDetailToLists,
-  createQueryKeys,
-} from '../src/cache.js';
-import { createCrudHooks, type CrudApi } from '../src/hooks.js';
-import { configureAuth, configureClient } from '../src/client.js';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook, waitFor } from "@testing-library/react";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createQueryKeys, syncDetailToLists } from "../src/cache.js";
+import { configureAuth, configureClient } from "../src/client.js";
+import { type CrudApi, createCrudHooks } from "../src/hooks.js";
 
 function createQc(): QueryClient {
   return new QueryClient({
@@ -40,133 +37,153 @@ function Wrap(qc: QueryClient) {
 
 type Item = { _id: string; title: string; status?: string; body?: string };
 
-describe('syncDetailToLists (cache.ts helper)', () => {
-  const KEYS = createQueryKeys('items');
+describe("syncDetailToLists (cache.ts helper)", () => {
+  const KEYS = createQueryKeys("items");
 
-  it('shallow-merges fresh detail into a matching list entry, preserves list key set', () => {
+  it("shallow-merges fresh detail into a matching list entry, preserves list key set", () => {
     const qc = createQc();
     qc.setQueryData(KEYS.lists(), {
       data: [
-        { _id: 'a', title: 'A stale', status: 'pending' },
-        { _id: 'b', title: 'B', status: 'pending' },
+        { _id: "a", title: "A stale", status: "pending" },
+        { _id: "b", title: "B", status: "pending" },
       ],
       total: 2,
     });
 
     const updated = syncDetailToLists(qc, KEYS.lists(), {
-      _id: 'a',
-      title: 'A fresh',
-      status: 'done',
-      body: 'detail-only field',
+      _id: "a",
+      title: "A fresh",
+      status: "done",
+      body: "detail-only field",
     });
 
     expect(updated).toBe(1);
     const list = qc.getQueryData(KEYS.lists()) as { data: Item[] };
     // List item received fresh values for keys it ALREADY had (title, status)
     // but NOT the detail-only `body` field — preserves list-cache leanness.
-    expect(list.data[0]).toEqual({ _id: 'a', title: 'A fresh', status: 'done' });
+    expect(list.data[0]).toEqual({ _id: "a", title: "A fresh", status: "done" });
     expect((list.data[0] as Item).body).toBeUndefined();
     // Other items left alone.
-    expect(list.data[1]).toEqual({ _id: 'b', title: 'B', status: 'pending' });
+    expect(list.data[1]).toEqual({ _id: "b", title: "B", status: "pending" });
   });
 
-  it('no-op when list does not contain the doc (no spurious writes)', () => {
+  it("no-op when list does not contain the doc (no spurious writes)", () => {
     const qc = createQc();
-    qc.setQueryData(KEYS.lists(), { data: [{ _id: 'x', title: 'X' }] });
+    qc.setQueryData(KEYS.lists(), { data: [{ _id: "x", title: "X" }] });
 
-    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: 'a', title: 'A' });
+    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: "a", title: "A" });
 
     expect(updated).toBe(0);
-    expect((qc.getQueryData(KEYS.lists()) as { data: Item[] }).data[0]).toEqual({ _id: 'x', title: 'X' });
+    expect((qc.getQueryData(KEYS.lists()) as { data: Item[] }).data[0]).toEqual({
+      _id: "x",
+      title: "X",
+    });
   });
 
-  it('walks infinite-query pages arrays', () => {
+  it("walks infinite-query pages arrays", () => {
     const qc = createQc();
-    const infiniteKey = [...KEYS.lists(), 'infinite'];
+    const infiniteKey = [...KEYS.lists(), "infinite"];
     qc.setQueryData(infiniteKey, {
       pages: [
-        { data: [{ _id: 'a', title: 'A old' }, { _id: 'b', title: 'B' }], total: 4 },
-        { data: [{ _id: 'c', title: 'C' }, { _id: 'd', title: 'D' }], total: 4 },
+        {
+          data: [
+            { _id: "a", title: "A old" },
+            { _id: "b", title: "B" },
+          ],
+          total: 4,
+        },
+        {
+          data: [
+            { _id: "c", title: "C" },
+            { _id: "d", title: "D" },
+          ],
+          total: 4,
+        },
       ],
       pageParams: [1, 2],
     });
 
-    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: 'a', title: 'A new' });
+    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: "a", title: "A new" });
     expect(updated).toBe(1);
     const cur = qc.getQueryData(infiniteKey) as { pages: { data: Item[] }[] };
-    expect(cur.pages[0]!.data[0]).toEqual({ _id: 'a', title: 'A new' });
+    expect(cur.pages[0]!.data[0]).toEqual({ _id: "a", title: "A new" });
     // Page 2 untouched
-    expect(cur.pages[1]!.data[0]).toEqual({ _id: 'c', title: 'C' });
+    expect(cur.pages[1]!.data[0]).toEqual({ _id: "c", title: "C" });
   });
 
   it('honors a custom idField (e.g. "sku")', () => {
     const qc = createQc();
-    const SKEYS = createQueryKeys('products');
+    const SKEYS = createQueryKeys("products");
     qc.setQueryData(SKEYS.lists(), {
       data: [
-        { sku: 'AA-1', name: 'Widget', price: 10 },
-        { sku: 'BB-2', name: 'Gadget', price: 20 },
+        { sku: "AA-1", name: "Widget", price: 10 },
+        { sku: "BB-2", name: "Gadget", price: 20 },
       ],
     });
 
     const updated = syncDetailToLists(
       qc,
       SKEYS.lists(),
-      { sku: 'BB-2', name: 'Gadget Pro', price: 25 },
-      { idField: 'sku' },
+      { sku: "BB-2", name: "Gadget Pro", price: 25 },
+      { idField: "sku" },
     );
     expect(updated).toBe(1);
     expect((qc.getQueryData(SKEYS.lists()) as { data: Item[] }).data[1]).toEqual({
-      sku: 'BB-2',
-      name: 'Gadget Pro',
+      sku: "BB-2",
+      name: "Gadget Pro",
       price: 25,
     });
   });
 
-  it('never creates new cache entries — only writes to existing keys', () => {
+  it("never creates new cache entries — only writes to existing keys", () => {
     const qc = createQc();
     // No list cache exists at all.
     expect(qc.getQueryData(KEYS.lists())).toBeUndefined();
 
-    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: 'a', title: 'A' });
+    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: "a", title: "A" });
     expect(updated).toBe(0);
     // Still no entry.
     expect(qc.getQueryData(KEYS.lists())).toBeUndefined();
     expect(qc.getQueriesData({ queryKey: KEYS.lists() })).toHaveLength(0);
   });
 
-  it('updates ALL matching list caches when multiple filter variants hold the same item', () => {
+  it("updates ALL matching list caches when multiple filter variants hold the same item", () => {
     const qc = createQc();
-    const k1 = KEYS.scopedList('super-admin', { status: 'active' });
-    const k2 = KEYS.scopedList('super-admin', { status: 'all' });
-    qc.setQueryData(k1, { data: [{ _id: 'a', title: 'A old' }] });
-    qc.setQueryData(k2, { data: [{ _id: 'a', title: 'A old' }, { _id: 'b', title: 'B' }] });
+    const k1 = KEYS.scopedList("super-admin", { status: "active" });
+    const k2 = KEYS.scopedList("super-admin", { status: "all" });
+    qc.setQueryData(k1, { data: [{ _id: "a", title: "A old" }] });
+    qc.setQueryData(k2, {
+      data: [
+        { _id: "a", title: "A old" },
+        { _id: "b", title: "B" },
+      ],
+    });
 
-    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: 'a', title: 'A new' });
+    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: "a", title: "A new" });
     expect(updated).toBe(2);
-    expect((qc.getQueryData(k1) as { data: Item[] }).data[0]!.title).toBe('A new');
-    expect((qc.getQueryData(k2) as { data: Item[] }).data[0]!.title).toBe('A new');
+    expect((qc.getQueryData(k1) as { data: Item[] }).data[0]!.title).toBe("A new");
+    expect((qc.getQueryData(k2) as { data: Item[] }).data[0]!.title).toBe("A new");
   });
 
-  it('returns 0 when nothing actually changed (same values, no spurious setQueryData)', () => {
+  it("returns 0 when nothing actually changed (same values, no spurious setQueryData)", () => {
     const qc = createQc();
-    qc.setQueryData(KEYS.lists(), { data: [{ _id: 'a', title: 'A' }] });
-    const setSpy = vi.spyOn(qc, 'setQueryData');
+    qc.setQueryData(KEYS.lists(), { data: [{ _id: "a", title: "A" }] });
+    const setSpy = vi.spyOn(qc, "setQueryData");
 
-    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: 'a', title: 'A' });
+    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: "a", title: "A" });
     expect(updated).toBe(0);
     expect(setSpy).not.toHaveBeenCalled();
   });
 
-  it('handles entries without a resolvable id (no crash, no update)', () => {
+  it("handles entries without a resolvable id (no crash, no update)", () => {
     const qc = createQc();
-    qc.setQueryData(KEYS.lists(), { data: [{ name: 'no id' }, { _id: 'a', title: 'A' }] });
+    qc.setQueryData(KEYS.lists(), { data: [{ name: "no id" }, { _id: "a", title: "A" }] });
 
-    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: 'a', title: 'A new' });
+    const updated = syncDetailToLists(qc, KEYS.lists(), { _id: "a", title: "A new" });
     expect(updated).toBe(1);
     expect((qc.getQueryData(KEYS.lists()) as { data: Item[] }).data).toEqual([
-      { name: 'no id' },
-      { _id: 'a', title: 'A new' },
+      { name: "no id" },
+      { _id: "a", title: "A new" },
     ]);
   });
 });
@@ -179,13 +196,21 @@ function mockApi(): CrudApi<Item> {
   return {
     getAll: vi.fn().mockResolvedValue({
       data: [
-        { _id: 'a', title: 'A from list', status: 'pending' },
-        { _id: 'b', title: 'B from list', status: 'active' },
+        { _id: "a", title: "A from list", status: "pending" },
+        { _id: "b", title: "B from list", status: "active" },
       ],
-      total: 2, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
+      total: 2,
+      page: 1,
+      limit: 10,
+      pages: 1,
+      hasNext: false,
+      hasPrev: false,
     }),
     getById: vi.fn().mockResolvedValue({
-      _id: 'a', title: 'A from detail', status: 'archived', body: 'full body',
+      _id: "a",
+      title: "A from detail",
+      status: "archived",
+      body: "full body",
     }),
     create: vi.fn(),
     update: vi.fn(),
@@ -193,17 +218,17 @@ function mockApi(): CrudApi<Item> {
   };
 }
 
-describe('useDetail → useList pseudo-normalization (master/detail layout)', () => {
+describe("useDetail → useList pseudo-normalization (master/detail layout)", () => {
   beforeEach(() => {
-    configureClient({ baseUrl: 'http://api.test' });
+    configureClient({ baseUrl: "http://api.test" });
     configureAuth({ getToken: () => null, getOrgId: () => null });
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('detail GET that updates an item propagates to the still-mounted list cache', async () => {
+  it("detail GET that updates an item propagates to the still-mounted list cache", async () => {
     const api = mockApi();
-    const hooks = createCrudHooks({ api, entityKey: 'items', singular: 'Item' });
+    const hooks = createCrudHooks({ api, entityKey: "items", singular: "Item" });
     const qc = createQc();
 
     // Mount the list — gets {_id, title, status} for both items.
@@ -212,11 +237,13 @@ describe('useDetail → useList pseudo-normalization (master/detail layout)', ()
     });
     await waitFor(() => expect(list.result.current.items).toHaveLength(2));
     expect(list.result.current.items[0]).toEqual({
-      _id: 'a', title: 'A from list', status: 'pending',
+      _id: "a",
+      title: "A from list",
+      status: "pending",
     });
 
     // Mount detail — fresh GET returns richer {_id, title, status, body}.
-    renderHook(() => hooks.useDetail('a', { public: true }), { wrapper: Wrap(qc) });
+    renderHook(() => hooks.useDetail("a", { public: true }), { wrapper: Wrap(qc) });
 
     // Wait for the detail GET to resolve AND the post-fetch sync effect to fire.
     await waitFor(() => expect(api.getById).toHaveBeenCalledTimes(1));
@@ -224,7 +251,9 @@ describe('useDetail → useList pseudo-normalization (master/detail layout)', ()
       // The list cache now reflects the fresh title + status — without firing
       // another list fetch.
       expect(list.result.current.items[0]).toEqual({
-        _id: 'a', title: 'A from detail', status: 'archived',
+        _id: "a",
+        title: "A from detail",
+        status: "archived",
       });
     });
 
@@ -232,15 +261,17 @@ describe('useDetail → useList pseudo-normalization (master/detail layout)', ()
     expect((list.result.current.items[0] as Item).body).toBeUndefined();
     // Other items left alone.
     expect(list.result.current.items[1]).toEqual({
-      _id: 'b', title: 'B from list', status: 'active',
+      _id: "b",
+      title: "B from list",
+      status: "active",
     });
     // No spurious second list fetch.
     expect(api.getAll).toHaveBeenCalledTimes(1);
   });
 
-  it('placeholder fetch (isPlaceholderData: true) does NOT trigger sync', async () => {
+  it("placeholder fetch (isPlaceholderData: true) does NOT trigger sync", async () => {
     const api = mockApi();
-    const hooks = createCrudHooks({ api, entityKey: 'items', singular: 'Item' });
+    const hooks = createCrudHooks({ api, entityKey: "items", singular: "Item" });
     const qc = createQc();
 
     // Mount list first to seed placeholderData.
@@ -250,7 +281,7 @@ describe('useDetail → useList pseudo-normalization (master/detail layout)', ()
     await waitFor(() => expect(list.result.current.items).toHaveLength(2));
 
     // Mount detail — placeholder fires synchronously, real GET runs after.
-    const detail = renderHook(() => hooks.useDetail('a', { public: true }), {
+    const detail = renderHook(() => hooks.useDetail("a", { public: true }), {
       wrapper: Wrap(qc),
     });
     // First render: placeholder. We must NOT have triggered a list update
@@ -262,7 +293,7 @@ describe('useDetail → useList pseudo-normalization (master/detail layout)', ()
     await waitFor(() => expect(api.getById).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(detail.result.current.isPlaceholderData).toBe(false));
     await waitFor(() => {
-      expect(list.result.current.items[0]?.title).toBe('A from detail');
+      expect(list.result.current.items[0]?.title).toBe("A from detail");
     });
   });
 });

@@ -1,5 +1,112 @@
 # Changelog
 
+## 0.12.0 (2026-07-22)
+
+Production-readiness wave: canonical repo-core contracts, hardened optimistic/bulk
+cache behavior, executor-level pipeline guarantees, and arc-grade release gates.
+
+### Timeouts, retry pacing & quiet defaults (release-candidate review fixes)
+
+- **`timeoutMs`** — client-level (`ClientConfig.timeoutMs`) and per-request
+  (`ApiRequestOptions.timeoutMs`, `0` disables) request timeout. A hung fetch is
+  aborted and surfaces as a RETRYABLE `TimeoutError`, distinct from a deliberate
+  caller abort (still `AbortError`, still silent). Composed with the caller's
+  signal; each retry attempt gets a fresh window. Default: disabled — set it
+  explicitly (10–30s typical).
+- **Upload timeouts actually work** — `uploadWithProgress` gained `timeoutMs`
+  and now ASSIGNS `xhr.timeout`; the pre-existing `ontimeout` handler could
+  never fire without it (XHR defaults to 0 = no timeout). Rejects with
+  `TimeoutError` including the configured window.
+- **`retry.jitter: 'full'`** — AWS full-jitter (`[0, computed]`) so fleets
+  recovering from one outage don't retry in lockstep. Default stays
+  deterministic. **`Retry-After` is honored**: 429/503 responses carrying the
+  header (delta-seconds or HTTP-date) are parsed onto the new
+  `ArcApiError.retryAfterMs`, and the retry loop sleeps exactly that long
+  instead of computed backoff.
+- **Silent default toast.** The default handler no longer writes `[Success]`/
+  `[Error]` to the consumer's console on every mutation — a library must be
+  quiet until `configureToast` opts in. Errors still propagate normally.
+- **React act() warnings are now test FAILURES.** A vitest setup file turns
+  "not wrapped in act(...)" into a failure of the offending test; the 21
+  warning sites in upload/realtime/aggregate tests were fixed (async-`act`
+  around XHR/WS/SSE event emission and mutation settlement).
+- **`lint` (Biome) + `check:dead-code` (Knip)** added to `prepublishOnly` and
+  CI; knip config cleaned (dropped satisfied `ignoreDependencies`, removed the
+  unused `@testing-library/jest-dom`).
+
+### Contracts — repo-core 0.14 alignment (peer bump)
+
+- **Peer `@classytic/repo-core` >=0.14.0** (was >=0.4.0); the declared minimum is
+  now exercised by a dedicated CI job, not asserted.
+- **`KNOWN_ARC_ERROR_CODES`** spreads repo-core's `ERROR_CODES` instead of
+  re-typing the 11 canonical codes — a repo-core code rename now surfaces as a
+  compile/test failure instead of silent drift.
+- **`SortDirection`** = repo-core `SortDirection` (`1 | -1`) + `'asc' | 'desc'`;
+  **`PopulateOption`** = `Pick<ParsedPopulate, 'path' | 'select' | 'match'>` —
+  derived, not re-declared.
+- **`cursor` → `after` rewrite** — `QueryParams.cursor` was an SDK-only alias the
+  server never understood; `prepareParams` now rewrites it to the canonical
+  `after` (explicit `after` wins). Dispatch verbs (`_count`/`_exists`/`_distinct`)
+  are runtime-locked against repo-core's `STANDARD_RESERVED_PARAMS`.
+- New `tests/type-contracts.test.ts` pins all of the above at the type level.
+
+### Optimistic & bulk cache hardening
+
+- **Infinite caches are first-class.** `updateListCache` now recognizes
+  `{ pages, pageParams }` and maps per-page — previously the any-array fallback
+  treated `pages` ITSELF as the items array, so an optimistic create on a
+  resource with an infinite list cache spliced the item BETWEEN pages (cache
+  corruption). New `prependToListCache` (insert into first page only) and
+  `replaceItemInListCache` (in-place swap by id) exported from `./cache`.
+- **Temp-ID reconciliation.** `useActions().create` inserts one `_optimistic`
+  placeholder (lists only), then on success swaps it IN PLACE for the server
+  document and seeds `KEYS.detail(realId)` — no flicker, real id immediately
+  navigable, before any refetch.
+- **Detail-cache envelope bug fixed.** Optimistic update merged into a
+  `{ data: … }` sub-object that arc 2.13+ detail caches don't have; it now
+  merges the raw doc. The updater is key-aware (`optimisticUpdate(old, vars,
+  queryKey)`) — detail caches of the target id get a doc merge, list caches get
+  per-item mapping, aggregation caches are never touched (previously the
+  optimistic create was also injected into aggregation `rows`).
+- **Exact rollback** now snapshot/restores exactly what was written (unchanged
+  entries are no longer rewritten — fewer spurious re-renders).
+- **Per-record write ordering.** Sequential `update`/`remove`/`restore` calls to
+  the SAME record are chained (call order = server order); different records
+  stay parallel; a failed write doesn't block the next.
+- **Last-standing invalidation.** CRUD writes share a mutation key; settled
+  invalidation fires only from the LAST pending write (`isMutating === 1`) —
+  rapid writes produce one refetch, and an early write's refetch can never
+  clobber a later write's optimistic state.
+- **Bulk partial success.** `bulkUpdate` with `modifiedCount: 0` and
+  `bulkRemove` with `deletedCount: 0` skip invalidation entirely;
+  `bulkCreate` seeds detail caches from the returned documents.
+
+### Pipeline & server story
+
+- **Executor-level `autoIdempotency`.** The `Idempotency-Key` is minted once
+  per logical request at the top of the executor — direct `BaseApi` calls are
+  covered (previously mutation-hook-only), and every backoff/auth retry reuses
+  the same key. GET/DELETE excluded; explicit keys win.
+- **`createServerClient` (`./client`)** — request-scoped server client for
+  Next.js App Router / SSR: static per-request credentials, no module
+  singletons, no `next` dependency, no hidden cookie access (the host reads
+  `cookies()`/`headers()` and passes values in).
+- **`upload.ts` is now `"use client"`.** It always used React hooks; the missing
+  directive let Server Components import it and fail at runtime instead of
+  being flagged as a client reference (caught by the new server-import gate).
+
+### Release gates (ported from arc)
+
+- `check:package` (publint --strict + attw esm-only), `check:api-surface`
+  (per-subpath runtime+types name diff + declaration hashes, snapshot in
+  `api-surface.json`), `check:server-import` (server-safe subpaths must import
+  in plain Node and reach no `"use client"` module), `check:bundle` (gzip
+  budgets per subpath), `check:fixtures` (Next App Router + Vite consumer
+  fixtures type-checked against the built dist) — all chained into
+  `prepublishOnly`. New GitHub Actions CI: Node 20/22 matrix + a
+  **peer-minimums job** that installs the exact declared minimums
+  (react 19.0.0, @tanstack/react-query 5.62.0, repo-core 0.14.0, jose 5.0.0).
+
 ## 0.11.1
 
 - **`MutationMessages<TData, TVariables>`** — success/error callbacks now

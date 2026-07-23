@@ -1,9 +1,16 @@
 "use client";
 
-import { useMutation, useQueryClient, type QueryClient, type QueryKey, type UseMutateFunction, type UseMutateAsyncFunction } from "@tanstack/react-query";
-import { useTransition, useRef, useCallback } from "react";
-import { getQuotaDetails, isArcApiError, isAutoIdempotency } from "./client.js";
+import {
+  type QueryClient,
+  type QueryKey,
+  type UseMutateAsyncFunction,
+  type UseMutateFunction,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useRef, useTransition } from "react";
 import type { ToastHandler } from "./client.js";
+import { getQuotaDetails, isArcApiError, isAutoIdempotency } from "./client.js";
 
 // ============================================================================
 // Types
@@ -25,7 +32,12 @@ export interface MutationCallbacks<TData, TVariables, TContext = unknown> {
   onMutate?: (variables: TVariables) => TContext | Promise<TContext>;
   onSuccess?: (data: TData, variables: TVariables, context: TContext) => void | Promise<void>;
   onError?: (error: Error, variables: TVariables, context: TContext) => void | Promise<void>;
-  onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables, context: TContext) => void | Promise<void>;
+  onSettled?: (
+    data: TData | undefined,
+    error: Error | null,
+    variables: TVariables,
+    context: TContext,
+  ) => void | Promise<void>;
 }
 
 export interface TransitionMutationReturn<TData, TVariables> {
@@ -43,9 +55,14 @@ export interface TransitionMutationReturn<TData, TVariables> {
 // Toast Configuration
 // ============================================================================
 
+// Default is a silent no-op: a LIBRARY must not write to the consumer's
+// console on every successful mutation. Apps opt into feedback explicitly
+// via `configureToast` (sonner, react-hot-toast, custom). Errors still
+// reach the caller through the rejected promise / onError callbacks —
+// nothing is swallowed, only the unsolicited logging is gone.
 let toastHandler: ToastHandler = {
-  success: (msg) => console.log("[Success]", msg),
-  error: (msg) => console.error("[Error]", msg),
+  success: () => {},
+  error: () => {},
 };
 
 /**
@@ -110,12 +127,10 @@ function showToast<TData, TVariables>(
     } else if (isArcApiError(error) && error.fieldErrors) {
       const fields = Object.entries(error.fieldErrors);
       if (fields.length > 0) {
-        defaultMsg = fields.map(([k, v]) => `${k}: ${v}`).join(', ');
+        defaultMsg = fields.map(([k, v]) => `${k}: ${v}`).join(", ");
       }
     }
-    const text = typeof msg === "function"
-      ? msg(error as Error, variables)
-      : msg || defaultMsg;
+    const text = typeof msg === "function" ? msg(error as Error, variables) : msg || defaultMsg;
 
     activeHandler.error(text);
   }
@@ -128,6 +143,13 @@ function showToast<TData, TVariables>(
 export interface TransitionMutationConfig<TData, TVariables> {
   mutationFn: (variables: TVariables) => Promise<TData>;
   invalidateQueries?: QueryKey[];
+  /**
+   * Result-aware invalidation gate. When provided, `invalidateQueries` only
+   * fire if this returns true for the mutation result — lets bulk operations
+   * skip refetching everything when the server reports nothing changed
+   * (`modifiedCount: 0`, `deletedCount: 0`).
+   */
+  shouldInvalidate?: (data: TData) => boolean;
   onSuccess?: (data: TData, variables: TVariables) => void;
   onError?: (error: Error, variables: TVariables) => void;
   onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
@@ -139,7 +161,9 @@ export interface TransitionMutationConfig<TData, TVariables> {
   toastHandler?: ToastHandler;
 }
 
-export function useMutationWithTransition<TData, TVariables>(config: TransitionMutationConfig<TData, TVariables>) {
+export function useMutationWithTransition<TData, TVariables>(
+  config: TransitionMutationConfig<TData, TVariables>,
+) {
   const {
     mutationFn,
     invalidateQueries = [],
@@ -178,13 +202,19 @@ export function useMutationWithTransition<TData, TVariables>(config: TransitionM
 
     onSuccess: (data, variables) => {
       const invalidate = () => {
-        invalidateQueries.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
+        invalidateQueries.forEach((key) => {
+          queryClient.invalidateQueries({ queryKey: key });
+        });
       };
 
-      if (withTransition && invalidateQueries.length > 0) {
-        startTransition(invalidate);
-      } else {
-        invalidate();
+      const wantsInvalidation =
+        invalidateQueries.length > 0 && (config.shouldInvalidate?.(data) ?? true);
+      if (wantsInvalidation) {
+        if (withTransition) {
+          startTransition(invalidate);
+        } else {
+          invalidate();
+        }
       }
 
       const doToast = toast && (config.shouldToast?.() ?? true);
@@ -231,7 +261,9 @@ export interface OptimisticMutationConfig<TData, TVariables> {
   toastHandler?: ToastHandler;
 }
 
-export function useMutationWithOptimistic<TData, TVariables>(config: OptimisticMutationConfig<TData, TVariables>) {
+export function useMutationWithOptimistic<TData, TVariables>(
+  config: OptimisticMutationConfig<TData, TVariables>,
+) {
   const {
     mutationFn,
     queryKeys = [],
@@ -267,14 +299,18 @@ export function useMutationWithOptimistic<TData, TVariables>(config: OptimisticM
     },
 
     onSuccess: (data, variables) => {
-      queryKeys.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
+      queryKeys.forEach((key) => {
+        queryClient.invalidateQueries({ queryKey: key });
+      });
       if (toast) showToast("success", messages, data, variables, undefined, instanceToast);
       onSuccess?.(data, variables);
     },
 
     onError: (error, variables, context) => {
       const ctx = context as { previous?: Array<{ key: QueryKey; data: unknown }> };
-      ctx?.previous?.forEach(({ key, data }) => queryClient.setQueryData(key, data));
+      ctx?.previous?.forEach(({ key, data }) => {
+        queryClient.setQueryData(key, data);
+      });
 
       if (toast) showToast("error", messages, null, variables, error as Error, instanceToast);
       onError?.(error as Error, variables);
@@ -305,7 +341,28 @@ export interface CreateOptimisticMutationConfig<TData, TVariables> {
   mutationFn: (variables: TVariables) => Promise<TData>;
   queryClient: QueryClient;
   queryKeys: QueryKey[];
-  optimisticUpdate?: (oldData: unknown, variables: TVariables) => unknown;
+  /**
+   * Per-cache-entry optimistic updater. Receives the concrete query key of
+   * the entry being updated so a single updater can treat list, detail, and
+   * aggregation caches differently (merge the doc into `[e,'detail',id]`,
+   * map items inside `[e,'list',…]`, leave `[e,'aggregation',…]` untouched).
+   * Return the input unchanged to skip the write for that entry.
+   */
+  optimisticUpdate?: (oldData: unknown, variables: TVariables, queryKey: QueryKey) => unknown;
+  /**
+   * Shared identity for this resource's write mutations. When set, settled
+   * invalidation only fires from the LAST pending mutation carrying the same
+   * key (`isMutating === 1`) — rapid sequential writes produce one refetch
+   * at the end instead of N racing refetches, and a refetch triggered by
+   * write #1 can never clobber write #2's optimistic state.
+   */
+  mutationKey?: readonly unknown[];
+  /**
+   * Post-success cache reconciliation, run BEFORE any invalidation while the
+   * optimistic state is still in place. Use to swap temp IDs for server
+   * documents or seed detail caches from the response.
+   */
+  reconcile?: (data: TData, variables: TVariables) => void;
   onSuccess?: (data: TData, variables: TVariables) => void;
   onError?: (error: Error, variables: TVariables) => void;
   onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
@@ -315,23 +372,40 @@ export interface CreateOptimisticMutationConfig<TData, TVariables> {
   toastHandler?: ToastHandler;
 }
 
-export function useOptimisticMutation<TData, TVariables>(config: CreateOptimisticMutationConfig<TData, TVariables>) {
+export function useOptimisticMutation<TData, TVariables>(
+  config: CreateOptimisticMutationConfig<TData, TVariables>,
+) {
   const {
     mutationFn,
     queryClient,
     queryKeys,
     optimisticUpdate,
+    mutationKey,
+    reconcile,
     onSuccess,
     onError,
     onSettled,
     messages,
     toastHandler: instanceToast,
   } = config;
+
+  const invalidateAll = () => {
+    queryKeys.forEach((key) => {
+      queryClient.invalidateQueries({ queryKey: key });
+    });
+  };
+
   return useMutation({
     mutationFn,
+    ...(mutationKey ? { mutationKey: mutationKey as unknown[] } : {}),
 
     onMutate: async (variables) => {
-      await Promise.all(queryKeys.map((key) => queryClient.cancelQueries({ queryKey: key, exact: false })));
+      // Cancel BEFORE snapshotting so an in-flight response can't land
+      // between the snapshot and the optimistic write (it would then be
+      // captured as "previous" and re-applied on rollback).
+      await Promise.all(
+        queryKeys.map((key) => queryClient.cancelQueries({ queryKey: key, exact: false })),
+      );
 
       const previous = queryKeys.map((key) => ({
         key,
@@ -341,7 +415,8 @@ export function useOptimisticMutation<TData, TVariables>(config: CreateOptimisti
       if (optimisticUpdate) {
         queryKeys.forEach((key) => {
           queryClient.getQueriesData({ queryKey: key }).forEach(([qKey, qData]) => {
-            queryClient.setQueryData(qKey, optimisticUpdate(qData, variables));
+            const next = optimisticUpdate(qData, variables, qKey);
+            if (next !== qData) queryClient.setQueryData(qKey, next);
           });
         });
       }
@@ -351,15 +426,23 @@ export function useOptimisticMutation<TData, TVariables>(config: CreateOptimisti
 
     onSuccess: (data, variables) => {
       const doToast = config.shouldToast?.() ?? true;
-      if (doToast && messages?.success) showToast("success", messages, data, variables, undefined, instanceToast);
-      queryKeys.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
+      if (doToast && messages?.success)
+        showToast("success", messages, data, variables, undefined, instanceToast);
+      reconcile?.(data, variables);
+      // Without a mutationKey, invalidate eagerly (legacy behavior). With
+      // one, invalidation moves to onSettled behind the last-standing guard.
+      if (!mutationKey) invalidateAll();
       onSuccess?.(data, variables);
     },
 
     onError: (error, variables, context) => {
-      const ctx = context as { previous?: Array<{ key: QueryKey; data: Array<[QueryKey, unknown]> }> };
+      const ctx = context as {
+        previous?: Array<{ key: QueryKey; data: Array<[QueryKey, unknown]> }>;
+      };
       ctx?.previous?.forEach(({ data }) => {
-        data.forEach(([qKey, qData]) => queryClient.setQueryData(qKey, qData));
+        data.forEach(([qKey, qData]) => {
+          queryClient.setQueryData(qKey, qData);
+        });
       });
 
       const doToast = config.shouldToast?.() ?? true;
@@ -368,8 +451,14 @@ export function useOptimisticMutation<TData, TVariables>(config: CreateOptimisti
     },
 
     onSettled: (data, error, variables) => {
+      // Last-standing invalidation: while other writes for the same resource
+      // are still pending, skip — the final one refetches once, with every
+      // optimistic layer already applied. (`isMutating` still counts THIS
+      // mutation during its own onSettled, hence === 1, not === 0.)
+      if (mutationKey && queryClient.isMutating({ mutationKey: mutationKey as unknown[] }) === 1) {
+        invalidateAll();
+      }
       onSettled?.(data, error as Error | null, variables);
     },
   });
 }
-

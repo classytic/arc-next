@@ -21,7 +21,7 @@ Always pull the relevant skill into context **before** writing code — these en
 
 - **No barrels.** Every file in `src/` is its own subpath export in `package.json`. Don't add an `index.ts`.
 - **`sideEffects: false`.** Don't add side-effectful imports.
-- **`"use client"` matters.** Client-only files: `query.ts`, `mutation.ts`, `hooks.ts`, `sse.ts`, `ws.ts`. Server-safe: `client.ts`, `api.ts`, `cache.ts`, `query-client.ts`, `prefetch.ts`, `presets/*.ts`. **Don't import client-only modules from server-safe ones** — Server Components see `"use client"` exports as client references and can't call them. If you find yourself wanting to call a pure utility from `prefetch.ts`, move it to `cache.ts` (no directive).
+- **`"use client"` matters.** Client-only files: `query.ts`, `mutation.ts`, `hooks.ts`, `sse.ts`, `ws.ts`, `upload.ts` (0.12+ — it always used React hooks; the missing banner was a bug). Server-safe: `client.ts`, `api.ts`, `cache.ts`, `query-client.ts`, `query-options.ts`, `prefetch.ts`, `presets/*.ts`, `encryption.ts`, `field-encryption.ts`. **Don't import client-only modules from server-safe ones** — Server Components see `"use client"` exports as client references and can't call them. If you find yourself wanting to call a pure utility from `prefetch.ts`, move it to `cache.ts` (no directive). **Machine-enforced**: `npm run check:server-import` walks the dist import graph and fails on violations — it's in `prepublishOnly` and CI.
 - **`configure*` are module singletons.** Setting them on the server leaks state across SSR requests. They warn on `typeof window === "undefined"` — preserve that.
 - **`getToken` is sync-only.** Promise/thenable returns are dropped + warned via `readToken()`. Don't widen the type to `Promise<string | null>`.
 - **`CrudApi` = `Pick<BaseApi, core>` ∪ `Partial<XxxMethods>` for each preset.** Never duplicate interfaces. When you add a CRUD-level method to `BaseApi`, add it to the `Pick` list in `hooks.ts`. When you add a method to a preset, add it to that preset's `XxxMethods` interface — the intersection in `hooks.ts` already pulls it through.
@@ -37,6 +37,9 @@ Always pull the relevant skill into context **before** writing code — these en
 - **`buildWsUrl` rewrites protocol.** `http(s)://` → `ws(s)://`. Make sure `configureClient.baseUrl` is set BEFORE building.
 - **`useNavigation` captures router at factory time.** Call `configureNavigation(useRouter)` BEFORE `createCrudHooks()`, not after.
 - **`upload.ts` is XHR, not fetch.** It's a separate transport for cross-browser progress events. **`ClientConfig.retry`, `beforeRequest`, and `afterResponse` do NOT propagate to uploads** — that's documented behavior, not a bug. Auth headers, `ArcApiError` parsing, `x-arc-scope`, `Idempotency-Key`, and `Accept-Version` all carry over. If you change interceptor behavior in `executeRequest`, do NOT also bridge it into `upload.ts` — uploads should stay isolated. Per-upload trace headers go through the `headers` option.
+- **`autoIdempotency` is an EXECUTOR concern (0.12+).** The key is minted once per logical request at the top of `executeRequest` so backoff + auth retries reuse it; the mutation-layer ref additionally covers TanStack-level retries. POST/PUT/PATCH only; explicit `idempotencyKey` always wins. Don't move key generation into `executeAttempt` — per-attempt keys defeat the dedup.
+- **Optimistic guarantees are contract (0.12+).** `useOptimisticMutation`'s updater is key-aware (`(old, vars, queryKey)`); list inserts go through `prependToListCache` (first infinite page only), reconciliation through `replaceItemInListCache`; CRUD writes share `WRITE_MUTATION_KEY` for last-standing invalidation; `enqueueWrite` chains same-record writes. See README "Optimistic Updates — the guarantees" and tests/hooks-optimistic-hardening.test.tsx before changing any of it.
+- **Server story:** `createServerClient` is the sanctioned per-request server path — never add `next` imports, `next/headers`, or cookie reads to the SDK; hosts pass plain values.
 
 ## Layout
 
@@ -68,11 +71,21 @@ Real-backend integration tests: [`../arc-next-test-api/tests/`](../arc-next-test
 `package.json` has the canonical list. Most-used while developing:
 
 ```bash
-npm test                # full vitest suite
-npx vitest run tests/X  # single file
-npm run typecheck       # tsc --noEmit (strict)
-npm run prepublishOnly  # gate: typecheck + test + build
+npm test                  # full vitest suite
+npx vitest run tests/X    # single file
+npm run typecheck         # tsc --noEmit (strict)
+npm run typecheck:tests   # test lane (includes type-contracts)
+npm run prepublishOnly    # FULL gate: typecheck×2 + test + build + check:package
+                          #   + check:api-surface + check:server-import
+                          #   + check:bundle + check:fixtures
+npm run api:surface       # regenerate api-surface.json (after intentional API change)
 ```
+
+Release-gate notes (0.12+, ported from arc):
+- `api-surface.json` snapshots every subpath's runtime+type exports + declaration hashes. Any removal or signature change FAILS until you regenerate the snapshot in the same change and note it in CHANGELOG.md.
+- `scripts/check-bundle-size.mjs` holds gzip budgets per subpath — raising a budget is a reviewed edit, not automatic.
+- `fixtures/` holds Next App Router + Vite consumer fixtures type-checked against the BUILT dist via package self-reference — run `npm run build` first.
+- CI (`.github/workflows/ci.yml`) runs the matrix plus a peer-minimums job installing the exact declared minimums. Bump that job when you bump `peerDependencies`.
 
 ## Adding a feature — checklist
 

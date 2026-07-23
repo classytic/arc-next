@@ -2,8 +2,8 @@ import type {
   BulkCreateResult,
   DeleteManyResult,
   UpdateManyResult,
-} from '@classytic/repo-core/repository';
-import type { AnyBaseApi, CreateOf, DocOf, ScopedArgs, UpdateOf } from '../api.js';
+} from "@classytic/repo-core/repository";
+import type { AnyBaseApi, CreateOf, DocOf, ScopedArgs, UpdateOf } from "../api.js";
 
 // ============================================================================
 // Methods added by the bulk preset
@@ -17,18 +17,22 @@ export interface BulkMethods<TDoc, TCreate = Partial<TDoc>, TUpdate = Partial<TD
    * Update all docs matching `filter` with `data`.
    * Backend mounts `PATCH /:resource/bulk`.
    */
-  bulkUpdate(args: ScopedArgs & {
-    filter: Record<string, unknown>;
-    data: TUpdate;
-  }): Promise<UpdateManyResult>;
+  bulkUpdate(
+    args: ScopedArgs & {
+      filter: Record<string, unknown>;
+      data: TUpdate;
+    },
+  ): Promise<UpdateManyResult>;
 
   /**
    * Delete all docs matching `filter`.
    * Backend mounts `DELETE /:resource/bulk`.
    */
-  bulkDelete(args: ScopedArgs & {
-    filter: Record<string, unknown>;
-  }): Promise<DeleteManyResult>;
+  bulkDelete(
+    args: ScopedArgs & {
+      filter: Record<string, unknown>;
+    },
+  ): Promise<DeleteManyResult>;
 }
 
 // ============================================================================
@@ -62,7 +66,7 @@ export function withBulk<TApi extends AnyBaseApi>(
       // Sending the raw array is rejected with `400 Bulk create requires a
       // non-empty items array`, masking the genuine `ORG_CONTEXT_REQUIRED`
       // tenant-scope error hosts actually need to see.
-      return api.request<BulkCreateResult<TDoc>>('POST', `${api.baseUrl}/bulk`, {
+      return api.request<BulkCreateResult<TDoc>>("POST", `${api.baseUrl}/bulk`, {
         token,
         organizationId,
         data: { items: data },
@@ -70,7 +74,7 @@ export function withBulk<TApi extends AnyBaseApi>(
       });
     },
     async bulkUpdate({ token = null, organizationId = null, filter, data, options = {} }) {
-      return api.request<UpdateManyResult>('PATCH', `${api.baseUrl}/bulk`, {
+      return api.request<UpdateManyResult>("PATCH", `${api.baseUrl}/bulk`, {
         token,
         organizationId,
         data: { filter, data },
@@ -78,7 +82,7 @@ export function withBulk<TApi extends AnyBaseApi>(
       });
     },
     async bulkDelete({ token = null, organizationId = null, filter, options = {} }) {
-      return api.request<DeleteManyResult>('DELETE', `${api.baseUrl}/bulk`, {
+      return api.request<DeleteManyResult>("DELETE", `${api.baseUrl}/bulk`, {
         token,
         organizationId,
         data: { filter },
@@ -86,6 +90,5 @@ export function withBulk<TApi extends AnyBaseApi>(
       });
     },
   };
-  return Object.assign(api, ext) as TApi &
-    BulkMethods<DocOf<TApi>, CreateOf<TApi>, UpdateOf<TApi>>;
+  return Object.assign(api, ext) as TApi & BulkMethods<DocOf<TApi>, CreateOf<TApi>, UpdateOf<TApi>>;
 }

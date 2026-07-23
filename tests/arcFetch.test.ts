@@ -10,8 +10,11 @@
  *  - `arcAuthHeaders()` escape hatch returns the same headers
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  _resetArcFetchClient,
+  _resetAuthRecovery,
+  _resetAuthWarnings,
   arc,
   arcAuthHeaders,
   arcFetch,
@@ -19,23 +22,20 @@ import {
   configureClient,
   createAuthRefreshHandler,
   isArcApiError,
-  _resetArcFetchClient,
-  _resetAuthRecovery,
-  _resetAuthWarnings,
-} from '../src/client.js';
+} from "../src/client.js";
 
 function mockFetchSequence(responses: Array<Response | (() => Response | Promise<Response>)>) {
   const queue = [...responses];
   const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
-  const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(((
+  const spy = vi.spyOn(globalThis, "fetch").mockImplementation(((
     input: string | URL | Request,
     init?: RequestInit,
   ) => {
-    const url = typeof input === 'string' ? input : input.toString();
+    const url = typeof input === "string" ? input : input.toString();
     calls.push({ url, init });
     const next = queue.shift();
     if (!next) throw new Error(`mockFetchSequence: out of responses (call #${calls.length})`);
-    const r = typeof next === 'function' ? next() : next;
+    const r = typeof next === "function" ? next() : next;
     return Promise.resolve(r as Response);
   }) as typeof globalThis.fetch);
   return { spy, calls };
@@ -44,7 +44,7 @@ function mockFetchSequence(responses: Array<Response | (() => Response | Promise
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -60,12 +60,12 @@ function getHeader(init: RequestInit | undefined, name: string): string | undefi
 }
 
 beforeEach(() => {
-  configureClient({ baseUrl: 'http://api.test' });
+  configureClient({ baseUrl: "http://api.test" });
   configureAuth({ getToken: () => null, getOrgId: () => null });
   _resetAuthRecovery();
   _resetAuthWarnings();
   _resetArcFetchClient();
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -76,51 +76,51 @@ afterEach(() => {
 // arcFetch — header injection
 // ============================================================================
 
-describe('arcFetch — auto-injected headers', () => {
-  it('injects Authorization + x-organization-id when both configured', async () => {
-    configureAuth({ getToken: () => 'tok-123', getOrgId: () => 'org-abc' });
+describe("arcFetch — auto-injected headers", () => {
+  it("injects Authorization + x-organization-id when both configured", async () => {
+    configureAuth({ getToken: () => "tok-123", getOrgId: () => "org-abc" });
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items');
+    await arcFetch("/api/items");
 
-    expect(getHeader(calls[0]!.init, 'Authorization')).toBe('Bearer tok-123');
-    expect(getHeader(calls[0]!.init, 'x-organization-id')).toBe('org-abc');
+    expect(getHeader(calls[0]!.init, "Authorization")).toBe("Bearer tok-123");
+    expect(getHeader(calls[0]!.init, "x-organization-id")).toBe("org-abc");
   });
 
-  it('omits Authorization when no token (public endpoint)', async () => {
+  it("omits Authorization when no token (public endpoint)", async () => {
     configureAuth({ getToken: () => null, getOrgId: () => null });
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/public');
+    await arcFetch("/api/public");
 
-    expect(getHeader(calls[0]!.init, 'Authorization')).toBeUndefined();
-    expect(getHeader(calls[0]!.init, 'x-organization-id')).toBeUndefined();
+    expect(getHeader(calls[0]!.init, "Authorization")).toBeUndefined();
+    expect(getHeader(calls[0]!.init, "x-organization-id")).toBeUndefined();
   });
 
-  it('omits Authorization in cookie mode (cookies carry auth, not headers)', async () => {
-    configureClient({ baseUrl: 'http://api.test', authMode: 'cookie' });
-    configureAuth({ getToken: () => 'unused', getOrgId: () => null });
+  it("omits Authorization in cookie mode (cookies carry auth, not headers)", async () => {
+    configureClient({ baseUrl: "http://api.test", authMode: "cookie" });
+    configureAuth({ getToken: () => "unused", getOrgId: () => null });
     _resetArcFetchClient();
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items');
+    await arcFetch("/api/items");
 
-    expect(getHeader(calls[0]!.init, 'Authorization')).toBeUndefined();
-    expect(calls[0]!.init?.credentials).toBe('include');
+    expect(getHeader(calls[0]!.init, "Authorization")).toBeUndefined();
+    expect(calls[0]!.init?.credentials).toBe("include");
   });
 
   it('uses custom auth header when authMode: "header"', async () => {
-    configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
-    configureAuth({ getToken: () => 'srv-key', headerName: 'x-api-key' });
+    configureClient({ baseUrl: "http://api.test", authMode: "header" });
+    configureAuth({ getToken: () => "srv-key", headerName: "x-api-key" });
     _resetArcFetchClient();
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items');
+    await arcFetch("/api/items");
 
-    expect(getHeader(calls[0]!.init, 'x-api-key')).toBe('srv-key');
+    expect(getHeader(calls[0]!.init, "x-api-key")).toBe("srv-key");
     // Should NOT also set Authorization — header-mode tokens go in the
     // custom header only, otherwise the backend sees both.
-    expect(getHeader(calls[0]!.init, 'Authorization')).toBeUndefined();
+    expect(getHeader(calls[0]!.init, "Authorization")).toBeUndefined();
   });
 });
 
@@ -128,77 +128,77 @@ describe('arcFetch — auto-injected headers', () => {
 // Body handling — JSON sniffing
 // ============================================================================
 
-describe('arcFetch — body type sniffing', () => {
-  it('plain object → JSON.stringify + Content-Type: application/json', async () => {
+describe("arcFetch — body type sniffing", () => {
+  it("plain object → JSON.stringify + Content-Type: application/json", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items', { method: 'POST', body: { name: 'widget' } });
+    await arcFetch("/api/items", { method: "POST", body: { name: "widget" } });
 
-    expect(getHeader(calls[0]!.init, 'Content-Type')).toBe('application/json');
-    expect(calls[0]!.init?.body).toBe(JSON.stringify({ name: 'widget' }));
+    expect(getHeader(calls[0]!.init, "Content-Type")).toBe("application/json");
+    expect(calls[0]!.init?.body).toBe(JSON.stringify({ name: "widget" }));
   });
 
-  it('array → JSON.stringify + application/json', async () => {
+  it("array → JSON.stringify + application/json", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/bulk', { method: 'POST', body: [{ a: 1 }, { b: 2 }] });
+    await arcFetch("/api/bulk", { method: "POST", body: [{ a: 1 }, { b: 2 }] });
 
-    expect(getHeader(calls[0]!.init, 'Content-Type')).toBe('application/json');
+    expect(getHeader(calls[0]!.init, "Content-Type")).toBe("application/json");
     expect(calls[0]!.init?.body).toBe(JSON.stringify([{ a: 1 }, { b: 2 }]));
   });
 
-  it('FormData → passes through, NO Content-Type forced (browser sets boundary)', async () => {
+  it("FormData → passes through, NO Content-Type forced (browser sets boundary)", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
     const fd = new FormData();
-    fd.append('file', new Blob(['hello'], { type: 'text/plain' }), 'hi.txt');
+    fd.append("file", new Blob(["hello"], { type: "text/plain" }), "hi.txt");
 
-    await arcFetch('/api/upload', { method: 'POST', body: fd });
+    await arcFetch("/api/upload", { method: "POST", body: fd });
 
     // FormData → arc-next must NOT set Content-Type; the browser computes
     // multipart boundary at send time. Setting it strips the boundary.
-    expect(getHeader(calls[0]!.init, 'Content-Type')).toBeUndefined();
+    expect(getHeader(calls[0]!.init, "Content-Type")).toBeUndefined();
     expect(calls[0]!.init?.body).toBe(fd);
   });
 
-  it('Blob → passes through, NO JSON Content-Type override', async () => {
+  it("Blob → passes through, NO JSON Content-Type override", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
-    const blob = new Blob(['hello'], { type: 'text/plain' });
+    const blob = new Blob(["hello"], { type: "text/plain" });
 
-    await arcFetch('/api/raw', { method: 'POST', body: blob });
+    await arcFetch("/api/raw", { method: "POST", body: blob });
 
-    expect(getHeader(calls[0]!.init, 'Content-Type')).toBeUndefined();
+    expect(getHeader(calls[0]!.init, "Content-Type")).toBeUndefined();
     expect(calls[0]!.init?.body).toBe(blob);
   });
 
-  it('URLSearchParams → passes through (form-urlencoded)', async () => {
+  it("URLSearchParams → passes through (form-urlencoded)", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
-    const params = new URLSearchParams({ a: '1', b: '2' });
+    const params = new URLSearchParams({ a: "1", b: "2" });
 
-    await arcFetch('/api/form', { method: 'POST', body: params });
+    await arcFetch("/api/form", { method: "POST", body: params });
 
-    expect(getHeader(calls[0]!.init, 'Content-Type')).toBeUndefined();
+    expect(getHeader(calls[0]!.init, "Content-Type")).toBeUndefined();
     expect(calls[0]!.init?.body).toBe(params);
   });
 
-  it('string body → passes through (caller controls Content-Type)', async () => {
+  it("string body → passes through (caller controls Content-Type)", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/raw', {
-      method: 'POST',
-      body: '<xml/>',
-      headers: { 'Content-Type': 'application/xml' },
+    await arcFetch("/api/raw", {
+      method: "POST",
+      body: "<xml/>",
+      headers: { "Content-Type": "application/xml" },
     });
 
-    expect(getHeader(calls[0]!.init, 'Content-Type')).toBe('application/xml');
-    expect(calls[0]!.init?.body).toBe('<xml/>');
+    expect(getHeader(calls[0]!.init, "Content-Type")).toBe("application/xml");
+    expect(calls[0]!.init?.body).toBe("<xml/>");
   });
 
-  it('null / undefined body → no body sent, no Content-Type', async () => {
+  it("null / undefined body → no body sent, no Content-Type", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items'); // default method GET, no body
+    await arcFetch("/api/items"); // default method GET, no body
 
-    expect(getHeader(calls[0]!.init, 'Content-Type')).toBeUndefined();
+    expect(getHeader(calls[0]!.init, "Content-Type")).toBeUndefined();
     expect(calls[0]!.init?.body).toBeUndefined();
   });
 });
@@ -207,49 +207,47 @@ describe('arcFetch — body type sniffing', () => {
 // Response handling
 // ============================================================================
 
-describe('arcFetch — response parsing', () => {
-  it('2xx JSON → returns parsed body', async () => {
-    mockFetchSequence([json({ id: 1, name: 'widget' })]);
+describe("arcFetch — response parsing", () => {
+  it("2xx JSON → returns parsed body", async () => {
+    mockFetchSequence([json({ id: 1, name: "widget" })]);
 
-    const result = await arcFetch<{ id: number; name: string }>('/api/items/1');
+    const result = await arcFetch<{ id: number; name: string }>("/api/items/1");
 
-    expect(result).toEqual({ id: 1, name: 'widget' });
+    expect(result).toEqual({ id: 1, name: "widget" });
   });
 
-  it('4xx → throws ArcApiError with parsed body, status, endpoint, method', async () => {
-    mockFetchSequence([
-      json({ code: 'arc.not_found', message: 'No such widget' }, 404),
-    ]);
+  it("4xx → throws ArcApiError with parsed body, status, endpoint, method", async () => {
+    mockFetchSequence([json({ code: "arc.not_found", message: "No such widget" }, 404)]);
 
     try {
-      await arcFetch('/api/items/missing');
-      expect.fail('should have thrown');
+      await arcFetch("/api/items/missing");
+      expect.fail("should have thrown");
     } catch (err) {
       expect(isArcApiError(err)).toBe(true);
       if (isArcApiError(err)) {
         expect(err.status).toBe(404);
-        expect(err.code).toBe('arc.not_found');
-        expect(err.endpoint).toBe('/api/items/missing');
-        expect(err.method).toBe('GET');
+        expect(err.code).toBe("arc.not_found");
+        expect(err.endpoint).toBe("/api/items/missing");
+        expect(err.method).toBe("GET");
       }
     }
   });
 
-  it('5xx with non-JSON body → captures rawBody', async () => {
-    const htmlError = new Response('<html><body>502 Bad Gateway</body></html>', {
+  it("5xx with non-JSON body → captures rawBody", async () => {
+    const htmlError = new Response("<html><body>502 Bad Gateway</body></html>", {
       status: 502,
-      headers: { 'Content-Type': 'text/html' },
+      headers: { "Content-Type": "text/html" },
     });
     mockFetchSequence([htmlError]);
 
     try {
-      await arcFetch('/api/items');
-      expect.fail('should have thrown');
+      await arcFetch("/api/items");
+      expect.fail("should have thrown");
     } catch (err) {
       expect(isArcApiError(err)).toBe(true);
       if (isArcApiError(err)) {
         expect(err.status).toBe(502);
-        expect((err.json as { rawBody?: string }).rawBody).toContain('502 Bad Gateway');
+        expect((err.json as { rawBody?: string }).rawBody).toContain("502 Bad Gateway");
       }
     }
   });
@@ -259,46 +257,46 @@ describe('arcFetch — response parsing', () => {
 // Protected headers
 // ============================================================================
 
-describe('arcFetch — protected headers (caller can never override auth)', () => {
+describe("arcFetch — protected headers (caller can never override auth)", () => {
   it("user-passed `Authorization` is dropped — arc-injected wins", async () => {
-    configureAuth({ getToken: () => 'arc-token', getOrgId: () => null });
+    configureAuth({ getToken: () => "arc-token", getOrgId: () => null });
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items', {
-      headers: { Authorization: 'Bearer attacker-token', 'X-Custom': 'allowed' },
+    await arcFetch("/api/items", {
+      headers: { Authorization: "Bearer attacker-token", "X-Custom": "allowed" },
     });
 
-    expect(getHeader(calls[0]!.init, 'Authorization')).toBe('Bearer arc-token');
-    expect(getHeader(calls[0]!.init, 'X-Custom')).toBe('allowed'); // non-protected pass through
+    expect(getHeader(calls[0]!.init, "Authorization")).toBe("Bearer arc-token");
+    expect(getHeader(calls[0]!.init, "X-Custom")).toBe("allowed"); // non-protected pass through
   });
 
-  it('user-passed `authorization` (lowercase) is dropped — case-insensitive protection', async () => {
-    configureAuth({ getToken: () => 'arc-token', getOrgId: () => null });
+  it("user-passed `authorization` (lowercase) is dropped — case-insensitive protection", async () => {
+    configureAuth({ getToken: () => "arc-token", getOrgId: () => null });
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items', { headers: { authorization: 'Bearer ATTACK' } });
+    await arcFetch("/api/items", { headers: { authorization: "Bearer ATTACK" } });
 
-    expect(getHeader(calls[0]!.init, 'Authorization')).toBe('Bearer arc-token');
+    expect(getHeader(calls[0]!.init, "Authorization")).toBe("Bearer arc-token");
   });
 
-  it('user-passed `x-organization-id` is dropped — single source of truth is configureAuth', async () => {
-    configureAuth({ getToken: () => 'tok', getOrgId: () => 'real-org' });
+  it("user-passed `x-organization-id` is dropped — single source of truth is configureAuth", async () => {
+    configureAuth({ getToken: () => "tok", getOrgId: () => "real-org" });
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items', { headers: { 'x-organization-id': 'attacker-org' } });
+    await arcFetch("/api/items", { headers: { "x-organization-id": "attacker-org" } });
 
-    expect(getHeader(calls[0]!.init, 'x-organization-id')).toBe('real-org');
+    expect(getHeader(calls[0]!.init, "x-organization-id")).toBe("real-org");
   });
 
-  it('user-passed `x-api-key` (when authMode: header) is dropped', async () => {
-    configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
-    configureAuth({ getToken: () => 'real-key', headerName: 'x-api-key' });
+  it("user-passed `x-api-key` (when authMode: header) is dropped", async () => {
+    configureClient({ baseUrl: "http://api.test", authMode: "header" });
+    configureAuth({ getToken: () => "real-key", headerName: "x-api-key" });
     _resetArcFetchClient();
     const { calls } = mockFetchSequence([json({ ok: true })]);
 
-    await arcFetch('/api/items', { headers: { 'x-api-key': 'attacker-key' } });
+    await arcFetch("/api/items", { headers: { "x-api-key": "attacker-key" } });
 
-    expect(getHeader(calls[0]!.init, 'x-api-key')).toBe('real-key');
+    expect(getHeader(calls[0]!.init, "x-api-key")).toBe("real-key");
   });
 });
 
@@ -306,41 +304,41 @@ describe('arcFetch — protected headers (caller can never override auth)', () =
 // Method shorthands
 // ============================================================================
 
-describe('arc.{get,post,patch,put,delete} — method shorthands', () => {
-  it('arc.get → method: GET, no body', async () => {
+describe("arc.{get,post,patch,put,delete} — method shorthands", () => {
+  it("arc.get → method: GET, no body", async () => {
     const { calls } = mockFetchSequence([json({ items: [] })]);
 
-    await arc.get<{ items: unknown[] }>('/api/items');
+    await arc.get<{ items: unknown[] }>("/api/items");
 
-    expect(calls[0]!.init?.method).toBe('GET');
+    expect(calls[0]!.init?.method).toBe("GET");
     expect(calls[0]!.init?.body).toBeUndefined();
   });
 
-  it('arc.post → method: POST, body as 2nd positional arg', async () => {
-    const { calls } = mockFetchSequence([json({ id: 'new' })]);
+  it("arc.post → method: POST, body as 2nd positional arg", async () => {
+    const { calls } = mockFetchSequence([json({ id: "new" })]);
 
-    await arc.post<{ id: string }>('/api/items', { name: 'widget' });
+    await arc.post<{ id: string }>("/api/items", { name: "widget" });
 
-    expect(calls[0]!.init?.method).toBe('POST');
-    expect(calls[0]!.init?.body).toBe(JSON.stringify({ name: 'widget' }));
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(calls[0]!.init?.body).toBe(JSON.stringify({ name: "widget" }));
   });
 
-  it('arc.patch → method: PATCH', async () => {
+  it("arc.patch → method: PATCH", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
-    await arc.patch('/api/items/1', { name: 'renamed' });
-    expect(calls[0]!.init?.method).toBe('PATCH');
+    await arc.patch("/api/items/1", { name: "renamed" });
+    expect(calls[0]!.init?.method).toBe("PATCH");
   });
 
-  it('arc.put → method: PUT', async () => {
+  it("arc.put → method: PUT", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
-    await arc.put('/api/items/1', { name: 'replaced' });
-    expect(calls[0]!.init?.method).toBe('PUT');
+    await arc.put("/api/items/1", { name: "replaced" });
+    expect(calls[0]!.init?.method).toBe("PUT");
   });
 
-  it('arc.delete → method: DELETE, no body slot', async () => {
+  it("arc.delete → method: DELETE, no body slot", async () => {
     const { calls } = mockFetchSequence([json({ ok: true })]);
-    await arc.delete('/api/items/1');
-    expect(calls[0]!.init?.method).toBe('DELETE');
+    await arc.delete("/api/items/1");
+    expect(calls[0]!.init?.method).toBe("DELETE");
     expect(calls[0]!.init?.body).toBeUndefined();
   });
 });
@@ -349,35 +347,35 @@ describe('arc.{get,post,patch,put,delete} — method shorthands', () => {
 // Composition with onAuthError
 // ============================================================================
 
-describe('arcFetch — composes with onAuthError refresh loop', () => {
-  it('401 → handler refreshes → retry succeeds', async () => {
-    let cachedToken = 'stale';
+describe("arcFetch — composes with onAuthError refresh loop", () => {
+  it("401 → handler refreshes → retry succeeds", async () => {
+    let cachedToken = "stale";
     configureAuth({
       getToken: () => cachedToken,
       onAuthError: createAuthRefreshHandler({
         refresh: async () => {
-          cachedToken = 'fresh';
-          return 'fresh';
+          cachedToken = "fresh";
+          return "fresh";
         },
       }),
     });
     _resetArcFetchClient();
     const { calls } = mockFetchSequence([json({}, 401), json({ ok: true })]);
 
-    const result = await arcFetch('/api/items');
+    const result = await arcFetch("/api/items");
 
     expect(result).toEqual({ ok: true });
     expect(calls).toHaveLength(2);
-    expect(getHeader(calls[0]!.init, 'Authorization')).toBe('Bearer stale');
-    expect(getHeader(calls[1]!.init, 'Authorization')).toBe('Bearer fresh');
+    expect(getHeader(calls[0]!.init, "Authorization")).toBe("Bearer stale");
+    expect(getHeader(calls[1]!.init, "Authorization")).toBe("Bearer fresh");
   });
 
-  it('10 concurrent arcFetch 401s collapse to ONE refresh (shared dedup with all other transports)', async () => {
-    let cachedToken = 'stale';
+  it("10 concurrent arcFetch 401s collapse to ONE refresh (shared dedup with all other transports)", async () => {
+    let cachedToken = "stale";
     const refreshSpy = vi.fn(async () => {
       await new Promise((r) => setTimeout(r, 20));
-      cachedToken = 'fresh';
-      return 'fresh';
+      cachedToken = "fresh";
+      return "fresh";
     });
     configureAuth({
       getToken: () => cachedToken,
@@ -403,43 +401,43 @@ describe('arcFetch — composes with onAuthError refresh loop', () => {
 // arcAuthHeaders — escape hatch
 // ============================================================================
 
-describe('arcAuthHeaders — escape hatch for full Response control', () => {
-  it('returns Authorization + x-organization-id matching what arcFetch would send', async () => {
-    configureAuth({ getToken: () => 'tok-x', getOrgId: () => 'org-y' });
+describe("arcAuthHeaders — escape hatch for full Response control", () => {
+  it("returns Authorization + x-organization-id matching what arcFetch would send", async () => {
+    configureAuth({ getToken: () => "tok-x", getOrgId: () => "org-y" });
 
     const headers = arcAuthHeaders();
 
     expect(headers).toEqual({
-      Authorization: 'Bearer tok-x',
-      'x-organization-id': 'org-y',
+      Authorization: "Bearer tok-x",
+      "x-organization-id": "org-y",
     });
   });
 
-  it('uses custom header name in authMode: header', async () => {
-    configureClient({ baseUrl: 'http://api.test', authMode: 'header' });
-    configureAuth({ getToken: () => 'key-z', headerName: 'x-api-key' });
+  it("uses custom header name in authMode: header", async () => {
+    configureClient({ baseUrl: "http://api.test", authMode: "header" });
+    configureAuth({ getToken: () => "key-z", headerName: "x-api-key" });
 
     const headers = arcAuthHeaders();
 
-    expect(headers).toEqual({ 'x-api-key': 'key-z' });
+    expect(headers).toEqual({ "x-api-key": "key-z" });
   });
 
-  it('omits Authorization in cookie mode', () => {
-    configureClient({ baseUrl: 'http://api.test', authMode: 'cookie' });
-    configureAuth({ getToken: () => 'unused', getOrgId: () => 'org-y' });
+  it("omits Authorization in cookie mode", () => {
+    configureClient({ baseUrl: "http://api.test", authMode: "cookie" });
+    configureAuth({ getToken: () => "unused", getOrgId: () => "org-y" });
 
     const headers = arcAuthHeaders();
 
-    expect(headers).toEqual({ 'x-organization-id': 'org-y' });
+    expect(headers).toEqual({ "x-organization-id": "org-y" });
   });
 
-  it('includes x-internal-api-key when configureClient sets it', () => {
-    configureClient({ baseUrl: 'http://api.test', internalApiKey: 'srv-key' });
-    configureAuth({ getToken: () => 'tok', getOrgId: () => null });
+  it("includes x-internal-api-key when configureClient sets it", () => {
+    configureClient({ baseUrl: "http://api.test", internalApiKey: "srv-key" });
+    configureAuth({ getToken: () => "tok", getOrgId: () => null });
 
     const headers = arcAuthHeaders();
 
-    expect(headers['x-internal-api-key']).toBe('srv-key');
-    expect(headers.Authorization).toBe('Bearer tok');
+    expect(headers["x-internal-api-key"]).toBe("srv-key");
+    expect(headers.Authorization).toBe("Bearer tok");
   });
 });

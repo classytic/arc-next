@@ -1,9 +1,12 @@
 import type {
   AggregatePaginationResult,
+  SortDirection as CoreSortDirection,
   KeysetPaginationResult,
   OffsetPaginationResult,
   PaginatedResult,
-} from '@classytic/repo-core/pagination';
+} from "@classytic/repo-core/pagination";
+import type { ParsedPopulate } from "@classytic/repo-core/query-parser";
+import { STANDARD_RESERVED_PARAMS } from "@classytic/repo-core/query-parser";
 import type {
   AggResult,
   AggRow,
@@ -11,19 +14,23 @@ import type {
   DeleteManyResult,
   DeleteResult,
   UpdateManyResult,
-} from '@classytic/repo-core/repository';
-import { handleApiRequest, createQueryString } from './client.js';
-import type { ApiRequestOptions, ArcClient, NextFetchOptions } from './client.js';
+} from "@classytic/repo-core/repository";
+import type { ApiRequestOptions, ArcClient, NextFetchOptions } from "./client.js";
+import { createQueryString, handleApiRequest } from "./client.js";
 
 // ============================================================================
 // Populate Types
 // ============================================================================
 
-export interface PopulateOption {
-  path: string;
-  select?: string;
-  match?: Record<string, unknown>;
-}
+/**
+ * URL-emittable subset of repo-core's canonical {@link ParsedPopulate} —
+ * the exact three fields `populate[path][select]` / `populate[path][match]`
+ * bracket emission supports. Derived (not re-declared) so a canonical field
+ * rename breaks HERE at compile time instead of silently drifting.
+ * `options` / nested `populate` are parse-side-only in repo-core and have
+ * no URL grammar, so they're intentionally absent.
+ */
+export type PopulateOption = Pick<ParsedPopulate, "path" | "select" | "match">;
 
 // ============================================================================
 // Response Types
@@ -65,7 +72,14 @@ export type {
 // Request Types
 // ============================================================================
 
-export type SortDirection = 1 | -1 | 'asc' | 'desc';
+/**
+ * Canonical repo-core sort direction (`1 | -1`) plus the URL-ergonomic
+ * string forms. The numeric core comes from `@classytic/repo-core/pagination`
+ * so the wire vocabulary can't drift; `'asc' | 'desc'` are an SDK-side
+ * convenience serialized to the same URL grammar.
+ */
+export type SortDirection = CoreSortDirection | "asc" | "desc";
+/** Sort spec: record form (repo-core `SortSpec` widened to string directions) or the raw URL string. */
 export type SortSpec = Record<string, SortDirection> | string;
 
 // Re-export the canonical bracket operator union from `@classytic/repo-core/query-parser`
@@ -73,8 +87,9 @@ export type SortSpec = Record<string, SortDirection> | string;
 // parser accepts. Adding a new bracket operator now requires a repo-core
 // release — prevents silent grammar drift between the SDK encoder and the
 // kit decoders (mongokit's QueryParser, sqlitekit's parse, etc.).
-export type { BracketOperator } from '@classytic/repo-core/query-parser';
-import type { BracketOperator } from '@classytic/repo-core/query-parser';
+export type { BracketOperator } from "@classytic/repo-core/query-parser";
+
+import type { BracketOperator } from "@classytic/repo-core/query-parser";
 
 /**
  * Filter operators supported by arc-next URL emission.
@@ -94,37 +109,59 @@ import type { BracketOperator } from '@classytic/repo-core/query-parser';
 export type FilterOperator =
   | BracketOperator
   // mongokit array/BSON helpers
-  | 'size'
-  | 'type'
+  | "size"
+  | "type"
   // Geo — coordinate-list operators. mongokit native, sqlitekit-spatialite friendly.
   // `near` / `nearSphere`: `lng,lat[,maxDistanceMeters]` (sort by distance).
   // `geoWithin`: `minLng,minLat,maxLng,maxLat` (bounding box).
   // `withinRadius`: `lng,lat,radiusMeters` (count-compatible $centerSphere).
-  | 'near'
-  | 'nearSphere'
-  | 'geoWithin'
-  | 'withinRadius'
+  | "near"
+  | "nearSphere"
+  | "geoWithin"
+  | "withinRadius"
   // Domain extensions / future operators.
   | (string & {});
 
+// Drift tripwire: the resource-dispatch verbs this SDK emits (`count()`,
+// `exists()`, `distinct()`) MUST be reserved by repo-core's query parser —
+// otherwise the server would treat them as field filters. Locked against the
+// imported canonical set so a repo-core rename fails arc-next's test suite
+// instead of silently corrupting queries.
+for (const verb of ["_count", "_exists", "_distinct"]) {
+  if (!STANDARD_RESERVED_PARAMS.has(verb)) {
+    throw new Error(
+      `[arc-next] dispatch verb '${verb}' is not in repo-core STANDARD_RESERVED_PARAMS`,
+    );
+  }
+}
 
 export interface QueryParams {
   page?: number;
   limit?: number;
+  /** Keyset cursor — the CANONICAL wire param (repo-core `STANDARD_RESERVED_PARAMS`). */
   after?: string;
+  /**
+   * Alias for {@link QueryParams.after}. The server only knows `after`;
+   * `prepareParams` rewrites `cursor` → `after` at emission (explicit
+   * `after` wins when both are set). Prefer `after` in new code.
+   */
   cursor?: string;
   sort?: string;
   select?: string;
   populate?: string | string[];
   populateOptions?: PopulateOption[];
-  lean?: boolean | 'true' | 'false';
+  lean?: boolean | "true" | "false";
   /** Database-agnostic joins. Maps alias → collection or full lookup config. */
-  lookup?: Record<string, string | {
-    from: string;
-    localField: string;
-    foreignField: string;
-    select?: string;
-  }>;
+  lookup?: Record<
+    string,
+    | string
+    | {
+        from: string;
+        localField: string;
+        foreignField: string;
+        select?: string;
+      }
+  >;
   [key: string]: unknown;
 }
 
@@ -141,7 +178,7 @@ export interface RequestOptions {
    */
   next?: NextFetchOptions;
   headerOptions?: Record<string, string>;
-  responseType?: 'json' | 'blob' | 'text';
+  responseType?: "json" | "blob" | "text";
   signal?: AbortSignal;
 }
 
@@ -155,7 +192,7 @@ export interface RequestOptions {
 export interface ScopedArgs {
   token?: string | null;
   organizationId?: string | null;
-  options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+  options?: Omit<RequestOptions, "token" | "organizationId">;
 }
 
 export interface BaseApiConfig {
@@ -175,7 +212,7 @@ export interface BaseApiConfig {
 // ============================================================================
 
 type RequestFn = <T = unknown>(
-  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
   endpoint: string,
   options?: ApiRequestOptions,
 ) => Promise<T>;
@@ -187,10 +224,10 @@ type RequestFn = <T = unknown>(
 export class BaseApi<
   TDoc = Record<string, unknown>,
   TCreate = Partial<TDoc>,
-  TUpdate = Partial<TDoc>
+  TUpdate = Partial<TDoc>,
 > {
   readonly entity: string;
-  readonly config: Required<Omit<BaseApiConfig, 'client'>>;
+  readonly config: Required<Omit<BaseApiConfig, "client">>;
   readonly baseUrl: string;
   private readonly requestFn: RequestFn;
 
@@ -198,13 +235,13 @@ export class BaseApi<
     this.entity = entity;
     this.requestFn = config.client?.request ?? handleApiRequest;
     this.config = {
-      basePath: config.basePath ?? '/api/v1',
+      basePath: config.basePath ?? "/api/v1",
       defaultParams: {
         limit: 10,
         page: 1,
         ...(config.defaultParams || {}),
       },
-      cache: config.cache ?? 'no-store',
+      cache: config.cache ?? "no-store",
       headers: {
         ...(config.headers || {}),
       },
@@ -240,8 +277,8 @@ export class BaseApi<
    * Next.js fetch extensions, so this never assumes a Next host.
    */
   private withCacheDefault(
-    options: Omit<RequestOptions, 'token' | 'organizationId'> = {},
-  ): Omit<RequestOptions, 'token' | 'organizationId'> {
+    options: Omit<RequestOptions, "token" | "organizationId"> = {},
+  ): Omit<RequestOptions, "token" | "organizationId"> {
     if (
       options.cache !== undefined ||
       options.revalidate !== undefined ||
@@ -258,7 +295,15 @@ export class BaseApi<
 
   prepareParams(params: QueryParams = {}): Record<string, unknown> {
     const result: Record<string, unknown> = {};
-    const CRITICAL_FILTERS = ['organizationId', 'ownerId'];
+    const CRITICAL_FILTERS = ["organizationId", "ownerId"];
+
+    // `cursor` is an SDK-side alias — the canonical reserved param is `after`
+    // (repo-core STANDARD_RESERVED_PARAMS). Rewrite before emission so the
+    // server's keyset paginator actually sees it; explicit `after` wins.
+    if (params.cursor !== undefined) {
+      const { cursor, ...rest } = params;
+      params = params.after !== undefined ? rest : { ...rest, after: cursor };
+    }
 
     Object.entries(params).forEach(([key, value]) => {
       if (CRITICAL_FILTERS.includes(key)) {
@@ -266,20 +311,25 @@ export class BaseApi<
         return;
       }
 
-      if (key === 'populateOptions') {
+      if (key === "populateOptions") {
         if (Array.isArray(value) && value.length > 0) {
           result[key] = value;
         }
         return;
       }
 
-      if (key === 'lookup') {
-        if (typeof value === 'object' && value !== null) {
+      if (key === "lookup") {
+        if (typeof value === "object" && value !== null) {
           Object.entries(value as Record<string, unknown>).forEach(([alias, lv]) => {
-            if (typeof lv === 'string') {
+            if (typeof lv === "string") {
               result[`lookup[${alias}]`] = lv;
-            } else if (typeof lv === 'object' && lv !== null) {
-              const cfg = lv as { from: string; localField: string; foreignField: string; select?: string };
+            } else if (typeof lv === "object" && lv !== null) {
+              const cfg = lv as {
+                from: string;
+                localField: string;
+                foreignField: string;
+                select?: string;
+              };
               result[`lookup[${alias}][from]`] = cfg.from;
               result[`lookup[${alias}][localField]`] = cfg.localField;
               result[`lookup[${alias}][foreignField]`] = cfg.foreignField;
@@ -290,9 +340,9 @@ export class BaseApi<
         return;
       }
 
-      if (value !== undefined && value !== '') {
-        if (['page', 'limit'].includes(key)) {
-          result[key] = parseInt(String(value)) || (key === 'page' ? 1 : 10);
+      if (value !== undefined && value !== "") {
+        if (["page", "limit"].includes(key)) {
+          result[key] = parseInt(String(value), 10) || (key === "page" ? 1 : 10);
         } else if (Array.isArray(value)) {
           // Two cases:
           // 1. Key is already operator-keyed (`status[in]`, `location[withinRadius]`,
@@ -302,9 +352,9 @@ export class BaseApi<
           //    URL grammar's default array shorthand).
           const hasOperator = /\[([^\]]+)\]$/.test(key);
           if (hasOperator) {
-            result[key] = value.join(',');
+            result[key] = value.join(",");
           } else if (value.length > 1) {
-            result[`${key}[in]`] = value.join(',');
+            result[`${key}[in]`] = value.join(",");
           } else if (value.length === 1) {
             result[key] = value[0];
           }
@@ -326,7 +376,7 @@ export class BaseApi<
     token?: string | null;
     organizationId?: string | null;
     params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   } = {}): Promise<PaginatedResult<TDoc>> {
     const mergedParams = { ...this.config.defaultParams, ...params };
     const processedParams = this.prepareParams(mergedParams);
@@ -339,7 +389,11 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
+    return this.requestFn(
+      "GET",
+      `${this.baseUrl}?${queryString}`,
+      this.withHeaders(requestOptions),
+    );
   }
 
   /**
@@ -356,10 +410,15 @@ export class BaseApi<
     token?: string | null;
     organizationId?: string | null;
     params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   } = {}): Promise<number> {
-    const res = await this.getAllRaw({ token, organizationId, params: { ...params, _count: true }, options });
-    return extractVerbField<number>(res, 'count');
+    const res = await this.getAllRaw({
+      token,
+      organizationId,
+      params: { ...params, _count: true },
+      options,
+    });
+    return extractVerbField<number>(res, "count");
   }
 
   /** Whether ANY record matches the filters (`?_exists=true`). */
@@ -372,10 +431,15 @@ export class BaseApi<
     token?: string | null;
     organizationId?: string | null;
     params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   } = {}): Promise<boolean> {
-    const res = await this.getAllRaw({ token, organizationId, params: { ...params, _exists: true }, options });
-    return extractVerbField<boolean>(res, 'exists');
+    const res = await this.getAllRaw({
+      token,
+      organizationId,
+      params: { ...params, _exists: true },
+      options,
+    });
+    return extractVerbField<boolean>(res, "exists");
   }
 
   /** Distinct values of a field across matching records (`?_distinct=field`). */
@@ -390,11 +454,16 @@ export class BaseApi<
     organizationId?: string | null;
     field: string;
     params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   }): Promise<TValue[]> {
-    if (!field) throw new Error('field is required');
-    const res = await this.getAllRaw({ token, organizationId, params: { ...params, _distinct: field }, options });
-    return extractVerbField<TValue[]>(res, 'values');
+    if (!field) throw new Error("field is required");
+    const res = await this.getAllRaw({
+      token,
+      organizationId,
+      params: { ...params, _distinct: field },
+      options,
+    });
+    return extractVerbField<TValue[]>(res, "values");
   }
 
   /** Shared raw GET against the list route (dispatch verbs bypass pagination parsing). */
@@ -407,7 +476,7 @@ export class BaseApi<
     token?: string | null;
     organizationId?: string | null;
     params?: QueryParams;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   }): Promise<unknown> {
     const mergedParams = { ...this.config.defaultParams, ...params };
     const processedParams = this.prepareParams(mergedParams);
@@ -415,7 +484,11 @@ export class BaseApi<
     const requestOptions: ApiRequestOptions = { ...this.withCacheDefault(options) };
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
-    return this.requestFn('GET', `${this.baseUrl}?${queryString}`, this.withHeaders(requestOptions));
+    return this.requestFn(
+      "GET",
+      `${this.baseUrl}?${queryString}`,
+      this.withHeaders(requestOptions),
+    );
   }
 
   async getById({
@@ -429,9 +502,9 @@ export class BaseApi<
     organizationId?: string | null;
     id: string;
     params?: { select?: string; populate?: string | string[] };
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   }): Promise<TDoc> {
-    if (!id) throw new Error('ID is required');
+    if (!id) throw new Error("ID is required");
 
     const queryString = this.createQueryString(params);
     const url = queryString ? `${this.baseUrl}/${id}?${queryString}` : `${this.baseUrl}/${id}`;
@@ -443,7 +516,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('GET', url, this.withHeaders(requestOptions));
+    return this.requestFn("GET", url, this.withHeaders(requestOptions));
   }
 
   async create({
@@ -455,7 +528,7 @@ export class BaseApi<
     token?: string | null;
     organizationId?: string | null;
     data: TCreate;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   }): Promise<TDoc> {
     const requestOptions: ApiRequestOptions = {
       body: data,
@@ -465,7 +538,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('POST', this.baseUrl, this.withHeaders(requestOptions));
+    return this.requestFn("POST", this.baseUrl, this.withHeaders(requestOptions));
   }
 
   async update({
@@ -479,9 +552,9 @@ export class BaseApi<
     organizationId?: string | null;
     id: string;
     data: TUpdate;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   }): Promise<TDoc> {
-    if (!id) throw new Error('ID is required');
+    if (!id) throw new Error("ID is required");
 
     const requestOptions: ApiRequestOptions = {
       body: data,
@@ -491,7 +564,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('PATCH', `${this.baseUrl}/${id}`, this.withHeaders(requestOptions));
+    return this.requestFn("PATCH", `${this.baseUrl}/${id}`, this.withHeaders(requestOptions));
   }
 
   async delete({
@@ -503,16 +576,16 @@ export class BaseApi<
     token?: string | null;
     organizationId?: string | null;
     id: string;
-    options?: Omit<RequestOptions, 'token' | 'organizationId'>;
+    options?: Omit<RequestOptions, "token" | "organizationId">;
   }): Promise<DeleteResult> {
-    if (!id) throw new Error('ID is required');
+    if (!id) throw new Error("ID is required");
 
     const requestOptions: ApiRequestOptions = { ...options };
 
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('DELETE', `${this.baseUrl}/${id}`, this.withHeaders(requestOptions));
+    return this.requestFn("DELETE", `${this.baseUrl}/${id}`, this.withHeaders(requestOptions));
   }
 
   async upload({
@@ -540,12 +613,11 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('POST', url, this.withHeaders(requestOptions));
+    return this.requestFn("POST", url, this.withHeaders(requestOptions));
   }
 
-
   async request<TResponse = unknown>(
-    method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+    method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
     endpoint: string,
     {
       token = null,
@@ -556,7 +628,7 @@ export class BaseApi<
     }: ScopedArgs & {
       data?: unknown;
       params?: QueryParams;
-    } = {}
+    } = {},
   ): Promise<TResponse> {
     let url = endpoint;
 
@@ -613,22 +685,28 @@ export class BaseApi<
   async invokeRoute<TResponse = unknown>({
     token = null,
     organizationId = null,
-    method = 'GET',
+    method = "GET",
     path,
     data,
     params,
     options = {},
   }: ScopedArgs & {
-    method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+    method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
     /** Path relative to the resource baseUrl. Leading slash optional. */
     path: string;
     data?: unknown;
     params?: QueryParams;
   }): Promise<TResponse> {
-    if (!path) throw new Error('path is required');
-    const normalized = path.startsWith('/') ? path : `/${path}`;
+    if (!path) throw new Error("path is required");
+    const normalized = path.startsWith("/") ? path : `/${path}`;
     const endpoint = `${this.baseUrl}${normalized}`;
-    return this.request<TResponse>(method, endpoint, { token, organizationId, data, params, options });
+    return this.request<TResponse>(method, endpoint, {
+      token,
+      organizationId,
+      data,
+      params,
+      options,
+    });
   }
 
   // ==========================================================================
@@ -673,13 +751,13 @@ export class BaseApi<
      */
     filter?: Record<string, unknown>;
   }): Promise<AggResult<TRow>> {
-    if (!name) throw new Error('Aggregation name is required');
-    const queryString = filter ? this.createQueryString(filter) : '';
-    const endpoint = `${this.baseUrl}/aggregations/${name}${queryString ? `?${queryString}` : ''}`;
+    if (!name) throw new Error("Aggregation name is required");
+    const queryString = filter ? this.createQueryString(filter) : "";
+    const endpoint = `${this.baseUrl}/aggregations/${name}${queryString ? `?${queryString}` : ""}`;
     const requestOptions: ApiRequestOptions = { ...options };
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
-    return this.requestFn('GET', endpoint, this.withHeaders(requestOptions));
+    return this.requestFn("GET", endpoint, this.withHeaders(requestOptions));
   }
 
   // ==========================================================================
@@ -694,7 +772,10 @@ export class BaseApi<
   // `action` is a common verb on state-machine resources.
   // ==========================================================================
 
-  async dispatchAction<TResult = unknown, TBody extends Record<string, unknown> = Record<string, unknown>>({
+  async dispatchAction<
+    TResult = unknown,
+    TBody extends Record<string, unknown> = Record<string, unknown>,
+  >({
     token = null,
     organizationId = null,
     id,
@@ -706,8 +787,8 @@ export class BaseApi<
     action: string;
     data?: TBody;
   }): Promise<TResult> {
-    if (!id) throw new Error('ID is required');
-    if (!action) throw new Error('Action name is required');
+    if (!id) throw new Error("ID is required");
+    if (!action) throw new Error("Action name is required");
 
     const requestOptions: ApiRequestOptions = {
       body: { action, ...(data ?? {}) },
@@ -716,7 +797,7 @@ export class BaseApi<
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;
 
-    return this.requestFn('POST', `${this.baseUrl}/${id}/action`, this.withHeaders(requestOptions));
+    return this.requestFn("POST", `${this.baseUrl}/${id}/action`, this.withHeaders(requestOptions));
   }
 }
 
@@ -727,7 +808,7 @@ export class BaseApi<
 export function createCrudApi<
   TDoc = Record<string, unknown>,
   TCreate = Partial<TDoc>,
-  TUpdate = Partial<TDoc>
+  TUpdate = Partial<TDoc>,
 >(entity: string, config: BaseApiConfig = {}): BaseApi<TDoc, TCreate, TUpdate> {
   return new BaseApi<TDoc, TCreate, TUpdate>(entity, config);
 }
@@ -767,19 +848,19 @@ export type UpdateOf<A> = A extends BaseApi<any, any, infer U> ? U : never;
 export function isOffsetPagination<T>(
   response: PaginatedResult<T>,
 ): response is OffsetPaginationResult<T> {
-  return 'method' in response && response.method === 'offset';
+  return "method" in response && response.method === "offset";
 }
 
 export function isKeysetPagination<T>(
   response: PaginatedResult<T>,
 ): response is KeysetPaginationResult<T> {
-  return 'method' in response && response.method === 'keyset';
+  return "method" in response && response.method === "keyset";
 }
 
 export function isAggregatePagination<T>(
   response: PaginatedResult<T>,
 ): response is AggregatePaginationResult<T> {
-  return 'method' in response && response.method === 'aggregate';
+  return "method" in response && response.method === "aggregate";
 }
 
 /**

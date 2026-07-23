@@ -8,7 +8,7 @@
 //
 // Anything in this file MUST stay free of React hooks and browser APIs.
 
-import type { QueryKey, QueryClient } from "@tanstack/react-query";
+import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 // ============================================================================
 // Pagination shape
@@ -16,7 +16,7 @@ import type { QueryKey, QueryClient } from "@tanstack/react-query";
 
 export interface PaginationData {
   /** Pagination method detected from response (offset | keyset | aggregate) */
-  method: 'offset' | 'keyset' | 'aggregate' | null;
+  method: "offset" | "keyset" | "aggregate" | null;
   total: number;
   pages: number;
   page: number;
@@ -63,7 +63,7 @@ export const QUERY_CONFIGS = {
  * keeps `{products: [...]}` / `{users: [...]}` working without per-resource
  * configuration.
  */
-const LIST_KEYS = ['data', 'items', 'results'] as const;
+const LIST_KEYS = ["data", "items", "results"] as const;
 
 /**
  * Extract `_id` or `id` from any item. Returns `null` if neither exists.
@@ -85,8 +85,8 @@ export function normalizePagination(data: unknown): PaginationData | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
 
-  const method = (d.method as PaginationData['method']) ?? null;
-  const isKeyset = method === 'keyset' || (d.hasMore != null && d.total == null && d.pages == null);
+  const method = (d.method as PaginationData["method"]) ?? null;
+  const isKeyset = method === "keyset" || (d.hasMore != null && d.total == null && d.pages == null);
 
   const hasTotal = d.total != null || d.totalDocs != null;
   const hasPages = d.pages != null || d.totalPages != null;
@@ -152,13 +152,35 @@ export function updateListCache<T>(listData: unknown, updater: (items: T[]) => T
   if (typeof listData !== "object") return listData;
   const d = listData as Record<string, unknown>;
 
+  // Infinite-query value: `{ pages: unknown[], pageParams: unknown[] }`.
+  // MUST be handled before the any-array fallback below — otherwise `pages`
+  // itself is mistaken for the items array and optimistic items get spliced
+  // BETWEEN pages (cache corruption). Per-item updaters (map / filter /
+  // replace) are applied to every page; length-changing inserts should use
+  // {@link prependToListCache}, which targets the first page only.
+  if (Array.isArray(d.pages) && Array.isArray(d.pageParams)) {
+    let changed = false;
+    const nextPages = (d.pages as unknown[]).map((page) => {
+      const next = updateListCache(page, updater);
+      if (next !== page) changed = true;
+      return next;
+    });
+    return changed ? { ...d, pages: nextPages } : listData;
+  }
+
   let arrayField: string | null = null;
   for (const key of LIST_KEYS) {
-    if (Array.isArray(d[key])) { arrayField = key; break; }
+    if (Array.isArray(d[key])) {
+      arrayField = key;
+      break;
+    }
   }
   if (!arrayField) {
     for (const [key, value] of Object.entries(d)) {
-      if (Array.isArray(value)) { arrayField = key; break; }
+      if (Array.isArray(value)) {
+        arrayField = key;
+        break;
+      }
     }
   }
 
@@ -182,6 +204,57 @@ export function updateListCache<T>(listData: unknown, updater: (items: T[]) => T
   }
 
   return result;
+}
+
+/**
+ * Insert an item at the head of a list cache entry — the optimistic-create
+ * primitive. Unlike {@link updateListCache} with a prepending updater (which,
+ * on an infinite cache, would insert into EVERY page), this targets exactly
+ * one location: the first page of an infinite cache, or the single payload of
+ * a flat list. Totals adjust via `updateListCache`'s existing delta logic.
+ */
+export function prependToListCache(listData: unknown, item: unknown): unknown {
+  if (!listData) return listData;
+  if (
+    typeof listData === "object" &&
+    !Array.isArray(listData) &&
+    Array.isArray((listData as Record<string, unknown>).pages) &&
+    Array.isArray((listData as Record<string, unknown>).pageParams)
+  ) {
+    const d = listData as { pages: unknown[]; pageParams: unknown[] };
+    if (d.pages.length === 0) return listData;
+    const first = updateListCache(d.pages[0], (items: unknown[]) => [item, ...(items || [])]);
+    if (first === d.pages[0]) return listData;
+    return { ...d, pages: [first, ...d.pages.slice(1)] };
+  }
+  return updateListCache(listData, (items: unknown[]) => [item, ...(items || [])]);
+}
+
+/**
+ * Replace an item (matched by id) across a list cache entry — the
+ * temp-ID-reconciliation primitive. After a create succeeds, the optimistic
+ * placeholder (`temp-…` id) is swapped for the server document in place, so
+ * the UI keeps the row (no flicker) while the id becomes real. Works on flat
+ * and infinite shapes via {@link updateListCache}.
+ */
+export function replaceItemInListCache(
+  listData: unknown,
+  matchId: string,
+  replacement: unknown,
+  opts: { idField?: string } = {},
+): unknown {
+  return updateListCache(listData, (items: unknown[]) => {
+    let changed = false;
+    const next = items.map((item) => {
+      const id = opts.idField
+        ? String((item as Record<string, unknown> | null)?.[opts.idField] ?? "") || getItemId(item)
+        : getItemId(item);
+      if (id !== matchId) return item;
+      changed = true;
+      return replacement;
+    });
+    return changed ? next : items;
+  });
 }
 
 // ============================================================================
@@ -290,8 +363,7 @@ export function syncDetailToLists<TItem extends Record<string, unknown>>(
     // Infinite-query value is `{ pages: unknown[], pageParams }`. Walk pages so
     // we don't double-write the wrapper.
     const isInfinite =
-      typeof raw === 'object' && raw !== null &&
-      Array.isArray((raw as { pages?: unknown }).pages);
+      typeof raw === "object" && raw !== null && Array.isArray((raw as { pages?: unknown }).pages);
 
     if (isInfinite) {
       const inf = raw as { pages: unknown[]; pageParams: unknown[] };
@@ -327,7 +399,7 @@ function mergeItemIntoListPage<TItem extends Record<string, unknown>>(
   return updateListCache(page, (items: unknown[]) => {
     let changed = false;
     const next = items.map((listItem) => {
-      if (!listItem || typeof listItem !== 'object') return listItem;
+      if (!listItem || typeof listItem !== "object") return listItem;
       if (resolveId(listItem, idField) !== targetId) return listItem;
       const merged = shallowMergeKept(listItem as Record<string, unknown>, item);
       if (merged !== listItem) changed = true;
@@ -407,12 +479,16 @@ export function createQueryKeys(entityKey: string): QueryKeys {
     details: () => [entityKey, "detail"],
     detail: (id) => [entityKey, "detail", id],
     scopedDetail: (id, organizationId) =>
-      organizationId ? [entityKey, "detail", id, { _org: organizationId }] : [entityKey, "detail", id],
+      organizationId
+        ? [entityKey, "detail", id, { _org: organizationId }]
+        : [entityKey, "detail", id],
     custom: (key, ...args) => [entityKey, key, ...args],
     scopedList: (scope, params) => [entityKey, "list", { _scope: scope, ...(params as object) }],
     aggregations: () => [entityKey, "aggregation"],
     aggregation: (name, filter) =>
-      filter !== undefined ? [entityKey, "aggregation", name, filter] : [entityKey, "aggregation", name],
+      filter !== undefined
+        ? [entityKey, "aggregation", name, filter]
+        : [entityKey, "aggregation", name],
   };
 }
 
@@ -429,11 +505,24 @@ export interface CacheUtils<T> {
   getDetail: (client: QueryClient, id: string) => T | undefined;
   removeDetail: (client: QueryClient, id: string) => void;
   /** Invalidate tenant-scoped detail (prefix-matches parameterized variants within org). */
-  invalidateScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => Promise<void>;
+  invalidateScopedDetail: (
+    client: QueryClient,
+    id: string,
+    organizationId: string | null,
+  ) => Promise<void>;
   /** Set tenant-scoped detail cache. */
-  setScopedDetail: (client: QueryClient, id: string, organizationId: string | null, data: T) => void;
+  setScopedDetail: (
+    client: QueryClient,
+    id: string,
+    organizationId: string | null,
+    data: T,
+  ) => void;
   /** Get tenant-scoped detail from cache. */
-  getScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => T | undefined;
+  getScopedDetail: (
+    client: QueryClient,
+    id: string,
+    organizationId: string | null,
+  ) => T | undefined;
   /** Remove tenant-scoped detail from cache. */
   removeScopedDetail: (client: QueryClient, id: string, organizationId: string | null) => void;
   /**

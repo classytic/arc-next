@@ -12,39 +12,45 @@
  * isn't re-mocked from scratch.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  _resetAuthRecovery,
+  _resetAuthWarnings,
   configureAuth,
   configureClient,
   createAuthRefreshHandler,
   isArcApiError,
-  _resetAuthRecovery,
-  _resetAuthWarnings,
-} from '../src/client.js';
-import { uploadWithProgress } from '../src/upload.js';
+} from "../src/client.js";
+import { uploadWithProgress } from "../src/upload.js";
 
 // ── MockXHR — copy of upload.test.tsx's mock, kept local so test files
 // stay independent. Mirrors the surface uploadWithProgress touches.
-interface MockXHRUpload { onprogress: ((this: MockXHRUpload, ev: ProgressEvent) => unknown) | null; }
+interface MockXHRUpload {
+  onprogress: ((this: MockXHRUpload, ev: ProgressEvent) => unknown) | null;
+}
 class MockXHR {
   static instances: MockXHR[] = [];
-  static reset(): void { MockXHR.instances = []; }
-  static all(): MockXHR[] { return MockXHR.instances; }
+  static reset(): void {
+    MockXHR.instances = [];
+  }
+  static all(): MockXHR[] {
+    return MockXHR.instances;
+  }
   static latest(): MockXHR {
     const x = MockXHR.instances[MockXHR.instances.length - 1];
-    if (!x) throw new Error('no MockXHR opened');
+    if (!x) throw new Error("no MockXHR opened");
     return x;
   }
 
-  method = '';
-  url = '';
+  method = "";
+  url = "";
   withCredentials = false;
-  responseType: '' | 'blob' | 'text' = '';
+  responseType: "" | "blob" | "text" = "";
   readyState = 0;
   status = 0;
-  statusText = '';
-  responseText = '';
+  statusText = "";
+  responseText = "";
   readonly responseHeaders = new Map<string, string>();
   readonly requestHeaders = new Map<string, string>();
   onload: ((this: MockXHR) => void) | null = null;
@@ -64,14 +70,18 @@ class MockXHR {
   setRequestHeader(name: string, value: string): void {
     this.requestHeaders.set(name, value);
   }
-  send(_body: unknown): void { this.readyState = 2; }
-  abort(): void { /* no-op for these tests */ }
+  send(_body: unknown): void {
+    this.readyState = 2;
+  }
+  abort(): void {
+    /* no-op for these tests */
+  }
 
   emitLoad(opts: { status: number; body?: unknown; statusText?: string }): void {
     this.readyState = 4;
     this.status = opts.status;
-    this.statusText = opts.statusText ?? '';
-    this.responseText = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body ?? {});
+    this.statusText = opts.statusText ?? "";
+    this.responseText = typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body ?? {});
     this.onload?.call(this);
   }
 }
@@ -97,11 +107,11 @@ function makeFormData(fields: Record<string, string> = {}): FormData {
 
 beforeEach(() => {
   installMockXHR();
-  configureClient({ baseUrl: 'http://api.test' });
+  configureClient({ baseUrl: "http://api.test" });
   configureAuth({ getToken: () => null, getOrgId: () => null });
   _resetAuthRecovery();
   _resetAuthWarnings();
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -109,14 +119,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('uploadWithProgress — auth recovery via onAuthError', () => {
-  it('200 → handler not called (fast path)', async () => {
+describe("uploadWithProgress — auth recovery via onAuthError", () => {
+  it("200 → handler not called (fast path)", async () => {
     const onAuthError = vi.fn();
-    configureAuth({ getToken: () => 'tok', onAuthError });
+    configureAuth({ getToken: () => "tok", onAuthError });
 
     const promise = uploadWithProgress({
-      url: '/upload',
-      formData: makeFormData({ file: 'data' }),
+      url: "/upload",
+      formData: makeFormData({ file: "data" }),
     });
     // Wait a tick for the XHR to be set up.
     await Promise.resolve();
@@ -127,32 +137,32 @@ describe('uploadWithProgress — auth recovery via onAuthError', () => {
     expect(MockXHR.all()).toHaveLength(1);
   });
 
-  it('401 → handler refreshes → upload re-issued with new token, second response delivered', async () => {
-    let cached = 'stale-token';
+  it("401 → handler refreshes → upload re-issued with new token, second response delivered", async () => {
+    let cached = "stale-token";
     configureAuth({
       getToken: () => cached,
       onAuthError: createAuthRefreshHandler({
         refresh: async () => {
-          cached = 'fresh-token';
-          return 'fresh-token';
+          cached = "fresh-token";
+          return "fresh-token";
         },
       }),
     });
 
     const promise = uploadWithProgress({
-      url: '/upload',
-      formData: makeFormData({ file: 'data' }),
+      url: "/upload",
+      formData: makeFormData({ file: "data" }),
     });
 
     // First XHR — 401.
     await Promise.resolve();
     expect(MockXHR.all()).toHaveLength(1);
-    expect(MockXHR.all()[0]!.requestHeaders.get('Authorization')).toBe('Bearer stale-token');
-    MockXHR.latest().emitLoad({ status: 401, body: { error: 'expired' } });
+    expect(MockXHR.all()[0]!.requestHeaders.get("Authorization")).toBe("Bearer stale-token");
+    MockXHR.latest().emitLoad({ status: 401, body: { error: "expired" } });
 
     // The refresh cycle is async; wait for the second XHR to spin up.
     await vi.waitFor(() => expect(MockXHR.all()).toHaveLength(2));
-    expect(MockXHR.all()[1]!.requestHeaders.get('Authorization')).toBe('Bearer fresh-token');
+    expect(MockXHR.all()[1]!.requestHeaders.get("Authorization")).toBe("Bearer fresh-token");
     MockXHR.all()[1]!.emitLoad({ status: 200, body: { uploaded: true } });
 
     await expect(promise).resolves.toEqual({ uploaded: true });
@@ -160,31 +170,31 @@ describe('uploadWithProgress — auth recovery via onAuthError', () => {
 
   it("401 + handler returns 'skip' → original ArcApiError surfaces, NO retry", async () => {
     configureAuth({
-      getToken: () => 'tok',
-      onAuthError: async () => 'skip',
+      getToken: () => "tok",
+      onAuthError: async () => "skip",
     });
 
     const promise = uploadWithProgress({
-      url: '/upload',
-      formData: makeFormData({ file: 'data' }),
+      url: "/upload",
+      formData: makeFormData({ file: "data" }),
     });
     await Promise.resolve();
-    MockXHR.latest().emitLoad({ status: 401, body: { error: 'expired' } });
+    MockXHR.latest().emitLoad({ status: 401, body: { error: "expired" } });
 
     await expect(promise).rejects.toSatisfy((err) => isArcApiError(err) && err.status === 401);
     // Only the original attempt — no retry.
     expect(MockXHR.all()).toHaveLength(1);
   });
 
-  it('maxAuthRetries:1 (default) — second 401 surfaces, no infinite loop', async () => {
+  it("maxAuthRetries:1 (default) — second 401 surfaces, no infinite loop", async () => {
     const onAuthError = vi.fn(async ({ setToken }: { setToken: (t: string | null) => void }) => {
-      setToken('next');
-      return 'retry' as const;
+      setToken("next");
+      return "retry" as const;
     });
-    configureAuth({ getToken: () => 'tok', onAuthError });
+    configureAuth({ getToken: () => "tok", onAuthError });
 
     const promise = uploadWithProgress({
-      url: '/upload',
+      url: "/upload",
       formData: makeFormData(),
     });
 
@@ -198,12 +208,12 @@ describe('uploadWithProgress — auth recovery via onAuthError', () => {
     expect(MockXHR.all()).toHaveLength(2);
   });
 
-  it('CRITICAL — 3 concurrent uploads, all 401, collapse to ONE refresh', async () => {
-    let cached = 'stale';
+  it("CRITICAL — 3 concurrent uploads, all 401, collapse to ONE refresh", async () => {
+    let cached = "stale";
     const refreshSpy = vi.fn(async () => {
       await new Promise((r) => setTimeout(r, 20));
-      cached = 'fresh';
-      return 'fresh';
+      cached = "fresh";
+      return "fresh";
     });
     configureAuth({
       getToken: () => cached,
@@ -212,9 +222,9 @@ describe('uploadWithProgress — auth recovery via onAuthError', () => {
 
     // Kick off 3 uploads in parallel.
     const uploads = [
-      uploadWithProgress({ url: '/upload/a', formData: makeFormData({ x: 'a' }) }),
-      uploadWithProgress({ url: '/upload/b', formData: makeFormData({ x: 'b' }) }),
-      uploadWithProgress({ url: '/upload/c', formData: makeFormData({ x: 'c' }) }),
+      uploadWithProgress({ url: "/upload/a", formData: makeFormData({ x: "a" }) }),
+      uploadWithProgress({ url: "/upload/b", formData: makeFormData({ x: "b" }) }),
+      uploadWithProgress({ url: "/upload/c", formData: makeFormData({ x: "c" }) }),
     ];
 
     // All three open immediately.
@@ -238,46 +248,46 @@ describe('uploadWithProgress — auth recovery via onAuthError', () => {
     expect(refreshSpy).toHaveBeenCalledTimes(1);
     // All retries carry the same fresh token.
     for (let i = 3; i < 6; i++) {
-      expect(MockXHR.all()[i]!.requestHeaders.get('Authorization')).toBe('Bearer fresh');
+      expect(MockXHR.all()[i]!.requestHeaders.get("Authorization")).toBe("Bearer fresh");
     }
   });
 
-  it('non-auth 4xx (e.g. 422) → handler NOT called, error surfaces as-is', async () => {
+  it("non-auth 4xx (e.g. 422) → handler NOT called, error surfaces as-is", async () => {
     const onAuthError = vi.fn();
-    configureAuth({ getToken: () => 'tok', onAuthError });
+    configureAuth({ getToken: () => "tok", onAuthError });
 
-    const promise = uploadWithProgress({ url: '/upload', formData: makeFormData() });
+    const promise = uploadWithProgress({ url: "/upload", formData: makeFormData() });
     await Promise.resolve();
-    MockXHR.latest().emitLoad({ status: 422, body: { error: 'too big' } });
+    MockXHR.latest().emitLoad({ status: 422, body: { error: "too big" } });
 
     await expect(promise).rejects.toSatisfy((err) => isArcApiError(err) && err.status === 422);
     expect(onAuthError).not.toHaveBeenCalled();
     expect(MockXHR.all()).toHaveLength(1);
   });
 
-  it('403 + retryOn403:false (default) → handler NOT called', async () => {
+  it("403 + retryOn403:false (default) → handler NOT called", async () => {
     const onAuthError = vi.fn();
-    configureAuth({ getToken: () => 'tok', onAuthError });
+    configureAuth({ getToken: () => "tok", onAuthError });
 
-    const promise = uploadWithProgress({ url: '/upload', formData: makeFormData() });
+    const promise = uploadWithProgress({ url: "/upload", formData: makeFormData() });
     await Promise.resolve();
-    MockXHR.latest().emitLoad({ status: 403, body: { error: 'denied' } });
+    MockXHR.latest().emitLoad({ status: 403, body: { error: "denied" } });
 
     await expect(promise).rejects.toSatisfy((err) => isArcApiError(err) && err.status === 403);
     expect(onAuthError).not.toHaveBeenCalled();
   });
 
-  it('403 + retryOn403:true → handler runs, retry succeeds', async () => {
+  it("403 + retryOn403:true → handler runs, retry succeeds", async () => {
     configureAuth({
-      getToken: () => 'tok',
+      getToken: () => "tok",
       retryOn403: true,
       onAuthError: async ({ setToken }) => {
-        setToken('fresh');
-        return 'retry';
+        setToken("fresh");
+        return "retry";
       },
     });
 
-    const promise = uploadWithProgress({ url: '/upload', formData: makeFormData() });
+    const promise = uploadWithProgress({ url: "/upload", formData: makeFormData() });
     await Promise.resolve();
     MockXHR.latest().emitLoad({ status: 403, body: {} });
     await vi.waitFor(() => expect(MockXHR.all()).toHaveLength(2));

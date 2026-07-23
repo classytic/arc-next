@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * XHR-based upload with real progress events.
  *
@@ -54,18 +56,18 @@
  *    `afterUpload` hooks if a strong use case emerges.
  */
 
+import { type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
-import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import {
+  _getAuthErrorHandler,
+  _isAuthRecoverable,
+  _resolveRefreshedToken,
+  _runAuthRecovery,
   ArcApiError,
+  type ArcClient,
   getAuthMode,
   getBaseUrl,
   getClientAuthContext,
-  _getAuthErrorHandler,
-  _runAuthRecovery,
-  _resolveRefreshedToken,
-  _isAuthRecoverable,
-  type ArcClient,
   type HttpMethod,
   type ToastHandler,
 } from "./client.js";
@@ -144,6 +146,15 @@ export interface UploadWithProgressOptions {
    * an image and returns the resized binary). Default: false (parse JSON).
    */
   responseType?: "json" | "text" | "blob";
+  /**
+   * Upload timeout in ms, assigned to `xhr.timeout` — the whole request
+   * (upload + server processing + response) must finish within this window
+   * or the promise rejects with a `TimeoutError`. Default: disabled (0) —
+   * large files on slow links legitimately take minutes; size it to your
+   * payload ceiling when you enable it. (`ClientConfig.timeoutMs` does NOT
+   * apply to uploads — the fetch pipeline and XHR transport stay isolated.)
+   */
+  timeoutMs?: number;
 }
 
 // ============================================================================
@@ -189,15 +200,18 @@ export async function uploadWithProgress<TResult = unknown>(
 
       const { decision, overrideToken } = await _runAuthRecovery(handler, {
         error: error as ArcApiError,
-        request: { method: (currentOptions.method ?? 'POST') as HttpMethod, endpoint: currentOptions.url },
+        request: {
+          method: (currentOptions.method ?? "POST") as HttpMethod,
+          endpoint: currentOptions.url,
+        },
         attempt: attempt + 1,
       });
-      if (decision !== 'retry') throw error;
+      if (decision !== "retry") throw error;
 
       currentOptions = { ...currentOptions, token: _resolveRefreshedToken(overrideToken) };
     }
   }
-  throw new Error('arc-next: upload auth retry loop terminated without resolution');
+  throw new Error("arc-next: upload auth retry loop terminated without resolution");
 }
 
 /**
@@ -206,9 +220,7 @@ export async function uploadWithProgress<TResult = unknown>(
  * token without duplicating the XHR setup. All auth-recovery semantics live
  * in the outer loop; this function just performs one upload.
  */
-function uploadAttempt<TResult = unknown>(
-  options: UploadWithProgressOptions,
-): Promise<TResult> {
+function uploadAttempt<TResult = unknown>(options: UploadWithProgressOptions): Promise<TResult> {
   const {
     url,
     formData,
@@ -220,6 +232,7 @@ function uploadAttempt<TResult = unknown>(
     elevated,
     idempotencyKey,
     responseType = "json",
+    timeoutMs = 0,
   } = options;
 
   return new Promise<TResult>((resolve, reject) => {
@@ -233,6 +246,11 @@ function uploadAttempt<TResult = unknown>(
     const fullUrl = resolveUrl(url, client);
 
     xhr.open(method, fullUrl, true);
+
+    // Without assigning `xhr.timeout`, the `ontimeout` handler below can
+    // never fire (XHR's default is 0 = no timeout) — a hung upload pends
+    // forever. 0 keeps it disabled; see UploadWithProgressOptions.timeoutMs.
+    if (timeoutMs > 0) xhr.timeout = timeoutMs;
 
     // ── Response parsing ───────────────────────────────────────────────
     // We parse manually so non-JSON error bodies (HTML CDN pages, plain text)
@@ -253,9 +271,7 @@ function uploadAttempt<TResult = unknown>(
     const authCtx = getClientAuthContext(client);
     const token = options.token !== undefined ? options.token : authCtx.token;
     const orgId =
-      options.organizationId !== undefined
-        ? options.organizationId
-        : authCtx.organizationId;
+      options.organizationId !== undefined ? options.organizationId : authCtx.organizationId;
 
     const builtHeaders: Record<string, string> = {};
 
@@ -264,14 +280,15 @@ function uploadAttempt<TResult = unknown>(
         const headerName = client?.auth?.headerName ?? "x-api-key";
         builtHeaders[headerName] = token;
       } else if (authMode !== "cookie") {
-        builtHeaders["Authorization"] = `Bearer ${token}`;
+        builtHeaders.Authorization = `Bearer ${token}`;
       }
     }
     if (orgId) builtHeaders["x-organization-id"] = orgId;
     if (elevated ?? client?.config?.elevated) builtHeaders["x-arc-scope"] = "platform";
     if (idempotencyKey) builtHeaders["Idempotency-Key"] = idempotencyKey;
     if (client?.config?.apiVersion) builtHeaders["Accept-Version"] = client.config.apiVersion;
-    if (client?.config?.internalApiKey) builtHeaders["x-internal-api-key"] = client.config.internalApiKey;
+    if (client?.config?.internalApiKey)
+      builtHeaders["x-internal-api-key"] = client.config.internalApiKey;
 
     Object.assign(builtHeaders, client?.config?.defaultHeaders ?? {});
     Object.assign(builtHeaders, extraHeaders ?? {});
@@ -288,9 +305,8 @@ function uploadAttempt<TResult = unknown>(
         const lengthComputable = event.lengthComputable;
         const total = lengthComputable ? event.total : 0;
         const loaded = event.loaded;
-        const percent = lengthComputable && total > 0
-          ? Math.min(100, Math.round((loaded / total) * 100))
-          : 0;
+        const percent =
+          lengthComputable && total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
         onProgress({ percent, loaded, total, lengthComputable });
       };
     }
@@ -299,7 +315,11 @@ function uploadAttempt<TResult = unknown>(
     let abortListener: (() => void) | null = null;
     if (signal) {
       abortListener = () => {
-        try { xhr.abort(); } catch { /* ignore double-abort */ }
+        try {
+          xhr.abort();
+        } catch {
+          /* ignore double-abort */
+        }
         reject(abortReason(signal));
       };
       signal.addEventListener("abort", abortListener, { once: true });
@@ -347,7 +367,11 @@ function uploadAttempt<TResult = unknown>(
 
     xhr.ontimeout = () => {
       if (abortListener && signal) signal.removeEventListener("abort", abortListener);
-      reject(new Error(`Upload timed out: ${fullUrl}`));
+      reject(
+        Object.assign(new Error(`Upload timed out after ${timeoutMs}ms: ${fullUrl}`), {
+          name: "TimeoutError",
+        }),
+      );
     };
 
     // ── Fire ───────────────────────────────────────────────────────────
@@ -484,14 +508,10 @@ export function useUploadWithProgress<TResult = unknown, TVars = unknown>(
       const opts = optsRef.current;
       const url = typeof opts.url === "function" ? opts.url(vars) : opts.url;
       const formData = opts.buildFormData(vars);
-      const headers =
-        typeof opts.headers === "function" ? opts.headers(vars) : opts.headers;
-      const elevated =
-        typeof opts.elevated === "function" ? opts.elevated(vars) : opts.elevated;
+      const headers = typeof opts.headers === "function" ? opts.headers(vars) : opts.headers;
+      const elevated = typeof opts.elevated === "function" ? opts.elevated(vars) : opts.elevated;
       const idempotencyKey =
-        typeof opts.idempotencyKey === "function"
-          ? opts.idempotencyKey(vars)
-          : opts.idempotencyKey;
+        typeof opts.idempotencyKey === "function" ? opts.idempotencyKey(vars) : opts.idempotencyKey;
 
       // Cancel any in-flight upload before starting a new one. Mirrors
       // useMutation's overlap policy — last-call wins.

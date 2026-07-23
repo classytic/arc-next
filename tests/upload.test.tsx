@@ -10,18 +10,14 @@
  * plumbing isn't proven twice from different angles.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { configureClient, configureAuth, ArcApiError, isArcApiError } from "../src/client.js";
+import { ArcApiError, configureAuth, configureClient, isArcApiError } from "../src/client.js";
 import { configureToast } from "../src/mutation.js";
-import {
-  uploadWithProgress,
-  useUploadWithProgress,
-  type UploadProgress,
-} from "../src/upload.js";
+import { type UploadProgress, uploadWithProgress, useUploadWithProgress } from "../src/upload.js";
 
 // ============================================================================
 // MockXHR — minimal WHATWG-faithful XHR for the surface we use
@@ -50,6 +46,8 @@ class MockXHR {
   responseType: "" | "text" | "json" | "blob" | "arraybuffer" | "document" = "";
   withCredentials = false;
   readyState = 0;
+  /** WHATWG default 0 = no timeout — the SDK must ASSIGN this for ontimeout to ever fire. */
+  timeout = 0;
 
   // Captured for assertions.
   method = "";
@@ -473,6 +471,55 @@ describe("uploadWithProgress (plain function)", () => {
 });
 
 // ============================================================================
+// uploadWithProgress — timeoutMs (0.12)
+// ============================================================================
+
+describe("uploadWithProgress — timeoutMs", () => {
+  beforeEach(() => {
+    installMockXHR();
+    configureClient({ baseUrl: "http://api.test" });
+    configureAuth({ getToken: () => null, getOrgId: () => null });
+  });
+  afterEach(() => {
+    restoreXHR();
+  });
+
+  it("assigns xhr.timeout — without the assignment ontimeout can never fire", async () => {
+    const promise = uploadWithProgress({
+      url: "/upload",
+      formData: makeFormData(),
+      timeoutMs: 30_000,
+    });
+    const xhr = MockXHR.latest();
+    expect(xhr.timeout).toBe(30_000);
+    xhr.emitLoad({ status: 200, body: { ok: true } });
+    await promise;
+  });
+
+  it("stays disabled (xhr.timeout 0) by default", async () => {
+    const promise = uploadWithProgress({ url: "/upload", formData: makeFormData() });
+    const xhr = MockXHR.latest();
+    expect(xhr.timeout).toBe(0);
+    xhr.emitLoad({ status: 200, body: { ok: true } });
+    await promise;
+  });
+
+  it("rejects with a TimeoutError when the transport times out", async () => {
+    const promise = uploadWithProgress({
+      url: "/upload",
+      formData: makeFormData(),
+      timeoutMs: 5000,
+    });
+    const xhr = MockXHR.latest();
+    xhr.ontimeout?.call(xhr);
+    await expect(promise).rejects.toMatchObject({
+      name: "TimeoutError",
+      message: expect.stringContaining("5000ms"),
+    });
+  });
+});
+
+// ============================================================================
 // useUploadWithProgress() — React hook
 // ============================================================================
 
@@ -512,7 +559,7 @@ describe("useUploadWithProgress (React hook)", () => {
 
     // After microtask, isUploading flips on.
     await waitFor(() => expect(result.current.isPending).toBe(true));
-    MockXHR.latest().emitLoad({ status: 200, body: { url: "/cdn/x.txt" } });
+    await act(async () => MockXHR.latest().emitLoad({ status: 200, body: { url: "/cdn/x.txt" } }));
     await expect(promise).resolves.toEqual({ url: "/cdn/x.txt" });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -533,15 +580,17 @@ describe("useUploadWithProgress (React hook)", () => {
     );
 
     let promise!: Promise<unknown>;
-    act(() => { promise = result.current.upload(undefined); });
+    act(() => {
+      promise = result.current.upload(undefined);
+    });
 
     await waitFor(() => expect(MockXHR.instances.length).toBe(1));
-    act(() => MockXHR.latest().emitProgress(250, 1000));
+    await act(async () => MockXHR.latest().emitProgress(250, 1000));
     await waitFor(() => expect(result.current.progress?.percent).toBe(25));
-    act(() => MockXHR.latest().emitProgress(750, 1000));
+    await act(async () => MockXHR.latest().emitProgress(750, 1000));
     await waitFor(() => expect(result.current.progress?.percent).toBe(75));
 
-    act(() => MockXHR.latest().emitLoad({ status: 200, body: {} }));
+    await act(async () => MockXHR.latest().emitLoad({ status: 200, body: {} }));
     await promise;
   });
 
@@ -560,9 +609,11 @@ describe("useUploadWithProgress (React hook)", () => {
     );
 
     let promise!: Promise<unknown>;
-    act(() => { promise = result.current.upload(undefined); });
+    act(() => {
+      promise = result.current.upload(undefined);
+    });
     await waitFor(() => expect(MockXHR.instances.length).toBe(1));
-    act(() => MockXHR.latest().emitLoad({ status: 200, body: {} }));
+    await act(async () => MockXHR.latest().emitLoad({ status: 200, body: {} }));
     await promise;
 
     const calls = spy.mock.calls.map(([arg]) => (arg as { queryKey: unknown }).queryKey);
@@ -588,7 +639,7 @@ describe("useUploadWithProgress (React hook)", () => {
       promise = result.current.upload(undefined).catch(() => undefined);
     });
     await waitFor(() => expect(MockXHR.instances.length).toBe(1));
-    act(() =>
+    await act(async () =>
       MockXHR.latest().emitLoad({
         status: 415,
         statusText: "Unsupported Media Type",
@@ -619,7 +670,7 @@ describe("useUploadWithProgress (React hook)", () => {
       promise = result.current.upload(undefined).catch(() => undefined);
     });
     await waitFor(() => expect(MockXHR.instances.length).toBe(1));
-    act(() => result.current.cancel());
+    await act(async () => result.current.cancel());
 
     expect(MockXHR.latest().aborted).toBe(true);
     await promise;
@@ -651,7 +702,7 @@ describe("useUploadWithProgress (React hook)", () => {
     expect(MockXHR.instances[0]!.aborted).toBe(true);
     expect(MockXHR.instances[1]!.aborted).toBe(false);
 
-    act(() => MockXHR.instances[1]!.emitLoad({ status: 200, body: { ok: true } }));
+    await act(async () => MockXHR.instances[1]!.emitLoad({ status: 200, body: { ok: true } }));
     await first;
     await second;
   });
@@ -668,14 +719,16 @@ describe("useUploadWithProgress (React hook)", () => {
     );
 
     let promise!: Promise<unknown>;
-    act(() => { promise = result.current.upload(undefined); });
+    act(() => {
+      promise = result.current.upload(undefined);
+    });
     await waitFor(() => expect(MockXHR.instances.length).toBe(1));
-    act(() => MockXHR.latest().emitProgress(500, 1000));
-    act(() => MockXHR.latest().emitLoad({ status: 200, body: { ok: true } }));
+    await act(async () => MockXHR.latest().emitProgress(500, 1000));
+    await act(async () => MockXHR.latest().emitLoad({ status: 200, body: { ok: true } }));
     await promise;
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    act(() => result.current.reset());
+    await act(async () => result.current.reset());
     expect(result.current.data).toBeNull();
     expect(result.current.error).toBeNull();
     expect(result.current.progress).toBeNull();
@@ -698,7 +751,9 @@ describe("useUploadWithProgress (React hook)", () => {
     );
 
     let promise!: Promise<unknown>;
-    act(() => { promise = result.current.upload({ folder: "admin" }); });
+    act(() => {
+      promise = result.current.upload({ folder: "admin" });
+    });
     await waitFor(() => expect(MockXHR.instances.length).toBe(1));
 
     const xhr = MockXHR.latest();
@@ -707,7 +762,7 @@ describe("useUploadWithProgress (React hook)", () => {
     expect(xhr.headers["Idempotency-Key"]).toBe("key-admin");
     expect(xhr.headers["x-arc-scope"]).toBe("platform");
 
-    act(() => xhr.emitLoad({ status: 200, body: {} }));
+    await act(async () => xhr.emitLoad({ status: 200, body: {} }));
     await promise;
   });
 
@@ -728,18 +783,20 @@ describe("useUploadWithProgress (React hook)", () => {
     );
 
     let promise!: Promise<unknown>;
-    act(() => { promise = result.current.upload(undefined); });
+    act(() => {
+      promise = result.current.upload(undefined);
+    });
     await waitFor(() => expect(MockXHR.instances.length).toBe(1));
-    act(() => MockXHR.latest().emitLoad({ status: 200, body: {} }));
+    await act(async () => MockXHR.latest().emitLoad({ status: 200, body: {} }));
     await promise;
     expect(success).toHaveBeenCalledWith("Uploaded!");
 
     let promise2!: Promise<unknown>;
-    act(() => { promise2 = result.current.upload(undefined).catch(() => undefined); });
+    act(() => {
+      promise2 = result.current.upload(undefined).catch(() => undefined);
+    });
     await waitFor(() => expect(MockXHR.instances.length).toBe(2));
-    act(() =>
-      MockXHR.instances[1]!.emitLoad({ status: 500, body: { error: "boom" } }),
-    );
+    await act(async () => MockXHR.instances[1]!.emitLoad({ status: 500, body: { error: "boom" } }));
     await promise2;
     expect(error).toHaveBeenCalledWith("Bad upload");
   });

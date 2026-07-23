@@ -1,54 +1,57 @@
 "use client";
 
-import { useQuery, useQueryClient, type QueryClient, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useOptimisticMutation, useMutationWithTransition } from "./mutation.js";
-import type { MutationMessages } from "./mutation.js";
+import type { PaginatedResult } from "@classytic/repo-core/pagination";
 import {
-  useListQuery,
-  useDetailQuery,
-  useSuspenseListQuery,
-  useSuspenseDetailQuery,
-  useInfiniteListQuery,
-  findItemInListCache,
-} from "./query.js";
-import type {
-  ListQueryOptions,
-  DetailQueryOptions,
-  ListQueryResult,
-  DetailQueryResult,
-  InfiniteListQueryOptions,
-  InfiniteListQueryResult,
-  RequestPassthrough,
-} from "./query.js";
+  type QueryKey,
+  type UseQueryResult,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { AggResult, AggRow, BaseApi } from "./api.js";
+import { isKeysetPagination, isOffsetPagination } from "./api.js";
+import type { CacheUtils, QueryKeys } from "./cache.js";
 // Utilities live in the server-safe cache module — import directly so this
 // hook layer doesn't accidentally take a dependency on a client-marked path.
 import {
-  updateListCache,
-  getItemId,
-  createQueryKeys,
   createCacheUtils,
+  createQueryKeys,
   DEFAULT_QUERY_CONFIG,
   extractItem,
+  getItemId,
+  prependToListCache,
+  replaceItemInListCache,
   syncDetailToLists,
+  updateListCache,
   withOrgParams,
 } from "./cache.js";
-import type { PaginatedResult } from "@classytic/repo-core/pagination";
-import type { QueryKeys, CacheUtils } from "./cache.js";
-import {
-  isOffsetPagination,
-  isKeysetPagination,
-} from "./api.js";
-import type { AggResult, AggRow, BaseApi } from "./api.js";
-import type { SoftDeleteMethods } from "./presets/soft-delete.js";
-import type { BulkMethods } from "./presets/bulk.js";
-import type { SlugLookupMethods } from "./presets/slug.js";
-import type { TreeMethods } from "./presets/tree.js";
-import type { SearchPresetMethods } from "./presets/search.js";
-import type { MutationCallbacks, TransitionMutationReturn } from "./mutation.js";
-import { getAuthMode, getClientAuthContext, hasGlobalStaticAuth } from "./client.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
-import { subscribeToEvents, type CrudOperation } from "./sse.js";
+import { getAuthMode, getClientAuthContext, hasGlobalStaticAuth } from "./client.js";
+import type { MutationCallbacks, MutationMessages, TransitionMutationReturn } from "./mutation.js";
+import { useMutationWithTransition, useOptimisticMutation } from "./mutation.js";
+import type { BulkMethods } from "./presets/bulk.js";
+import type { SearchPresetMethods } from "./presets/search.js";
+import type { SlugLookupMethods } from "./presets/slug.js";
+import type { SoftDeleteMethods } from "./presets/soft-delete.js";
+import type { TreeMethods } from "./presets/tree.js";
+import type {
+  DetailQueryOptions,
+  DetailQueryResult,
+  InfiniteListQueryOptions,
+  InfiniteListQueryResult,
+  ListQueryOptions,
+  ListQueryResult,
+  RequestPassthrough,
+} from "./query.js";
+import {
+  findItemInListCache,
+  useDetailQuery,
+  useInfiniteListQuery,
+  useListQuery,
+  useSuspenseDetailQuery,
+  useSuspenseListQuery,
+} from "./query.js";
+import { type CrudOperation, subscribeToEvents } from "./sse.js";
 import { connectWs } from "./ws.js";
 
 // ============================================================================
@@ -67,18 +70,18 @@ import { connectWs } from "./ws.js";
  */
 export type CrudApi<T = unknown, TCreate = Partial<T>, TUpdate = Partial<T>> = Pick<
   BaseApi<T, TCreate, TUpdate>,
-  'getAll' | 'getById' | 'create' | 'update' | 'delete' | 'count'
+  "getAll" | "getById" | "create" | "update" | "delete" | "count"
 > & {
-  upload?: BaseApi<T, TCreate, TUpdate>['upload'];
-  dispatchAction?: BaseApi<T, TCreate, TUpdate>['dispatchAction'];
-  invokeRoute?: BaseApi<T, TCreate, TUpdate>['invokeRoute'];
+  upload?: BaseApi<T, TCreate, TUpdate>["upload"];
+  dispatchAction?: BaseApi<T, TCreate, TUpdate>["dispatchAction"];
+  invokeRoute?: BaseApi<T, TCreate, TUpdate>["invokeRoute"];
   /** Declared aggregations (arc 2.13+). Always available on BaseApi. */
-  aggregate?: BaseApi<T, TCreate, TUpdate>['aggregate'];
-} & Partial<SoftDeleteMethods<T>>
-  & Partial<BulkMethods<T, TCreate, TUpdate>>
-  & Partial<SlugLookupMethods<T>>
-  & Partial<TreeMethods<T>>
-  & Partial<SearchPresetMethods<T>>;
+  aggregate?: BaseApi<T, TCreate, TUpdate>["aggregate"];
+} & Partial<SoftDeleteMethods<T>> &
+  Partial<BulkMethods<T, TCreate, TUpdate>> &
+  Partial<SlugLookupMethods<T>> &
+  Partial<TreeMethods<T>> &
+  Partial<SearchPresetMethods<T>>;
 
 /** Args + options for `useAggregation`. Mirrors `ListQueryOptions` for DX consistency. */
 export interface AggregationQueryOptions<TRow extends AggRow = AggRow, TData = AggResult<TRow>> {
@@ -119,7 +122,9 @@ export interface AggregationQueryOptions<TRow extends AggRow = AggRow, TData = A
    * Show this data while the real query is loading / re-fetching with
    * different filters. Smooths fast filter switches on dashboards.
    */
-  placeholderData?: AggResult<TRow> | ((prev: AggResult<TRow> | undefined) => AggResult<TRow> | undefined);
+  placeholderData?:
+    | AggResult<TRow>
+    | ((prev: AggResult<TRow> | undefined) => AggResult<TRow> | undefined);
 }
 
 export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
@@ -205,9 +210,27 @@ export interface CrudActions<T, TCreate, TUpdate> {
 }
 
 export interface BulkActions<T, TCreate> {
-  bulkCreate: (params: { data: TCreate[]; token?: string | null; organizationId?: string | null }, options?: CallOptions<T[]>) => Promise<T[]>;
-  bulkUpdate: (params: { filter: Record<string, unknown>; data: Partial<T>; token?: string | null; organizationId?: string | null }, options?: CallOptions) => Promise<unknown>;
-  bulkRemove: (params: { filter: Record<string, unknown>; token?: string | null; organizationId?: string | null }, options?: CallOptions) => Promise<unknown>;
+  bulkCreate: (
+    params: { data: TCreate[]; token?: string | null; organizationId?: string | null },
+    options?: CallOptions<T[]>,
+  ) => Promise<T[]>;
+  bulkUpdate: (
+    params: {
+      filter: Record<string, unknown>;
+      data: Partial<T>;
+      token?: string | null;
+      organizationId?: string | null;
+    },
+    options?: CallOptions,
+  ) => Promise<unknown>;
+  bulkRemove: (
+    params: {
+      filter: Record<string, unknown>;
+      token?: string | null;
+      organizationId?: string | null;
+    },
+    options?: CallOptions,
+  ) => Promise<unknown>;
   isBulkCreating: boolean;
   isBulkUpdating: boolean;
   isBulkDeleting: boolean;
@@ -227,13 +250,21 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     /** New signature — auto-injects token/orgId from configureAuth() context */
     (params?: Record<string, unknown>, options?: ListQueryOptions<T>): ListQueryResult<T>;
     /** Legacy signature — explicit token */
-    (token: string | null, params?: Record<string, unknown>, options?: ListQueryOptions<T>): ListQueryResult<T>;
+    (
+      token: string | null,
+      params?: Record<string, unknown>,
+      options?: ListQueryOptions<T>,
+    ): ListQueryResult<T>;
   };
   useDetail: {
     /** New signature — auto-injects token from configureAuth() context */
     (id: string | null, options?: DetailQueryOptions<T>): DetailQueryResult<T>;
     /** Legacy signature — explicit token */
-    (id: string | null, token: string | null, options?: DetailQueryOptions<T>): DetailQueryResult<T>;
+    (
+      id: string | null,
+      token: string | null,
+      options?: DetailQueryOptions<T>,
+    ): DetailQueryResult<T>;
   };
   /**
    * Suspense variant of `useList` for Suspense / streaming-SSR routes. Always
@@ -255,50 +286,95 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
   ) => DetailQueryResult<T>;
   useInfiniteList: {
     /** New signature — auto-injects token/orgId from configureAuth() context */
-    (params?: Record<string, unknown>, options?: InfiniteListQueryOptions): InfiniteListQueryResult<T>;
+    (
+      params?: Record<string, unknown>,
+      options?: InfiniteListQueryOptions,
+    ): InfiniteListQueryResult<T>;
     /** Legacy signature — explicit token */
-    (token: string | null, params?: Record<string, unknown>, options?: InfiniteListQueryOptions): InfiniteListQueryResult<T>;
+    (
+      token: string | null,
+      params?: Record<string, unknown>,
+      options?: InfiniteListQueryOptions,
+    ): InfiniteListQueryResult<T>;
   };
   useActions: () => CrudActions<T, TCreate, TUpdate>;
   useBulkActions: () => BulkActions<T, TCreate>;
-  useDeleted: (params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
+  useDeleted: (
+    params?: Record<string, unknown>,
+    options?: ListQueryOptions<T>,
+  ) => ListQueryResult<T>;
   /** Count-only query via arc's `?_count=true` dispatch verb — zero documents fetched. */
-  useCount: (params?: Record<string, unknown>, options?: { enabled?: boolean; staleTime?: number; gcTime?: number }) => UseQueryResult<number, Error>;
+  useCount: (
+    params?: Record<string, unknown>,
+    options?: { enabled?: boolean; staleTime?: number; gcTime?: number },
+  ) => UseQueryResult<number, Error>;
   useDetailBySlug: (slug: string | null, options?: DetailQueryOptions<T>) => DetailQueryResult<T>;
   useTree: (params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
-  useChildren: (parentId: string | null, params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
+  useChildren: (
+    parentId: string | null,
+    params?: Record<string, unknown>,
+    options?: ListQueryOptions<T>,
+  ) => ListQueryResult<T>;
   /**
    * Mutation against arc's unified action router (`POST /:id/action`).
    * Server discriminates on `body.action`. Use for state transitions
    * (approve/cancel/dispatch) instead of bespoke routes.
    */
-  useAction: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+  useAction: <
+    TResult = T,
+    TBody extends Record<string, unknown> = Record<string, unknown>,
+  >(options?: {
     invalidateQueries?: QueryKey[];
     /** Default action name. Can be overridden per-call via `mutate({ action })`. */
     action?: string;
     messages?: MutationMessages<TResult, { id: string; action?: string; data?: TBody }>;
     onSuccess?: (data: TResult, variables: { id: string; action: string; data?: TBody }) => void;
     onError?: (error: Error, variables: { id: string; action: string; data?: TBody }) => void;
-    onSettled?: (data: TResult | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
+    onSettled?: (
+      data: TResult | undefined,
+      error: Error | null,
+      variables: { id: string; action: string; data?: TBody },
+    ) => void;
   }) => TransitionMutationReturn<TResult, { id: string; action?: string; data?: TBody }>;
   /** Mutation against the search-preset POST `/search` route. */
-  useSearchEngine: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+  useSearchEngine: <
+    TResult = T,
+    TBody extends Record<string, unknown> = Record<string, unknown>,
+  >(options?: {
     path?: string;
-    messages?: MutationMessages<TResult[] | PaginatedResult<TResult>, { query?: string; body?: TBody }>;
+    messages?: MutationMessages<
+      TResult[] | PaginatedResult<TResult>,
+      { query?: string; body?: TBody }
+    >;
     invalidateQueries?: QueryKey[];
-  }) => TransitionMutationReturn<TResult[] | PaginatedResult<TResult>, { query?: string; body?: TBody }>;
+  }) => TransitionMutationReturn<
+    TResult[] | PaginatedResult<TResult>,
+    { query?: string; body?: TBody }
+  >;
   /** Mutation against the search-preset POST `/search-similar` route. */
-  useSearchSimilar: <TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+  useSearchSimilar: <
+    TResult = T,
+    TBody extends Record<string, unknown> = Record<string, unknown>,
+  >(options?: {
     path?: string;
-    messages?: MutationMessages<TResult[] | PaginatedResult<TResult>, { query?: string; vector?: number[]; body?: TBody }>;
+    messages?: MutationMessages<
+      TResult[] | PaginatedResult<TResult>,
+      { query?: string; vector?: number[]; body?: TBody }
+    >;
     invalidateQueries?: QueryKey[];
-  }) => TransitionMutationReturn<TResult[] | PaginatedResult<TResult>, { query?: string; vector?: number[]; body?: TBody }>;
+  }) => TransitionMutationReturn<
+    TResult[] | PaginatedResult<TResult>,
+    { query?: string; vector?: number[]; body?: TBody }
+  >;
   /** Mutation against the search-preset POST `/embed` route. */
   useEmbed: (options?: {
     path?: string;
     messages?: MutationMessages;
     invalidateQueries?: QueryKey[];
-  }) => TransitionMutationReturn<unknown, { input: string | string[]; body?: Record<string, unknown> }>;
+  }) => TransitionMutationReturn<
+    unknown,
+    { input: string | string[]; body?: Record<string, unknown> }
+  >;
   /**
    * Query against arc's declarative aggregations (arc v2.13+).
    * `GET /:resource/aggregations/:name` — wire shape `{ rows: TRow[] }`.
@@ -317,10 +393,12 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
    * });
    * // data.rows: Array<{ day: string; total: number }>
    */
-  useAggregation: <TRow extends AggRow = AggRow, TData = AggResult<TRow>>(args: {
-    name: string;
-    filter?: Record<string, unknown>;
-  } & AggregationQueryOptions<TRow, TData>) => UseQueryResult<TData>;
+  useAggregation: <TRow extends AggRow = AggRow, TData = AggResult<TRow>>(
+    args: {
+      name: string;
+      filter?: Record<string, unknown>;
+    } & AggregationQueryOptions<TRow, TData>,
+  ) => UseQueryResult<TData>;
   useUpload: (options?: {
     invalidateQueries?: QueryKey[];
     messages?: MutationMessages;
@@ -345,7 +423,7 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
    * `ssePlugin` (`/events/stream`). Pass `enabled: false` to opt out.
    */
   useResourceSync: (options?: {
-    source?: 'ws' | 'sse';
+    source?: "ws" | "sse";
     /** Override resource name. Defaults to the factory's `entityKey`. */
     resource?: string;
     /** Override path (default: `/ws` or `/events/stream`). */
@@ -353,7 +431,11 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
     /** Whether the connection is active. Default: true. */
     enabled?: boolean;
     /** Per-event hook fired AFTER cache invalidation. */
-    onEvent?: (event: { operation: 'created' | 'updated' | 'deleted'; id?: string; data: unknown }) => void;
+    onEvent?: (event: {
+      operation: "created" | "updated" | "deleted";
+      id?: string;
+      data: unknown;
+    }) => void;
     /** Connection-state listener. */
     onConnectionChange?: (connected: boolean) => void;
   }) => { isConnected: boolean };
@@ -386,11 +468,11 @@ export function configureNavigation(hook: UseRouterHook): void {
 function createEnabledRule(
   token: string | null,
   options: { public?: boolean; enabled?: boolean },
-  authMode: 'bearer' | 'cookie' | 'header' = getAuthMode(),
+  authMode: "bearer" | "cookie" | "header" = getAuthMode(),
   hasStaticAuth = false,
 ): boolean {
   // Cookie auth or public: always enabled
-  if (authMode === 'cookie' || options.public) {
+  if (authMode === "cookie" || options.public) {
     return options.enabled ?? true;
   }
   // Static auth (defaultHeaders, internalApiKey, per-client headers): always enabled
@@ -449,6 +531,38 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   const KEYS = createQueryKeys(entityKey);
   const cache = createCacheUtils<T>(KEYS);
 
+  /**
+   * Shared identity for this resource's write mutations (create / update /
+   * delete). Powers last-standing invalidation in `useOptimisticMutation`:
+   * rapid sequential writes trigger ONE settled refetch instead of N racing
+   * ones, so an early write's refetch can never clobber a later write's
+   * optimistic state.
+   */
+  const WRITE_MUTATION_KEY = [entityKey, "write"] as const;
+
+  /**
+   * Per-record write ordering. `update`/`remove`/`restore` calls against the
+   * SAME record are chained (call order = server application order = cache
+   * application order); writes to different records stay fully parallel. A
+   * failed write does not block the next one — each link runs regardless of
+   * the previous outcome. Factory-scoped so every component using this
+   * resource's hooks shares one chain per record.
+   */
+  const writeChains = new Map<string, Promise<unknown>>();
+  function enqueueWrite<R>(recordId: string, run: () => Promise<R>): Promise<R> {
+    const prev = writeChains.get(recordId) ?? Promise.resolve();
+    const result = prev.then(run, run);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    writeChains.set(recordId, tail);
+    tail.then(() => {
+      if (writeChains.get(recordId) === tail) writeChains.delete(recordId);
+    });
+    return result;
+  }
+
   // Resolve toast handler: client instance → global
   const instanceToast: ToastHandler | undefined = client?.toast;
   // Resolve navigation hook: client instance → global
@@ -488,9 +602,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     extraGate = true,
   ): boolean => {
     const merged =
-      options.public === undefined && config.defaultPublic
-        ? { ...options, public: true }
-        : options;
+      options.public === undefined && config.defaultPublic ? { ...options, public: true } : options;
     return extraGate && createEnabledRule(token, merged, resolveAuthMode(), resolveHasStaticAuth());
   };
 
@@ -508,7 +620,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     // Detect which overload:
     // Legacy: useList(token: string|null, params, options) — string first arg, or null with 3 args
     // New:    useList(params?, options?) — object/undefined first arg, or null with ≤2 args
-    const isLegacy = typeof tokenOrParams === 'string' || (tokenOrParams === null && maybeOptions !== undefined);
+    const isLegacy =
+      typeof tokenOrParams === "string" || (tokenOrParams === null && maybeOptions !== undefined);
 
     if (isLegacy) {
       token = tokenOrParams as string | null;
@@ -531,8 +644,17 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useListQuery<T>({
       // withOrgParams: omit nullish org from the KEY (hash parity with the
       // server prefetcher — `{organizationId: null}` would be a distinct hash).
-      queryKey: KEYS.scopedList(scope, withOrgParams(organizationId as string | null | undefined, restParams)),
-      queryFn: ({ signal }) => api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
+      queryKey: KEYS.scopedList(
+        scope,
+        withOrgParams(organizationId as string | null | undefined, restParams),
+      ),
+      queryFn: ({ signal }) =>
+        api.getAll({
+          token,
+          organizationId: organizationId as string | null,
+          params: restParams,
+          options: { signal, ...requestOpts },
+        }),
       enabled: computeEnabled(token, queryOpts),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
@@ -566,7 +688,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     // Legacy: useDetail(id, token, options) — string/null second arg with 3rd arg present
     // New:    useDetail(id, options?) — object/undefined second arg
-    const isLegacy = typeof tokenOrOptions === 'string' || (tokenOrOptions === null && maybeOptions !== undefined);
+    const isLegacy =
+      typeof tokenOrOptions === "string" || (tokenOrOptions === null && maybeOptions !== undefined);
 
     if (isLegacy) {
       token = tokenOrOptions as string | null;
@@ -594,14 +717,20 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     // detail payload resolves.
     const queryClient = useQueryClient();
     const listPlaceholder = useCallback(
-      () =>
-        id ? findItemInListCache<T>(queryClient, KEYS.lists(), id, idField) : undefined,
+      () => (id ? findItemInListCache<T>(queryClient, KEYS.lists(), id, idField) : undefined),
       [queryClient, id],
     );
 
     const detailResult = useDetailQuery<T>({
       queryKey: fullDetailKey,
-      queryFn: ({ signal }) => api.getById({ id: id!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
+      queryFn: ({ signal }) =>
+        api.getById({
+          id: id ?? "",
+          token,
+          organizationId,
+          params: queryParams,
+          options: { signal, ...requestOpts },
+        }),
       enabled: computeEnabled(token, restOptions, !!id),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
@@ -656,7 +785,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useSuspenseListQuery<T>({
       queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
       queryFn: ({ signal }) =>
-        api.getAll({ token, organizationId: organizationId as string | null, params: restParams, options: { signal, ...requestOpts } }),
+        api.getAll({
+          token,
+          organizationId: organizationId as string | null,
+          params: restParams,
+          options: { signal, ...requestOpts },
+        }),
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
         gcTime: queryOpts.gcTime ?? config.gcTime,
@@ -688,7 +822,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const detailResult = useSuspenseDetailQuery<T>({
       queryKey: fullDetailKey,
       queryFn: ({ signal }) =>
-        api.getById({ id, token, organizationId, params: queryParams, options: { signal, ...requestOpts } }),
+        api.getById({
+          id,
+          token,
+          organizationId,
+          params: queryParams,
+          options: { signal, ...requestOpts },
+        }),
       options: {
         staleTime: restOptions.staleTime ?? config.staleTime,
         gcTime: restOptions.gcTime ?? config.gcTime,
@@ -720,31 +860,78 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const queryClient = useQueryClient();
     const silentRef = useRef(false);
     const shouldToast = useCallback(() => !silentRef.current, []);
+    // Temp id per mutate() call, keyed on the variables object TanStack
+    // threads through onMutate → onSuccess — lets `reconcile` find the
+    // exact optimistic placeholder this call inserted, even with several
+    // concurrent creates in flight.
+    const tempIdsRef = useRef(new WeakMap<object, string>());
 
     const createMutation = useOptimisticMutation({
       mutationFn: ({ token, organizationId, data }: MutationParams<TCreate>) =>
         api.create({ token, organizationId, data }),
       queryClient,
-      // Invalidate lists + every aggregation — dashboards derive from the
-      // underlying data, so any CRUD write may shift their rows.
+      // Snapshot + settle-invalidate lists AND every aggregation — dashboards
+      // derive from the underlying data, so any CRUD write may shift their rows.
       queryKeys: [KEYS.lists(), KEYS.aggregations()],
+      mutationKey: WRITE_MUTATION_KEY,
       shouldToast,
-      optimisticUpdate: (oldData, { data }) => {
+      optimisticUpdate: (oldData, variables, qKey) => {
+        // Only LIST caches receive the placeholder. Aggregation caches share
+        // the snapshot/invalidation lifecycle but their `{ rows }` payload is
+        // computed server-side — injecting an item would corrupt them.
+        if (qKey[1] !== "list") return oldData;
+        const { data } = variables;
+        let tempId = tempIdsRef.current.get(variables);
+        if (!tempId) {
+          tempId = resolveItemId(data) ?? `temp-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`;
+          tempIdsRef.current.set(variables, tempId);
+        }
         const optimisticItem = {
           ...(data as object),
           _optimistic: true,
-          [idField ?? (resolveItemId(data) ? "id" : "_id")]: resolveItemId(data) ?? `temp-${Date.now()}`,
+          [idField ?? (resolveItemId(data) ? "id" : "_id")]: tempId,
         };
-        return updateListCache(oldData, (arr: unknown[]) => [optimisticItem, ...(arr || [])]);
+        return prependToListCache(oldData, optimisticItem);
+      },
+      // Runs on success BEFORE invalidation: swap the temp placeholder for
+      // the server document in place (no flicker, real id immediately usable
+      // for navigation), and seed the detail cache so a follow-up detail view
+      // renders without a fetch.
+      reconcile: (raw, variables) => {
+        const serverDoc = extractItem<T>(raw);
+        if (!serverDoc || typeof serverDoc !== "object") return;
+        const tempId = tempIdsRef.current.get(variables);
+        if (tempId) {
+          for (const [qKey, qData] of queryClient.getQueriesData({ queryKey: KEYS.lists() })) {
+            const next = replaceItemInListCache(
+              qData,
+              tempId,
+              serverDoc,
+              idField ? { idField } : {},
+            );
+            if (next !== qData) queryClient.setQueryData(qKey, next);
+          }
+        }
+        const realId = resolveItemId(serverDoc);
+        if (realId) queryClient.setQueryData(KEYS.detail(realId), serverDoc);
       },
       onSuccess: (raw, variables) => {
-        callbacks.onCreate?.onSuccess?.(extractItem<T>(raw) as T, { data: variables.data }, undefined);
+        callbacks.onCreate?.onSuccess?.(
+          extractItem<T>(raw) as T,
+          { data: variables.data },
+          undefined,
+        );
       },
       onError: (error, variables) => {
         callbacks.onCreate?.onError?.(error, { data: variables.data }, undefined);
       },
       onSettled: (raw, error, variables) => {
-        callbacks.onCreate?.onSettled?.(raw ? extractItem<T>(raw) as T : undefined, error, { data: variables.data }, undefined);
+        callbacks.onCreate?.onSettled?.(
+          raw ? (extractItem<T>(raw) as T) : undefined,
+          error,
+          { data: variables.data },
+          undefined,
+        );
       },
       messages: { success: config.messages.createSuccess, error: config.messages.createError },
       toastHandler: instanceToast,
@@ -755,42 +942,73 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         api.update({ token, organizationId, id, data }),
       queryClient,
       queryKeys: [KEYS.lists(), KEYS.details(), KEYS.aggregations()],
+      mutationKey: WRITE_MUTATION_KEY,
       shouldToast,
-      optimisticUpdate: (oldData, { id, data }) => {
-        const updated = updateListCache(oldData, (arr: unknown[]) =>
-          (arr || []).map((item) => (resolveItemId(item) === id ? { ...(item as object), ...(data as object) } : item))
+      // One key-aware updater covers every snapshotted cache family:
+      //   detail caches of THIS id (bare + scoped + parameterized) → raw-doc
+      //     merge (arc 2.13+ detail caches hold the doc directly, no
+      //     `{ data }` envelope);
+      //   list caches (flat + infinite pages) → per-item merge;
+      //   aggregations / other ids → untouched.
+      optimisticUpdate: (oldData, { id, data }, qKey) => {
+        if (qKey[1] === "detail") {
+          if (qKey[2] !== id || !oldData || typeof oldData !== "object") return oldData;
+          return { ...(oldData as object), ...(data as object) };
+        }
+        if (qKey[1] !== "list") return oldData;
+        return updateListCache(oldData, (arr: unknown[]) =>
+          (arr || []).map((item) =>
+            resolveItemId(item) === id ? { ...(item as object), ...(data as object) } : item,
+          ),
         );
-        // Optimistic write to all matching detail queries (bare + scoped + parameterized)
-        const detailUpdater = (current: unknown) =>
-          current ? { ...(current as object), data: { ...((current as { data?: object }).data || {}), ...(data as object) } } : current;
-
-        queryClient.getQueriesData({ queryKey: KEYS.detail(id) }).forEach(([qKey, qData]) => {
-          if (qData) queryClient.setQueryData(qKey, detailUpdater);
-        });
-        return updated;
+      },
+      // Server truth lands before the settled refetch: replace the item in
+      // every list + detail cache with the authoritative response document.
+      reconcile: (raw, { id }) => {
+        const serverDoc = extractItem<T>(raw);
+        if (!serverDoc || typeof serverDoc !== "object") return;
+        for (const [qKey, qData] of queryClient.getQueriesData({ queryKey: KEYS.detail(id) })) {
+          if (qData) queryClient.setQueryData(qKey, serverDoc);
+        }
+        for (const [qKey, qData] of queryClient.getQueriesData({ queryKey: KEYS.lists() })) {
+          const next = replaceItemInListCache(qData, id, serverDoc, idField ? { idField } : {});
+          if (next !== qData) queryClient.setQueryData(qKey, next);
+        }
       },
       onSuccess: (raw, { id, data: updateData }) => {
-        // Prefix-match invalidates bare + scoped + parameterized detail keys
-        queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
-        callbacks.onUpdate?.onSuccess?.(extractItem<T>(raw) as T, { id, data: updateData }, undefined);
+        callbacks.onUpdate?.onSuccess?.(
+          extractItem<T>(raw) as T,
+          { id, data: updateData },
+          undefined,
+        );
       },
       onError: (error, { id, data }) => {
         callbacks.onUpdate?.onError?.(error, { id, data }, undefined);
       },
       onSettled: (raw, error, { id, data: updateData }) => {
-        callbacks.onUpdate?.onSettled?.(raw ? extractItem<T>(raw) as T : undefined, error, { id, data: updateData }, undefined);
+        callbacks.onUpdate?.onSettled?.(
+          raw ? (extractItem<T>(raw) as T) : undefined,
+          error,
+          { id, data: updateData },
+          undefined,
+        );
       },
       messages: { success: config.messages.updateSuccess, error: config.messages.updateError },
       toastHandler: instanceToast,
     });
 
     const deleteMutation = useOptimisticMutation({
-      mutationFn: ({ token, organizationId, id }: DeleteParams) => api.delete({ token, organizationId, id }),
+      mutationFn: ({ token, organizationId, id }: DeleteParams) =>
+        api.delete({ token, organizationId, id }),
       queryClient,
       queryKeys: [KEYS.lists(), KEYS.aggregations()],
+      mutationKey: WRITE_MUTATION_KEY,
       shouldToast,
-      optimisticUpdate: (oldData, { id }) => {
-        return updateListCache(oldData, (arr: unknown[]) => (arr || []).filter((item) => resolveItemId(item) !== id));
+      optimisticUpdate: (oldData, { id }, qKey) => {
+        if (qKey[1] !== "list") return oldData;
+        return updateListCache(oldData, (arr: unknown[]) =>
+          (arr || []).filter((item) => resolveItemId(item) !== id),
+        );
       },
       onSuccess: (data, { id }) => {
         // Remove detail cache after successful delete
@@ -810,11 +1028,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const restoreMutation = useMutationWithTransition<unknown, DeleteParams>({
       mutationFn: ({ token, organizationId, id }) => {
         if (!api.restore) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a restore method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a restore method`),
+          );
         }
         return api.restore({ token, organizationId, id });
       },
-      invalidateQueries: [KEYS.lists(), KEYS.custom('deleted'), KEYS.aggregations()],
+      invalidateQueries: [KEYS.lists(), KEYS.custom("deleted"), KEYS.aggregations()],
       shouldToast,
       messages: {
         success: `${singular} restored successfully`,
@@ -823,81 +1043,102 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       toastHandler: instanceToast,
     });
 
-    const resolveActionAuth = useCallback(<P extends { token?: string | null; organizationId?: string | null }>(params: P): P => {
-      const auth = resolveAuth();
-      return {
-        ...params,
-        token: params.token ?? auth.token,
-        organizationId: params.organizationId ?? auth.organizationId,
-      };
-    }, []);
+    const resolveActionAuth = useCallback(
+      <P extends { token?: string | null; organizationId?: string | null }>(params: P): P => {
+        const auth = resolveAuth();
+        return {
+          ...params,
+          token: params.token ?? auth.token,
+          organizationId: params.organizationId ?? auth.organizationId,
+        };
+      },
+      [],
+    );
 
-    const create = useCallback(async (params: MutationParams<TCreate>, options?: CallOptions<T>): Promise<T> => {
-      silentRef.current = options?.silent ?? false;
-      try {
-        const raw = await createMutation.mutateAsync(resolveActionAuth(params));
-        const entity = extractItem<T>(raw) as T;
-        options?.onSuccess?.(entity);
-        options?.onSettled?.(entity, null);
-        return entity;
-      } catch (error) {
-        options?.onError?.(error as Error);
-        options?.onSettled?.(undefined, error as Error);
-        throw error;
-      } finally {
-        silentRef.current = false;
-      }
-    }, [createMutation, resolveActionAuth]);
+    const create = useCallback(
+      async (params: MutationParams<TCreate>, options?: CallOptions<T>): Promise<T> => {
+        silentRef.current = options?.silent ?? false;
+        try {
+          const raw = await createMutation.mutateAsync(resolveActionAuth(params));
+          const entity = extractItem<T>(raw) as T;
+          options?.onSuccess?.(entity);
+          options?.onSettled?.(entity, null);
+          return entity;
+        } catch (error) {
+          options?.onError?.(error as Error);
+          options?.onSettled?.(undefined, error as Error);
+          throw error;
+        } finally {
+          silentRef.current = false;
+        }
+      },
+      [createMutation, resolveActionAuth],
+    );
 
-    const update = useCallback(async (params: UpdateParams<TUpdate>, options?: CallOptions<T>): Promise<T> => {
-      silentRef.current = options?.silent ?? false;
-      try {
-        const raw = await updateMutation.mutateAsync(resolveActionAuth(params));
-        const entity = extractItem<T>(raw) as T;
-        options?.onSuccess?.(entity);
-        options?.onSettled?.(entity, null);
-        return entity;
-      } catch (error) {
-        options?.onError?.(error as Error);
-        options?.onSettled?.(undefined, error as Error);
-        throw error;
-      } finally {
-        silentRef.current = false;
-      }
-    }, [updateMutation, resolveActionAuth]);
+    const update = useCallback(
+      async (params: UpdateParams<TUpdate>, options?: CallOptions<T>): Promise<T> => {
+        silentRef.current = options?.silent ?? false;
+        try {
+          const raw = await enqueueWrite(params.id, () =>
+            updateMutation.mutateAsync(resolveActionAuth(params)),
+          );
+          const entity = extractItem<T>(raw) as T;
+          options?.onSuccess?.(entity);
+          options?.onSettled?.(entity, null);
+          return entity;
+        } catch (error) {
+          options?.onError?.(error as Error);
+          options?.onSettled?.(undefined, error as Error);
+          throw error;
+        } finally {
+          silentRef.current = false;
+        }
+      },
+      [updateMutation, resolveActionAuth],
+    );
 
-    const remove = useCallback(async (params: DeleteParams, options?: CallOptions): Promise<unknown> => {
-      silentRef.current = options?.silent ?? false;
-      try {
-        const result = await deleteMutation.mutateAsync(resolveActionAuth(params));
-        options?.onSuccess?.(result);
-        options?.onSettled?.(result, null);
-        return result;
-      } catch (error) {
-        options?.onError?.(error as Error);
-        options?.onSettled?.(undefined, error as Error);
-        throw error;
-      } finally {
-        silentRef.current = false;
-      }
-    }, [deleteMutation, resolveActionAuth]);
+    const remove = useCallback(
+      async (params: DeleteParams, options?: CallOptions): Promise<unknown> => {
+        silentRef.current = options?.silent ?? false;
+        try {
+          const result = await enqueueWrite(params.id, () =>
+            deleteMutation.mutateAsync(resolveActionAuth(params)),
+          );
+          options?.onSuccess?.(result);
+          options?.onSettled?.(result, null);
+          return result;
+        } catch (error) {
+          options?.onError?.(error as Error);
+          options?.onSettled?.(undefined, error as Error);
+          throw error;
+        } finally {
+          silentRef.current = false;
+        }
+      },
+      [deleteMutation, resolveActionAuth],
+    );
 
-    const restore = useCallback(async (params: DeleteParams, options?: CallOptions<T>): Promise<T> => {
-      silentRef.current = options?.silent ?? false;
-      try {
-        const raw = await restoreMutation.mutateAsync(resolveActionAuth(params));
-        const entity = extractItem<T>(raw) as T;
-        options?.onSuccess?.(entity);
-        options?.onSettled?.(entity, null);
-        return entity;
-      } catch (error) {
-        options?.onError?.(error as Error);
-        options?.onSettled?.(undefined, error as Error);
-        throw error;
-      } finally {
-        silentRef.current = false;
-      }
-    }, [restoreMutation, resolveActionAuth]);
+    const restore = useCallback(
+      async (params: DeleteParams, options?: CallOptions<T>): Promise<T> => {
+        silentRef.current = options?.silent ?? false;
+        try {
+          const raw = await enqueueWrite(params.id, () =>
+            restoreMutation.mutateAsync(resolveActionAuth(params)),
+          );
+          const entity = extractItem<T>(raw) as T;
+          options?.onSuccess?.(entity);
+          options?.onSettled?.(entity, null);
+          return entity;
+        } catch (error) {
+          options?.onError?.(error as Error);
+          options?.onSettled?.(undefined, error as Error);
+          throw error;
+        } finally {
+          silentRef.current = false;
+        }
+      },
+      [restoreMutation, resolveActionAuth],
+    );
 
     return {
       create,
@@ -908,7 +1149,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       isUpdating: updateMutation.isPending,
       isDeleting: deleteMutation.isPending,
       isRestoring: restoreMutation.isPending,
-      isMutating: createMutation.isPending || updateMutation.isPending || deleteMutation.isPending || restoreMutation.isPending,
+      isMutating:
+        createMutation.isPending ||
+        updateMutation.isPending ||
+        deleteMutation.isPending ||
+        restoreMutation.isPending,
     };
   }
 
@@ -923,7 +1168,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     let params: Record<string, unknown>;
     let options: InfiniteListQueryOptions;
 
-    const isLegacy = typeof tokenOrParams === 'string' || (tokenOrParams === null && maybeOptions !== undefined);
+    const isLegacy =
+      typeof tokenOrParams === "string" || (tokenOrParams === null && maybeOptions !== undefined);
 
     if (isLegacy) {
       token = tokenOrParams as string | null;
@@ -945,11 +1191,16 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
     return useInfiniteListQuery<T>({
       // Same org-normalized key as useList (see withOrgParams) + 'infinite'.
-      queryKey: [...KEYS.scopedList(scope, withOrgParams(organizationId as string | null | undefined, restParams)), 'infinite'],
+      queryKey: [
+        ...KEYS.scopedList(
+          scope,
+          withOrgParams(organizationId as string | null | undefined, restParams),
+        ),
+        "infinite",
+      ],
       queryFn: ({ pageParam, signal }) => {
-        const paginationParams = typeof pageParam === 'string'
-          ? { after: pageParam }
-          : { page: pageParam as number };
+        const paginationParams =
+          typeof pageParam === "string" ? { after: pageParam } : { page: pageParam as number };
 
         return api.getAll({
           token,
@@ -969,23 +1220,26 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           return page.hasNext ? page.page + 1 : undefined;
         }
         const p = page as unknown as Record<string, unknown>;
-        if (typeof p.hasNext === 'boolean' && typeof p.page === 'number') {
+        if (typeof p.hasNext === "boolean" && typeof p.page === "number") {
           return p.hasNext ? (p.page as number) + 1 : undefined;
         }
         return undefined;
       },
       // Required when maxPages is set — enables backward re-fetching on scroll-back
-      getPreviousPageParam: queryOpts.maxPages != null ? (firstPage) => {
-        const page = firstPage as PaginatedResult<T>;
-        if (isOffsetPagination(page)) {
-          return page.hasPrev ? page.page - 1 : undefined;
-        }
-        const p = page as unknown as Record<string, unknown>;
-        if (typeof p.hasPrev === 'boolean' && typeof p.page === 'number') {
-          return p.hasPrev ? (p.page as number) - 1 : undefined;
-        }
-        return undefined;
-      } : undefined,
+      getPreviousPageParam:
+        queryOpts.maxPages != null
+          ? (firstPage) => {
+              const page = firstPage as PaginatedResult<T>;
+              if (isOffsetPagination(page)) {
+                return page.hasPrev ? page.page - 1 : undefined;
+              }
+              const p = page as unknown as Record<string, unknown>;
+              if (typeof p.hasPrev === "boolean" && typeof p.page === "number") {
+                return p.hasPrev ? (p.page as number) - 1 : undefined;
+              }
+              return undefined;
+            }
+          : undefined,
       maxPages: queryOpts.maxPages,
       options: {
         staleTime: queryOpts.staleTime ?? config.staleTime,
@@ -1011,10 +1265,18 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useMutationWithTransition<unknown, { data: FormData; id?: string; path?: string }>({
       mutationFn: ({ data, id, path }) => {
         if (!api.upload) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define an upload method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define an upload method`),
+          );
         }
         const auth = resolveAuth();
-        return api.upload({ token: auth.token, organizationId: auth.organizationId, data, id, path });
+        return api.upload({
+          token: auth.token,
+          organizationId: auth.organizationId,
+          data,
+          id,
+          path,
+        });
       },
       invalidateQueries: options?.invalidateQueries ?? [KEYS.lists()],
       onSuccess: (data) => options?.onSuccess?.(data),
@@ -1063,10 +1325,18 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { request: requestOpts, ...queryOpts } = options ?? {};
 
     return useListQuery<T>({
-      queryKey: KEYS.custom('deleted', withOrgParams(organizationId, restParams)),
+      queryKey: KEYS.custom("deleted", withOrgParams(organizationId, restParams)),
       queryFn: ({ signal }) => {
-        if (!api.getDeleted) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getDeleted method`));
-        return api.getDeleted({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
+        if (!api.getDeleted)
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a getDeleted method`),
+          );
+        return api.getDeleted({
+          token,
+          organizationId,
+          params: restParams,
+          options: { signal, ...requestOpts },
+        });
       },
       enabled: computeEnabled(token, queryOpts, !!api.getDeleted),
       options: {
@@ -1089,7 +1359,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { organizationId: _, ...restParams } = mergedParams;
 
     return useQuery<number, Error>({
-      queryKey: KEYS.custom('count', withOrgParams(organizationId, restParams)),
+      queryKey: KEYS.custom("count", withOrgParams(organizationId, restParams)),
       queryFn: () => api.count({ token: auth.token, organizationId, params: restParams }),
       enabled: options?.enabled ?? true,
       staleTime: options?.staleTime ?? config.staleTime,
@@ -1113,15 +1383,24 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     // already contains this slug. Resolves by the `slug` field on each item.
     const queryClient = useQueryClient();
     const listPlaceholder = useCallback(
-      () => (slug ? findItemInListCache<T>(queryClient, KEYS.lists(), slug, 'slug') : undefined),
+      () => (slug ? findItemInListCache<T>(queryClient, KEYS.lists(), slug, "slug") : undefined),
       [queryClient, slug],
     );
 
     const slugResult = useDetailQuery<T>({
-      queryKey: queryParams ? KEYS.custom('slug', slug, queryParams) : KEYS.custom('slug', slug),
+      queryKey: queryParams ? KEYS.custom("slug", slug, queryParams) : KEYS.custom("slug", slug),
       queryFn: ({ signal }) => {
-        if (!api.getBySlug) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getBySlug method`));
-        return api.getBySlug({ slug: slug!, token, organizationId, params: queryParams, options: { signal, ...requestOpts } });
+        if (!api.getBySlug)
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a getBySlug method`),
+          );
+        return api.getBySlug({
+          slug: slug ?? "",
+          token,
+          organizationId,
+          params: queryParams,
+          options: { signal, ...requestOpts },
+        });
       },
       enabled: computeEnabled(token, restOptions, !!api.getBySlug && !!slug),
       options: {
@@ -1168,10 +1447,18 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       // Org-normalized (withOrgParams): `{organizationId: null}` here used to
       // hash differently from the prefetcher's omitted field — SSR-prefetched
       // trees never hydrated for org-less (public storefront) visitors.
-      queryKey: KEYS.custom('tree', withOrgParams(organizationId, restParams)),
+      queryKey: KEYS.custom("tree", withOrgParams(organizationId, restParams)),
       queryFn: ({ signal }) => {
-        if (!api.getTree) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getTree method`));
-        return api.getTree({ token, organizationId, params: restParams, options: { signal, ...requestOpts } });
+        if (!api.getTree)
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a getTree method`),
+          );
+        return api.getTree({
+          token,
+          organizationId,
+          params: restParams,
+          options: { signal, ...requestOpts },
+        });
       },
       enabled: computeEnabled(token, queryOpts, !!api.getTree),
       options: {
@@ -1197,10 +1484,19 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { request: requestOpts, ...queryOpts } = options ?? {};
 
     return useListQuery<T>({
-      queryKey: KEYS.custom('children', parentId, withOrgParams(organizationId, restParams)),
+      queryKey: KEYS.custom("children", parentId, withOrgParams(organizationId, restParams)),
       queryFn: ({ signal }) => {
-        if (!api.getChildren) return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a getChildren method`));
-        return api.getChildren({ token, organizationId, parentId: parentId!, params: restParams, options: { signal, ...requestOpts } });
+        if (!api.getChildren)
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a getChildren method`),
+          );
+        return api.getChildren({
+          token,
+          organizationId,
+          parentId: parentId ?? "",
+          params: restParams,
+          options: { signal, ...requestOpts },
+        });
       },
       enabled: computeEnabled(token, queryOpts, !!api.getChildren && !!parentId),
       options: {
@@ -1214,10 +1510,17 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   // ========== useBulkActions ==========
 
   function useBulkActions(): BulkActions<T, TCreate> {
-    const bulkCreateMutation = useMutationWithTransition<unknown, { data: TCreate[]; token?: string | null; organizationId?: string | null }>({
+    const queryClient = useQueryClient();
+
+    const bulkCreateMutation = useMutationWithTransition<
+      unknown,
+      { data: TCreate[]; token?: string | null; organizationId?: string | null }
+    >({
       mutationFn: (vars) => {
         if (!api.bulkCreate) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkCreate method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a bulkCreate method`),
+          );
         }
         const auth = resolveAuth();
         return api.bulkCreate({
@@ -1227,6 +1530,18 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         });
       },
       invalidateQueries: [KEYS.lists(), KEYS.aggregations()],
+      // Seed detail caches from the returned documents BEFORE lists refetch —
+      // a grid that navigates straight into a just-created row renders from
+      // cache instead of fetching. Detail caches are NOT invalidated (the
+      // seeded docs ARE the server truth); only lists + aggregations refetch.
+      onSuccess: (raw) => {
+        const created = (raw as { data?: T[] } | null)?.data;
+        if (!Array.isArray(created)) return;
+        for (const doc of created) {
+          const id = resolveItemId(doc);
+          if (id) queryClient.setQueryData(KEYS.detail(id), doc);
+        }
+      },
       messages: {
         success: `${pluralName} created successfully`,
         error: `Failed to create ${(pluralName).toLowerCase()}`,
@@ -1234,20 +1549,38 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       toastHandler: instanceToast,
     });
 
-    const bulkUpdateMutation = useMutationWithTransition<unknown, { filter: Record<string, unknown>; data: Partial<T>; token?: string | null; organizationId?: string | null }>({
+    const bulkUpdateMutation = useMutationWithTransition<
+      unknown,
+      {
+        filter: Record<string, unknown>;
+        data: Partial<T>;
+        token?: string | null;
+        organizationId?: string | null;
+      }
+    >({
       mutationFn: (vars) => {
         if (!api.bulkUpdate) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkUpdate method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a bulkUpdate method`),
+          );
         }
         const auth = resolveAuth();
         return api.bulkUpdate({
           token: vars.token ?? auth.token,
           organizationId: vars.organizationId ?? auth.organizationId,
           filter: vars.filter,
-          data: vars.data as Parameters<NonNullable<typeof api.bulkUpdate>>[0]['data'],
+          data: vars.data as Parameters<NonNullable<typeof api.bulkUpdate>>[0]["data"],
         });
       },
       invalidateQueries: [KEYS.lists(), KEYS.details(), KEYS.aggregations()],
+      // Partial-success awareness: when the server reports zero modified rows
+      // (filter matched nothing, or values were already current), skip the
+      // full lists+details+aggregations refetch — nothing changed.
+      shouldInvalidate: (raw) => {
+        const r = raw as { modifiedCount?: number; upsertedCount?: number } | null;
+        if (!r || typeof r.modifiedCount !== "number") return true;
+        return r.modifiedCount > 0 || (r.upsertedCount ?? 0) > 0;
+      },
       messages: {
         success: `${pluralName} updated successfully`,
         error: `Failed to update ${(pluralName).toLowerCase()}`,
@@ -1255,10 +1588,15 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       toastHandler: instanceToast,
     });
 
-    const bulkDeleteMutation = useMutationWithTransition<unknown, { filter: Record<string, unknown>; token?: string | null; organizationId?: string | null }>({
+    const bulkDeleteMutation = useMutationWithTransition<
+      unknown,
+      { filter: Record<string, unknown>; token?: string | null; organizationId?: string | null }
+    >({
       mutationFn: (vars) => {
         if (!api.bulkDelete) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a bulkDelete method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a bulkDelete method`),
+          );
         }
         const auth = resolveAuth();
         return api.bulkDelete({
@@ -1268,6 +1606,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         });
       },
       invalidateQueries: [KEYS.lists(), KEYS.aggregations()],
+      // Same partial-success rule as bulkUpdate: zero deletions = no refetch.
+      shouldInvalidate: (raw) => {
+        const r = raw as { deletedCount?: number } | null;
+        if (!r || typeof r.deletedCount !== "number") return true;
+        return r.deletedCount > 0;
+      },
       messages: {
         success: `${pluralName} deleted successfully`,
         error: `Failed to delete ${(pluralName).toLowerCase()}`,
@@ -1300,24 +1644,37 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
   // ========== useAction (unified action router, arc v2.8+) ==========
 
-  function useAction<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+  function useAction<
+    TResult = T,
+    TBody extends Record<string, unknown> = Record<string, unknown>,
+  >(options?: {
     invalidateQueries?: QueryKey[];
     action?: string;
     messages?: MutationMessages<TResult, { id: string; action?: string; data?: TBody }>;
     onSuccess?: (data: TResult, variables: { id: string; action: string; data?: TBody }) => void;
     onError?: (error: Error, variables: { id: string; action: string; data?: TBody }) => void;
-    onSettled?: (data: TResult | undefined, error: Error | null, variables: { id: string; action: string; data?: TBody }) => void;
+    onSettled?: (
+      data: TResult | undefined,
+      error: Error | null,
+      variables: { id: string; action: string; data?: TBody },
+    ) => void;
   }) {
     const queryClient = useQueryClient();
 
     return useMutationWithTransition<TResult, { id: string; action?: string; data?: TBody }>({
       mutationFn: (vars) => {
         if (!api.dispatchAction) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a dispatchAction method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a dispatchAction method`),
+          );
         }
         const action = vars.action ?? options?.action;
         if (!action) {
-          return Promise.reject(new Error(`[arc-next] useAction: action name required (pass via mutate({ action }) or factory options)`));
+          return Promise.reject(
+            new Error(
+              `[arc-next] useAction: action name required (pass via mutate({ action }) or factory options)`,
+            ),
+          );
         }
         const auth = resolveAuth();
         return api.dispatchAction<TResult, TBody>({
@@ -1333,7 +1690,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       invalidateQueries: options?.invalidateQueries ?? [KEYS.lists(), KEYS.details()],
       // Pass typed variables (with action resolved) through to user callbacks.
       onSuccess: (data, vars) => {
-        const action = vars.action ?? options?.action ?? '';
+        const action = vars.action ?? options?.action ?? "";
         // Also invalidate the specific detail in case `details()` filter doesn't catch it.
         if (vars.id) {
           queryClient.invalidateQueries({ queryKey: KEYS.detail(vars.id) });
@@ -1341,11 +1698,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         options?.onSuccess?.(data, { id: vars.id, action, data: vars.data });
       },
       onError: (error, vars) => {
-        const action = vars.action ?? options?.action ?? '';
+        const action = vars.action ?? options?.action ?? "";
         options?.onError?.(error, { id: vars.id, action, data: vars.data });
       },
       onSettled: (data, error, vars) => {
-        const action = vars.action ?? options?.action ?? '';
+        const action = vars.action ?? options?.action ?? "";
         options?.onSettled?.(data, error, { id: vars.id, action, data: vars.data });
       },
       messages: options?.messages,
@@ -1355,15 +1712,26 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
   // ========== useSearchEngine / useSearchSimilar / useEmbed (search preset, arc v2.9+) ==========
 
-  function useSearchEngine<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+  function useSearchEngine<
+    TResult = T,
+    TBody extends Record<string, unknown> = Record<string, unknown>,
+  >(options?: {
     path?: string;
-    messages?: MutationMessages<TResult[] | PaginatedResult<TResult>, { query?: string; body?: TBody }>;
+    messages?: MutationMessages<
+      TResult[] | PaginatedResult<TResult>,
+      { query?: string; body?: TBody }
+    >;
     invalidateQueries?: QueryKey[];
   }) {
-    return useMutationWithTransition<TResult[] | PaginatedResult<TResult>, { query?: string; body?: TBody }>({
+    return useMutationWithTransition<
+      TResult[] | PaginatedResult<TResult>,
+      { query?: string; body?: TBody }
+    >({
       mutationFn: (vars) => {
         if (!api.searchEngine) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a searchEngine method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a searchEngine method`),
+          );
         }
         const auth = resolveAuth();
         return api.searchEngine<TResult, TBody>({
@@ -1380,15 +1748,26 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     });
   }
 
-  function useSearchSimilar<TResult = T, TBody extends Record<string, unknown> = Record<string, unknown>>(options?: {
+  function useSearchSimilar<
+    TResult = T,
+    TBody extends Record<string, unknown> = Record<string, unknown>,
+  >(options?: {
     path?: string;
-    messages?: MutationMessages<TResult[] | PaginatedResult<TResult>, { query?: string; vector?: number[]; body?: TBody }>;
+    messages?: MutationMessages<
+      TResult[] | PaginatedResult<TResult>,
+      { query?: string; vector?: number[]; body?: TBody }
+    >;
     invalidateQueries?: QueryKey[];
   }) {
-    return useMutationWithTransition<TResult[] | PaginatedResult<TResult>, { query?: string; vector?: number[]; body?: TBody }>({
+    return useMutationWithTransition<
+      TResult[] | PaginatedResult<TResult>,
+      { query?: string; vector?: number[]; body?: TBody }
+    >({
       mutationFn: (vars) => {
         if (!api.searchSimilar) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define a searchSimilar method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define a searchSimilar method`),
+          );
         }
         const auth = resolveAuth();
         return api.searchSimilar<TResult, TBody>({
@@ -1411,10 +1790,15 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     messages?: MutationMessages;
     invalidateQueries?: QueryKey[];
   }) {
-    return useMutationWithTransition<unknown, { input: string | string[]; body?: Record<string, unknown> }>({
+    return useMutationWithTransition<
+      unknown,
+      { input: string | string[]; body?: Record<string, unknown> }
+    >({
       mutationFn: (vars) => {
         if (!api.embed) {
-          return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define an embed method`));
+          return Promise.reject(
+            new Error(`[arc-next] "${entityKey}" api does not define an embed method`),
+          );
         }
         const auth = resolveAuth();
         return api.embed({
@@ -1433,10 +1817,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
   // ========== useAggregation (arc 2.13+ declarative aggregations) ==========
 
-  function useAggregation<TRow extends AggRow = AggRow, TData = AggResult<TRow>>(args: {
-    name: string;
-    filter?: Record<string, unknown>;
-  } & AggregationQueryOptions<TRow, TData>): UseQueryResult<TData> {
+  function useAggregation<TRow extends AggRow = AggRow, TData = AggResult<TRow>>(
+    args: {
+      name: string;
+      filter?: Record<string, unknown>;
+    } & AggregationQueryOptions<TRow, TData>,
+  ): UseQueryResult<TData> {
     const {
       name,
       filter,
@@ -1467,7 +1853,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       queryFn: () => {
         if (!api.aggregate) {
           return Promise.reject(
-            new Error(`[arc-next] "${entityKey}" api does not define an aggregate method (requires arc 2.13+)`),
+            new Error(
+              `[arc-next] "${entityKey}" api does not define an aggregate method (requires arc 2.13+)`,
+            ),
           );
         }
         return api.aggregate<TRow>({
@@ -1481,7 +1869,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       enabled:
         !!name &&
         !!api.aggregate &&
-        createEnabledRule(auth.token, { public: isPublic, enabled }, resolveAuthMode(), resolveHasStaticAuth()),
+        createEnabledRule(
+          auth.token,
+          { public: isPublic, enabled },
+          resolveAuthMode(),
+          resolveHasStaticAuth(),
+        ),
       staleTime,
       gcTime,
       refetchOnWindowFocus,
@@ -1508,7 +1901,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
    * parameterized variants) on `<resource>.updated` / `.deleted`.
    */
   function useResourceSync(options?: {
-    source?: 'ws' | 'sse';
+    source?: "ws" | "sse";
     resource?: string;
     path?: string;
     enabled?: boolean;
@@ -1518,7 +1911,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const queryClient = useQueryClient();
     const [isConnected, setIsConnected] = useState(false);
 
-    const source = options?.source ?? 'ws';
+    const source = options?.source ?? "ws";
     const resource = options?.resource ?? entityKey;
     const enabled = options?.enabled ?? true;
     const path = options?.path;
@@ -1538,27 +1931,30 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       //   2. SSE: { type, resource, data: doc, timestamp } (CrudEvent shape)
       const handleBroadcast = (incomingType: string, payload: unknown): void => {
         // Type can be `<resource>.<operation>` or just `<operation>`.
-        const dot = incomingType.lastIndexOf('.');
+        const dot = incomingType.lastIndexOf(".");
         const operation = (dot >= 0 ? incomingType.slice(dot + 1) : incomingType) as CrudOperation;
-        if (operation !== 'created' && operation !== 'updated' && operation !== 'deleted') return;
+        if (operation !== "created" && operation !== "updated" && operation !== "deleted") return;
 
         // Unwrap WS broadcast envelope (`data.data` is the doc).
         let doc: unknown = payload;
         if (
-          payload && typeof payload === 'object' && !Array.isArray(payload) &&
-          'data' in (payload as Record<string, unknown>)
+          payload &&
+          typeof payload === "object" &&
+          !Array.isArray(payload) &&
+          "data" in (payload as Record<string, unknown>)
         ) {
           const inner = (payload as { data: unknown }).data;
           if (inner !== undefined) doc = inner;
         }
 
-        const id = typeof doc === 'object' && doc !== null
-          ? (() => {
-              const o = doc as Record<string, unknown>;
-              const raw = idField ? o[idField] : (o._id ?? o.id);
-              return raw != null ? String(raw) : undefined;
-            })()
-          : undefined;
+        const id =
+          typeof doc === "object" && doc !== null
+            ? (() => {
+                const o = doc as Record<string, unknown>;
+                const raw = idField ? o[idField] : (o._id ?? o.id);
+                return raw != null ? String(raw) : undefined;
+              })()
+            : undefined;
 
         // Lists always invalidate — count/order can shift on any op.
         queryClient.invalidateQueries({ queryKey: KEYS.lists() });
@@ -1566,14 +1962,14 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         // underlying data, so any broadcast may shift their rows.
         queryClient.invalidateQueries({ queryKey: KEYS.aggregations() });
         // Detail invalidates on update/delete (prefix-match scoped variants).
-        if (id && (operation === 'updated' || operation === 'deleted')) {
+        if (id && (operation === "updated" || operation === "deleted")) {
           queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
         }
 
         onEventRef.current?.({ operation, id, data: doc });
       };
 
-      if (source === 'sse') {
+      if (source === "sse") {
         const handle = subscribeToEvents({
           resource,
           path,
@@ -1612,9 +2008,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   // ========== useNavigation ==========
 
   // Resolve router hook once at factory time — stable identity for Rules of Hooks.
-  const resolvedRouterHook: UseRouterHook = instanceNavigation
-    ?? useRouterHook
-    ?? (() => ({ push: () => {}, replace: () => {} }));
+  const resolvedRouterHook: UseRouterHook =
+    instanceNavigation ?? useRouterHook ?? (() => ({ push: () => {}, replace: () => {} }));
 
   function useNavigation(): NavigateFn<T> {
     const queryClient = useQueryClient();
@@ -1648,7 +2043,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           router.push(href, { scroll });
         }
       },
-      [queryClient, router]
+      [queryClient, router],
     );
   }
 

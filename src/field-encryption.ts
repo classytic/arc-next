@@ -47,7 +47,7 @@
  */
 
 /** Version prefix shared with `@classytic/arc/encryption`'s field cipher. */
-export const FIELD_ENVELOPE_PREFIX = 'arc.v1';
+export const FIELD_ENVELOPE_PREFIX = "arc.v1";
 
 const ENVELOPE_PARTS = 6; // arc . v1 . kid . iv . ct . tag
 const KEY_BYTES = 32; // AES-256
@@ -81,8 +81,8 @@ export interface FieldDecryption {
 }
 
 function b64urlToBytes(part: string): Uint8Array {
-  const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = b64.padEnd(Math.ceil(b64.length / 4) * 4, '=');
+  const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64.padEnd(Math.ceil(b64.length / 4) * 4, "=");
   const bin = atob(padded); // throws on non-base64 input — caller maps to null
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -91,8 +91,8 @@ function b64urlToBytes(part: string): Uint8Array {
 
 /** Parse an `arc.v1` envelope, or `null` when the token isn't one. */
 export function parseFieldEnvelope(token: string): ParsedFieldEnvelope | null {
-  if (typeof token !== 'string') return null;
-  const parts = token.split('.');
+  if (typeof token !== "string") return null;
+  const parts = token.split(".");
   if (parts.length !== ENVELOPE_PARTS) return null;
   const [v0, v1, kidPart, ivPart, ctPart, tagPart] = parts;
   if (`${v0}.${v1}` !== FIELD_ENVELOPE_PREFIX) return null;
@@ -111,7 +111,7 @@ export function parseFieldEnvelope(token: string): ParsedFieldEnvelope | null {
 
 /** True when a value LOOKS like an envelope (prefix match — cheap scan gate). */
 function hasEnvelopePrefix(value: unknown): value is string {
-  return typeof value === 'string' && value.startsWith(`${FIELD_ENVELOPE_PREFIX}.`);
+  return typeof value === "string" && value.startsWith(`${FIELD_ENVELOPE_PREFIX}.`);
 }
 
 /** True when a value is a well-formed `arc.v1` envelope. */
@@ -127,7 +127,7 @@ export function isFieldEnvelope(value: unknown): value is string {
 export function createFieldDecryption(options: FieldDecryptionOptions): FieldDecryption {
   const kids = Object.keys(options.keys);
   if (kids.length === 0) {
-    throw new Error('[arc-next/field-encryption] at least one key is required.');
+    throw new Error("[arc-next/field-encryption] at least one key is required.");
   }
   for (const kid of kids) {
     const key = options.keys[kid];
@@ -146,11 +146,11 @@ export function createFieldDecryption(options: FieldDecryptionOptions): FieldDec
       if (!raw) {
         throw new Error(
           `[arc-next/field-encryption] no key for kid '${kid}' — keep the previous ` +
-            'kid configured during rotation so in-flight envelopes still decrypt.',
+            "kid configured during rotation so in-flight envelopes still decrypt.",
         );
       }
-      p = crypto.subtle.importKey('raw', raw as BufferSource, { name: 'AES-GCM' }, false, [
-        'decrypt',
+      p = crypto.subtle.importKey("raw", raw as BufferSource, { name: "AES-GCM" }, false, [
+        "decrypt",
       ]);
       imported.set(kid, p);
     }
@@ -160,7 +160,7 @@ export function createFieldDecryption(options: FieldDecryptionOptions): FieldDec
   async function decryptField(token: string): Promise<string> {
     const envelope = parseFieldEnvelope(token);
     if (!envelope) {
-      throw new Error('[arc-next/field-encryption] malformed arc.v1 envelope.');
+      throw new Error("[arc-next/field-encryption] malformed arc.v1 envelope.");
     }
     const key = await keyFor(envelope.kid);
     // Web Crypto expects ciphertext||tag; arc's envelope carries them split.
@@ -169,7 +169,7 @@ export function createFieldDecryption(options: FieldDecryptionOptions): FieldDec
     combined.set(envelope.tag, envelope.ciphertext.length);
     try {
       const plaintext = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: envelope.iv as BufferSource },
+        { name: "AES-GCM", iv: envelope.iv as BufferSource },
         key,
         combined,
       );
@@ -179,7 +179,7 @@ export function createFieldDecryption(options: FieldDecryptionOptions): FieldDec
       // the two real causes without leaking crypto internals.
       throw new Error(
         `[arc-next/field-encryption] decryption failed for kid '${envelope.kid}' — ` +
-          'tampered ciphertext or wrong key.',
+          "tampered ciphertext or wrong key.",
       );
     }
   }
@@ -193,7 +193,7 @@ export function createFieldDecryption(options: FieldDecryptionOptions): FieldDec
       }
       return;
     }
-    if (node !== null && typeof node === 'object') {
+    if (node !== null && typeof node === "object") {
       const record = node as Record<string, unknown>;
       for (const prop of Object.keys(record)) {
         const value = record[prop];

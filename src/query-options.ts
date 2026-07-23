@@ -26,10 +26,10 @@
 // via the `ctx` argument there. On the client you may omit `ctx` only for
 // public (`allowPublic`) endpoints.
 
-import { queryOptions, infiniteQueryOptions } from '@tanstack/react-query';
-import { createQueryKeys, withOrgParams } from './cache.js';
-import { isOffsetPagination, isKeysetPagination } from './api.js';
-import type { PaginatedResult } from '@classytic/repo-core/pagination';
+import type { PaginatedResult } from "@classytic/repo-core/pagination";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import { isKeysetPagination, isOffsetPagination } from "./api.js";
+import { createQueryKeys, withOrgParams } from "./cache.js";
 
 // ============================================================================
 // Types
@@ -157,11 +157,16 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
     /** GET /:resource — mirrors `useList`'s key (scoped, org-normalized). */
     list(params: Record<string, unknown> = {}, ctx: QueryFnContext = {}) {
       const { org, rest } = resolveOrg(params, ctx);
-      const scope = org ? 'tenant' : 'super-admin';
+      const scope = org ? "tenant" : "super-admin";
       return queryOptions({
         queryKey: KEYS.scopedList(scope, withOrgParams(org, rest)),
         queryFn: ({ signal }) =>
-          api.getAll({ params: rest, token: ctx.token ?? null, organizationId: org, ...fwd(ctx, signal) }),
+          api.getAll({
+            params: rest,
+            token: ctx.token ?? null,
+            organizationId: org,
+            ...fwd(ctx, signal),
+          }),
       });
     },
 
@@ -186,10 +191,14 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
     bySlug(slug: string, opts: DetailQueryOpts = {}) {
       const { params, ...ctx } = opts;
       return queryOptions({
-        queryKey: params ? KEYS.custom('slug', slug, params) : KEYS.custom('slug', slug),
+        queryKey: params ? KEYS.custom("slug", slug, params) : KEYS.custom("slug", slug),
         queryFn: ({ signal }) => {
           if (!api.getBySlug) {
-            return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define getBySlug (slugLookup preset)`));
+            return Promise.reject(
+              new Error(
+                `[arc-next] "${entityKey}" api does not define getBySlug (slugLookup preset)`,
+              ),
+            );
           }
           return api.getBySlug({
             slug,
@@ -206,12 +215,21 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
     deleted(params: Record<string, unknown> = {}, ctx: QueryFnContext = {}) {
       const { org, rest } = resolveOrg(params, ctx);
       return queryOptions({
-        queryKey: KEYS.custom('deleted', withOrgParams(org, rest)),
+        queryKey: KEYS.custom("deleted", withOrgParams(org, rest)),
         queryFn: ({ signal }) => {
           if (!api.getDeleted) {
-            return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define getDeleted (softDelete preset)`));
+            return Promise.reject(
+              new Error(
+                `[arc-next] "${entityKey}" api does not define getDeleted (softDelete preset)`,
+              ),
+            );
           }
-          return api.getDeleted({ params: rest, token: ctx.token ?? null, organizationId: org, ...fwd(ctx, signal) });
+          return api.getDeleted({
+            params: rest,
+            token: ctx.token ?? null,
+            organizationId: org,
+            ...fwd(ctx, signal),
+          });
         },
       });
     },
@@ -220,12 +238,19 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
     tree(params: Record<string, unknown> = {}, ctx: QueryFnContext = {}) {
       const { org, rest } = resolveOrg(params, ctx);
       return queryOptions({
-        queryKey: KEYS.custom('tree', withOrgParams(org, rest)),
+        queryKey: KEYS.custom("tree", withOrgParams(org, rest)),
         queryFn: ({ signal }) => {
           if (!api.getTree) {
-            return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define getTree (tree preset)`));
+            return Promise.reject(
+              new Error(`[arc-next] "${entityKey}" api does not define getTree (tree preset)`),
+            );
           }
-          return api.getTree({ params: rest, token: ctx.token ?? null, organizationId: org, ...fwd(ctx, signal) });
+          return api.getTree({
+            params: rest,
+            token: ctx.token ?? null,
+            organizationId: org,
+            ...fwd(ctx, signal),
+          });
         },
       });
     },
@@ -234,12 +259,20 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
     children(parentId: string, params: Record<string, unknown> = {}, ctx: QueryFnContext = {}) {
       const { org, rest } = resolveOrg(params, ctx);
       return queryOptions({
-        queryKey: KEYS.custom('children', parentId, withOrgParams(org, rest)),
+        queryKey: KEYS.custom("children", parentId, withOrgParams(org, rest)),
         queryFn: ({ signal }) => {
           if (!api.getChildren) {
-            return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define getChildren (tree preset)`));
+            return Promise.reject(
+              new Error(`[arc-next] "${entityKey}" api does not define getChildren (tree preset)`),
+            );
           }
-          return api.getChildren({ parentId, params: rest, token: ctx.token ?? null, organizationId: org, ...fwd(ctx, signal) });
+          return api.getChildren({
+            parentId,
+            params: rest,
+            token: ctx.token ?? null,
+            organizationId: org,
+            ...fwd(ctx, signal),
+          });
         },
       });
     },
@@ -252,9 +285,17 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
         queryKey: KEYS.aggregation(name, filterKey),
         queryFn: ({ signal }) => {
           if (!api.aggregate) {
-            return Promise.reject(new Error(`[arc-next] "${entityKey}" api does not define aggregate (arc 2.13+)`));
+            return Promise.reject(
+              new Error(`[arc-next] "${entityKey}" api does not define aggregate (arc 2.13+)`),
+            );
           }
-          return api.aggregate({ name, filter, token: ctx.token ?? null, organizationId: org, ...fwd(ctx, signal) });
+          return api.aggregate({
+            name,
+            filter,
+            token: ctx.token ?? null,
+            organizationId: org,
+            ...fwd(ctx, signal),
+          });
         },
       });
     },
@@ -265,9 +306,9 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
      */
     infiniteList(params: Record<string, unknown> = {}, ctx: QueryFnContext = {}) {
       const { org, rest } = resolveOrg(params, ctx);
-      const scope = org ? 'tenant' : 'super-admin';
+      const scope = org ? "tenant" : "super-admin";
       return infiniteQueryOptions({
-        queryKey: [...KEYS.scopedList(scope, withOrgParams(org, rest)), 'infinite'],
+        queryKey: [...KEYS.scopedList(scope, withOrgParams(org, rest)), "infinite"],
         queryFn: ({ pageParam, signal }) =>
           api.getAll({
             params: { ...rest, ...(pageParam ? { page: pageParam } : {}) },
@@ -287,7 +328,7 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
             return p.hasNext ? p.page + 1 : undefined;
           }
           const p = lastPage as Record<string, unknown> | null;
-          if (p && typeof p.hasNext === 'boolean' && typeof p.page === 'number') {
+          if (p && typeof p.hasNext === "boolean" && typeof p.page === "number") {
             return p.hasNext ? (p.page as number) + 1 : undefined;
           }
           return undefined;

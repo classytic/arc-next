@@ -1,13 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useQueryClient, type QueryKey } from "@tanstack/react-query";
-import {
-  ArcApiError,
-  buildStreamUrl,
-  _getAuthErrorHandler,
-  _runAuthRecovery,
-} from "./client.js";
+import { type QueryKey, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { _getAuthErrorHandler, _runAuthRecovery, ArcApiError, buildStreamUrl } from "./client.js";
 
 // ============================================================================
 // Types
@@ -34,7 +29,7 @@ export interface ArcWsMessage<TData = unknown> {
  * Backend also accepts `channel` as alias.
  */
 export interface ArcSubscribeFrame {
-  type: 'subscribe' | 'unsubscribe';
+  type: "subscribe" | "unsubscribe";
   resource?: string;
   channel?: string;
   /** Free-form additional fields the backend may use (token, filters, etc.). */
@@ -103,8 +98,7 @@ export interface ConnectWsHandle<TData = unknown> {
   reconnect: () => void;
 }
 
-export interface WebSocketOptions<TData = unknown>
-  extends ConnectWsOptions<TData> {
+export interface WebSocketOptions<TData = unknown> extends ConnectWsOptions<TData> {
   /** Query keys to invalidate when any matching message is received. */
   invalidateQueries?: QueryKey[];
   /** Whether the socket is active. Default: true. */
@@ -153,10 +147,10 @@ export interface WebSocketResult<TData = unknown> {
  * const socket = new WebSocket(buildWsUrl('/ws'));
  */
 export function buildWsUrl(
-  path: string = '/ws',
+  path: string = "/ws",
   params: Record<string, string | number | boolean | null | undefined> = {},
 ): string {
-  return buildStreamUrl(path, params, 'ws');
+  return buildStreamUrl(path, params, "ws");
 }
 
 // ============================================================================
@@ -187,7 +181,7 @@ export function connectWs<TData = unknown>(
 ): ConnectWsHandle<TData> {
   const {
     url,
-    path = '/ws',
+    path = "/ws",
     reconnectDelay = 3000,
     maxReconnectAttempts = Infinity,
     heartbeatInterval = 0,
@@ -208,13 +202,13 @@ export function connectWs<TData = unknown>(
 
   const matchesPattern = (type: string): boolean => {
     if (patterns.length === 0) return true;
-    return patterns.some((p) => (p.endsWith('.') ? type.startsWith(p) : type === p));
+    return patterns.some((p) => (p.endsWith(".") ? type.startsWith(p) : type === p));
   };
 
   const sendRaw = (payload: unknown): boolean => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     try {
-      ws.send(typeof payload === 'string' ? payload : JSON.stringify(payload));
+      ws.send(typeof payload === "string" ? payload : JSON.stringify(payload));
       return true;
     } catch {
       return false;
@@ -227,7 +221,7 @@ export function connectWs<TData = unknown>(
     // Per-type listeners + global wildcard.
     const exact = listeners.get(message.type);
     if (exact) for (const fn of exact) fn(message);
-    const wildcard = listeners.get('*');
+    const wildcard = listeners.get("*");
     if (wildcard) for (const fn of wildcard) fn(message);
   };
 
@@ -244,7 +238,11 @@ export function connectWs<TData = unknown>(
       ws.onerror = null;
       ws.onmessage = null;
       ws.onopen = null;
-      try { ws.close(); } catch { /* ignore */ }
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
     }
     // Defensive: clear any heartbeat from the previous socket BEFORE the new
     // `onopen` fires. Browsers dispatch `onclose` async, so a manual reconnect()
@@ -266,12 +264,12 @@ export function connectWs<TData = unknown>(
 
       // Replay subscriptions after every (re)connect.
       for (const resource of subscriptions) {
-        sendRaw({ type: 'subscribe', resource } as ArcSubscribeFrame);
+        sendRaw({ type: "subscribe", resource } as ArcSubscribeFrame);
       }
 
       if (heartbeatInterval > 0) {
         heartbeatTimer = setInterval(() => {
-          sendRaw({ type: 'ping' });
+          sendRaw({ type: "ping" });
         }, heartbeatInterval);
       }
     };
@@ -279,10 +277,10 @@ export function connectWs<TData = unknown>(
     ws.onmessage = (event) => {
       let parsed: ArcWsMessage<TData>;
       try {
-        parsed = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data));
+        parsed = JSON.parse(typeof event.data === "string" ? event.data : String(event.data));
       } catch {
         // Non-JSON frame (text/binary) — synthesize a wrapper.
-        parsed = { type: 'message', data: event.data as TData };
+        parsed = { type: "message", data: event.data as TData };
       }
       dispatch(parsed);
     };
@@ -312,10 +310,7 @@ export function connectWs<TData = unknown>(
       // token in the URL; on 'skip', we surface the close and stop reconnecting.
       const { handler, maxAuthRetries } = _getAuthErrorHandler();
       const isAuthClose =
-        event.code === 1008 ||
-        event.code === 3401 ||
-        event.code === 4001 ||
-        event.code === 4401;
+        event.code === 1008 || event.code === 3401 || event.code === 4001 || event.code === 4401;
 
       if (handler && isAuthClose && wsAuthRetries < maxAuthRetries) {
         wsAuthRetries += 1;
@@ -323,19 +318,23 @@ export function connectWs<TData = unknown>(
           event.reason || `WebSocket closed with auth code ${event.code}`,
           {
             status: 401,
-            statusText: 'WebSocket auth failure',
-            json: { code: 'arc.websocket.unauthorized', wsCloseCode: event.code, reason: event.reason },
+            statusText: "WebSocket auth failure",
+            json: {
+              code: "arc.websocket.unauthorized",
+              wsCloseCode: event.code,
+              reason: event.reason,
+            },
             endpoint: url ?? path,
-            method: 'GET',
+            method: "GET",
           },
         );
         _runAuthRecovery(handler, {
           error: synthError,
-          request: { method: 'GET', endpoint: url ?? path },
+          request: { method: "GET", endpoint: url ?? path },
           attempt: wsAuthRetries,
         })
           .then(({ decision }) => {
-            if (decision === 'retry') {
+            if (decision === "retry") {
               // Reset reconnectAttempts so we don't apply backoff to the
               // recovery — the refresh already took its own time.
               reconnectAttempts = 0;
@@ -354,10 +353,7 @@ export function connectWs<TData = unknown>(
       // to the existing reconnect-with-backoff behavior.
       if (reconnectAttempts < maxReconnectAttempts) {
         reconnectAttempts += 1;
-        const delay = Math.min(
-          reconnectDelay * Math.pow(1.5, reconnectAttempts - 1),
-          30000,
-        );
+        const delay = Math.min(reconnectDelay * 1.5 ** (reconnectAttempts - 1), 30000);
         reconnectTimer = setTimeout(connect, delay);
       }
     };
@@ -376,13 +372,13 @@ export function connectWs<TData = unknown>(
     subscribe: (resource) => {
       subscriptions.add(resource);
       if (ws?.readyState === WebSocket.OPEN) {
-        sendRaw({ type: 'subscribe', resource } as ArcSubscribeFrame);
+        sendRaw({ type: "subscribe", resource } as ArcSubscribeFrame);
       }
     },
     unsubscribe: (resource) => {
       subscriptions.delete(resource);
       if (ws?.readyState === WebSocket.OPEN) {
-        sendRaw({ type: 'unsubscribe', resource } as ArcSubscribeFrame);
+        sendRaw({ type: "unsubscribe", resource } as ArcSubscribeFrame);
       }
     },
     on: (eventType, handler) => {
@@ -408,7 +404,11 @@ export function connectWs<TData = unknown>(
         heartbeatTimer = null;
       }
       if (ws) {
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
         ws = null;
       }
       connected = false;
@@ -444,7 +444,7 @@ export function useWebSocket<TData = unknown>(
 ): WebSocketResult<TData> {
   const {
     url,
-    path = '/ws',
+    path = "/ws",
     enabled = true,
     trackLastMessage = true,
     trackMessageCount = true,
@@ -466,9 +466,9 @@ export function useWebSocket<TData = unknown>(
   // Stabilize array deps by content
   const subscribeKey = JSON.stringify(options.subscribe ?? []);
   const patternsKey = JSON.stringify(options.patterns ?? null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: subscribeKey IS options.subscribe, content-stabilized so inline arrays don't re-run effects
   const subscribeArr = useMemo(() => options.subscribe ?? [], [subscribeKey]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: patternsKey IS options.patterns, content-stabilized
   const patternsArr = useMemo(() => options.patterns, [patternsKey]);
 
   useEffect(() => {

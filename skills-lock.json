@@ -22,10 +22,34 @@
       "sourceType": "github",
       "computedHash": "9105cc29a462e8d07da45bbdbc90c3a60be3ba32fbd9d99d49944f5b971f8f96"
     },
+    "nextjs": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "skillPath": "skills/.curated/nextjs/SKILL.md",
+      "computedHash": "870064c2c1098e06a812b63663c7404c533618d2f33896fe5f028f6a4cbc4cfb"
+    },
     "organization-best-practices": {
       "source": "better-auth/skills",
       "sourceType": "github",
       "computedHash": "ec7bfca730d9263a357bfb059448035e62339ee58eb6191dfe9029088ed5bdf2"
+    },
+    "react-19": {
+      "source": "claude-dev-suite/claude-dev-suite",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-frameworks/react-19/SKILL.md",
+      "computedHash": "7f118a47f9c842afc52f88cb5a52959effe391f64bc9ab001855342369acf93d"
+    },
+    "react-performance-optimization": {
+      "source": "nickcrew/claude-ctx-plugin",
+      "sourceType": "github",
+      "skillPath": "skills/react-performance-optimization/SKILL.md",
+      "computedHash": "8338b086e8e166e0b32ec3493a6b0f80c2e388cb5d3da10bcecaa1f2ce34d43d"
+    },
+    "react-testing-library": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "skillPath": "skills/.experimental/react-testing-library/SKILL.md",
+      "computedHash": "f5aa250de3181d75f34945936dce277811288feac799198d28ef0ff91ef54d42"
     },
     "tanstack-query-best-practices": {
       "source": "deckardger/tanstack-agent-skills",

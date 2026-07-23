@@ -1,8 +1,4 @@
-import type {
-  AnyBaseApi,
-  DocOf,
-  ScopedArgs,
-} from '../api.js';
+import type { AnyBaseApi, DocOf, ScopedArgs } from "../api.js";
 
 // ============================================================================
 // Methods added by the slug-lookup preset
@@ -10,10 +6,12 @@ import type {
 
 export interface SlugLookupMethods<TDoc> {
   /** Fetch a single doc by slug. Backend mounts `GET /:resource/slug/:slug`. */
-  getBySlug(args: ScopedArgs & {
-    slug: string;
-    params?: { select?: string; populate?: string | string[] };
-  }): Promise<TDoc>;
+  getBySlug(
+    args: ScopedArgs & {
+      slug: string;
+      params?: { select?: string; populate?: string | string[] };
+    },
+  ): Promise<TDoc>;
 }
 
 // ============================================================================
@@ -38,8 +36,8 @@ export function withSlugLookup<TApi extends AnyBaseApi>(
   type TDoc = DocOf<TApi>;
   const ext: SlugLookupMethods<TDoc> = {
     async getBySlug({ token = null, organizationId = null, slug, params = {}, options = {} }) {
-      if (!slug) throw new Error('Slug is required');
-      return api.request<TDoc>('GET', `${api.baseUrl}/slug/${slug}`, {
+      if (!slug) throw new Error("Slug is required");
+      return api.request<TDoc>("GET", `${api.baseUrl}/slug/${slug}`, {
         token,
         organizationId,
         params,

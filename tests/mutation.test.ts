@@ -1,15 +1,15 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import React from 'react';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { configureClient } from "../src/client.js";
 import {
   configureToast,
   getToastHandler,
-  useMutationWithTransition,
   useMutationWithOptimistic,
-} from '../src/mutation.js';
-import { QUERY_CONFIGS } from '../src/query.js';
-import { configureClient } from '../src/client.js';
+  useMutationWithTransition,
+} from "../src/mutation.js";
+import { QUERY_CONFIGS } from "../src/query.js";
 
 // ============================================================================
 // Helpers
@@ -26,11 +26,7 @@ function createTestQueryClient() {
 
 function createWrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
-    return React.createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children
-    );
+    return React.createElement(QueryClientProvider, { client: queryClient }, children);
   };
 }
 
@@ -38,8 +34,8 @@ function createWrapper(queryClient: QueryClient) {
 // configureToast
 // ============================================================================
 
-describe('configureToast', () => {
-  it('accepts custom toast handler', () => {
+describe("configureToast", () => {
+  it("accepts custom toast handler", () => {
     const handler = {
       success: vi.fn(),
       error: vi.fn(),
@@ -48,33 +44,33 @@ describe('configureToast', () => {
   });
 });
 
-describe('getToastHandler', () => {
-  it('returns the configured handler so domain code can fire ad-hoc toasts', () => {
+describe("getToastHandler", () => {
+  it("returns the configured handler so domain code can fire ad-hoc toasts", () => {
     const success = vi.fn();
     const error = vi.fn();
     configureToast({ success, error });
 
     const handler = getToastHandler();
-    handler.success('saved');
-    handler.error('boom');
+    handler.success("saved");
+    handler.error("boom");
 
-    expect(success).toHaveBeenCalledWith('saved');
-    expect(error).toHaveBeenCalledWith('boom');
+    expect(success).toHaveBeenCalledWith("saved");
+    expect(error).toHaveBeenCalledWith("boom");
   });
 
-  it('returns the same instance configureToast was called with (identity preserved)', () => {
+  it("returns the same instance configureToast was called with (identity preserved)", () => {
     const handler = { success: vi.fn(), error: vi.fn() };
     configureToast(handler);
     expect(getToastHandler()).toBe(handler);
   });
 
-  it('returns a non-null default handler before configureToast is ever called (no crashes in early-boot code)', () => {
+  it("returns a non-null default handler before configureToast is ever called (no crashes in early-boot code)", () => {
     // Module-level state — we can't fully reset it within a test run, but the
     // contract is that getToastHandler() never returns null/undefined regardless
     // of timing. Verify the shape.
     const handler = getToastHandler();
-    expect(typeof handler.success).toBe('function');
-    expect(typeof handler.error).toBe('function');
+    expect(typeof handler.success).toBe("function");
+    expect(typeof handler.error).toBe("function");
   });
 });
 
@@ -82,25 +78,25 @@ describe('getToastHandler', () => {
 // QUERY_CONFIGS presets
 // ============================================================================
 
-describe('QUERY_CONFIGS', () => {
-  it('has realtime preset with short stale time and refetch interval', () => {
+describe("QUERY_CONFIGS", () => {
+  it("has realtime preset with short stale time and refetch interval", () => {
     expect(QUERY_CONFIGS.realtime.staleTime).toBe(20_000);
     expect(QUERY_CONFIGS.realtime.refetchInterval).toBe(30_000);
   });
 
-  it('has frequent preset', () => {
+  it("has frequent preset", () => {
     expect(QUERY_CONFIGS.frequent.staleTime).toBe(60_000);
   });
 
-  it('has stable preset', () => {
+  it("has stable preset", () => {
     expect(QUERY_CONFIGS.stable.staleTime).toBe(300_000);
   });
 
-  it('has static preset with longest stale time', () => {
+  it("has static preset with longest stale time", () => {
     expect(QUERY_CONFIGS.static.staleTime).toBe(600_000);
   });
 
-  it('stale times are in ascending order', () => {
+  it("stale times are in ascending order", () => {
     expect(QUERY_CONFIGS.realtime.staleTime).toBeLessThan(QUERY_CONFIGS.frequent.staleTime);
     expect(QUERY_CONFIGS.frequent.staleTime).toBeLessThan(QUERY_CONFIGS.stable.staleTime);
     expect(QUERY_CONFIGS.stable.staleTime).toBeLessThan(QUERY_CONFIGS.static.staleTime);
@@ -111,12 +107,12 @@ describe('QUERY_CONFIGS', () => {
 // useMutationWithTransition
 // ============================================================================
 
-describe('useMutationWithTransition', () => {
+describe("useMutationWithTransition", () => {
   let queryClient: QueryClient;
   const toastHandler = { success: vi.fn(), error: vi.fn() };
 
   beforeEach(() => {
-    configureClient({ baseUrl: 'http://api.test' });
+    configureClient({ baseUrl: "http://api.test" });
     configureToast(toastHandler);
     queryClient = createTestQueryClient();
     toastHandler.success.mockClear();
@@ -127,52 +123,53 @@ describe('useMutationWithTransition', () => {
     queryClient.clear();
   });
 
-  it('calls mutationFn and resolves', async () => {
-    const mutationFn = vi.fn().mockResolvedValue({ id: '1' });
+  it("calls mutationFn and resolves", async () => {
+    const mutationFn = vi.fn().mockResolvedValue({ id: "1" });
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: { success: 'Done!' },
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: { success: "Done!" },
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
-      await result.current.mutateAsync({ name: 'Test' });
+      await result.current.mutateAsync({ name: "Test" });
     });
 
-    expect(mutationFn.mock.calls[0]![0]).toEqual({ name: 'Test' });
-    expect(toastHandler.success).toHaveBeenCalledWith('Done!');
+    expect(mutationFn.mock.calls[0]![0]).toEqual({ name: "Test" });
+    expect(toastHandler.success).toHaveBeenCalledWith("Done!");
   });
 
-  it('shows error toast on failure', async () => {
-    const mutationFn = vi.fn().mockRejectedValue(new Error('Server error'));
+  it("shows error toast on failure", async () => {
+    const mutationFn = vi.fn().mockRejectedValue(new Error("Server error"));
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: { error: 'Custom error message' },
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: { error: "Custom error message" },
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
       try {
-        await result.current.mutateAsync({ name: 'Test' });
+        await result.current.mutateAsync({ name: "Test" });
       } catch {}
     });
 
-    expect(toastHandler.error).toHaveBeenCalledWith('Custom error message');
+    expect(toastHandler.error).toHaveBeenCalledWith("Custom error message");
   });
 
-  it('uses default error message when no custom message', async () => {
-    const mutationFn = vi.fn().mockRejectedValue(new Error('DB connection failed'));
+  it("uses default error message when no custom message", async () => {
+    const mutationFn = vi.fn().mockRejectedValue(new Error("DB connection failed"));
 
-    const { result } = renderHook(
-      () => useMutationWithTransition({ mutationFn }),
-      { wrapper: createWrapper(queryClient) }
-    );
+    const { result } = renderHook(() => useMutationWithTransition({ mutationFn }), {
+      wrapper: createWrapper(queryClient),
+    });
 
     await act(async () => {
       try {
@@ -180,23 +177,24 @@ describe('useMutationWithTransition', () => {
       } catch {}
     });
 
-    expect(toastHandler.error).toHaveBeenCalledWith('DB connection failed');
+    expect(toastHandler.error).toHaveBeenCalledWith("DB connection failed");
   });
 
-  it('invalidates queries on success', async () => {
-    const listKey = ['items', 'list'];
+  it("invalidates queries on success", async () => {
+    const listKey = ["items", "list"];
     queryClient.setQueryData(listKey, { data: [] });
-    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
 
-    const mutationFn = vi.fn().mockResolvedValue({ id: '1' });
+    const mutationFn = vi.fn().mockResolvedValue({ id: "1" });
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        invalidateQueries: [listKey],
-        messages: { success: 'Created' },
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          invalidateQueries: [listKey],
+          messages: { success: "Created" },
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -206,35 +204,37 @@ describe('useMutationWithTransition', () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: listKey });
   });
 
-  it('calls onSuccess callback', async () => {
+  it("calls onSuccess callback", async () => {
     const onSuccess = vi.fn();
-    const mutationFn = vi.fn().mockResolvedValue({ id: '1' });
+    const mutationFn = vi.fn().mockResolvedValue({ id: "1" });
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        onSuccess,
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          onSuccess,
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
-      await result.current.mutateAsync({ name: 'X' });
+      await result.current.mutateAsync({ name: "X" });
     });
 
-    expect(onSuccess).toHaveBeenCalledWith({ id: '1' }, { name: 'X' });
+    expect(onSuccess).toHaveBeenCalledWith({ id: "1" }, { name: "X" });
   });
 
-  it('calls onError callback', async () => {
+  it("calls onError callback", async () => {
     const onError = vi.fn();
-    const mutationFn = vi.fn().mockRejectedValue(new Error('fail'));
+    const mutationFn = vi.fn().mockRejectedValue(new Error("fail"));
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        onError,
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          onError,
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -246,16 +246,17 @@ describe('useMutationWithTransition', () => {
     expect(onError).toHaveBeenCalledWith(expect.any(Error), expect.anything());
   });
 
-  it('calls onSettled callback on success', async () => {
+  it("calls onSettled callback on success", async () => {
     const onSettled = vi.fn();
     const mutationFn = vi.fn().mockResolvedValue({ ok: true });
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        onSettled,
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          onSettled,
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -265,16 +266,17 @@ describe('useMutationWithTransition', () => {
     expect(onSettled).toHaveBeenCalledWith({ ok: true }, null, expect.anything());
   });
 
-  it('suppresses toast when showToast is false', async () => {
+  it("suppresses toast when showToast is false", async () => {
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: { success: 'Done' },
-        showToast: false,
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: { success: "Done" },
+          showToast: false,
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -284,35 +286,39 @@ describe('useMutationWithTransition', () => {
     expect(toastHandler.success).not.toHaveBeenCalled();
   });
 
-  it('uses instance toast handler over global', async () => {
+  it("uses instance toast handler over global", async () => {
     const instanceToast = { success: vi.fn(), error: vi.fn() };
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: { success: 'Instance toast' },
-        toastHandler: instanceToast,
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: { success: "Instance toast" },
+          toastHandler: instanceToast,
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
       await result.current.mutateAsync({});
     });
 
-    expect(instanceToast.success).toHaveBeenCalledWith('Instance toast');
+    expect(instanceToast.success).toHaveBeenCalledWith("Instance toast");
     expect(toastHandler.success).not.toHaveBeenCalled();
   });
 
-  it('reports isPending during mutation', async () => {
+  it("reports isPending during mutation", async () => {
     let resolve: (v: unknown) => void;
-    const mutationFn = vi.fn().mockReturnValue(new Promise(r => { resolve = r; }));
-
-    const { result } = renderHook(
-      () => useMutationWithTransition({ mutationFn }),
-      { wrapper: createWrapper(queryClient) }
+    const mutationFn = vi.fn().mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
     );
+
+    const { result } = renderHook(() => useMutationWithTransition({ mutationFn }), {
+      wrapper: createWrapper(queryClient),
+    });
 
     expect(result.current.isPending).toBe(false);
 
@@ -335,13 +341,12 @@ describe('useMutationWithTransition', () => {
     });
   });
 
-  it('exposes reset function', async () => {
+  it("exposes reset function", async () => {
     const mutationFn = vi.fn().mockResolvedValue({});
 
-    const { result } = renderHook(
-      () => useMutationWithTransition({ mutationFn }),
-      { wrapper: createWrapper(queryClient) }
-    );
+    const { result } = renderHook(() => useMutationWithTransition({ mutationFn }), {
+      wrapper: createWrapper(queryClient),
+    });
 
     await act(async () => {
       await result.current.mutateAsync({});
@@ -360,35 +365,37 @@ describe('useMutationWithTransition', () => {
     });
   });
 
-  it('supports dynamic success message via function', async () => {
-    const mutationFn = vi.fn().mockResolvedValue({ name: 'Widget' });
+  it("supports dynamic success message via function", async () => {
+    const mutationFn = vi.fn().mockResolvedValue({ name: "Widget" });
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: {
-          success: (data: unknown) => `Created: ${(data as { name: string }).name}`,
-        },
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: {
+            success: (data: unknown) => `Created: ${(data as { name: string }).name}`,
+          },
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
       await result.current.mutateAsync({});
     });
 
-    expect(toastHandler.success).toHaveBeenCalledWith('Created: Widget');
+    expect(toastHandler.success).toHaveBeenCalledWith("Created: Widget");
   });
 
-  it('does not show success toast when message is undefined', async () => {
+  it("does not show success toast when message is undefined", async () => {
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: {},
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: {},
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -398,16 +405,17 @@ describe('useMutationWithTransition', () => {
     expect(toastHandler.success).not.toHaveBeenCalled();
   });
 
-  it('suppresses success toast when shouldToast returns false', async () => {
+  it("suppresses success toast when shouldToast returns false", async () => {
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: { success: 'Done' },
-        shouldToast: () => false,
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: { success: "Done" },
+          shouldToast: () => false,
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -417,16 +425,17 @@ describe('useMutationWithTransition', () => {
     expect(toastHandler.success).not.toHaveBeenCalled();
   });
 
-  it('suppresses error toast when shouldToast returns false', async () => {
-    const mutationFn = vi.fn().mockRejectedValue(new Error('fail'));
+  it("suppresses error toast when shouldToast returns false", async () => {
+    const mutationFn = vi.fn().mockRejectedValue(new Error("fail"));
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: { error: 'Oops' },
-        shouldToast: () => false,
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: { error: "Oops" },
+          shouldToast: () => false,
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -438,23 +447,24 @@ describe('useMutationWithTransition', () => {
     expect(toastHandler.error).not.toHaveBeenCalled();
   });
 
-  it('shows toast when shouldToast returns true', async () => {
+  it("shows toast when shouldToast returns true", async () => {
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithTransition({
-        mutationFn,
-        messages: { success: 'Yes!' },
-        shouldToast: () => true,
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: { success: "Yes!" },
+          shouldToast: () => true,
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
       await result.current.mutateAsync({});
     });
 
-    expect(toastHandler.success).toHaveBeenCalledWith('Yes!');
+    expect(toastHandler.success).toHaveBeenCalledWith("Yes!");
   });
 });
 
@@ -462,12 +472,12 @@ describe('useMutationWithTransition', () => {
 // useMutationWithOptimistic
 // ============================================================================
 
-describe('useMutationWithOptimistic', () => {
+describe("useMutationWithOptimistic", () => {
   let queryClient: QueryClient;
   const toastHandler = { success: vi.fn(), error: vi.fn() };
 
   beforeEach(() => {
-    configureClient({ baseUrl: 'http://api.test' });
+    configureClient({ baseUrl: "http://api.test" });
     configureToast(toastHandler);
     queryClient = createTestQueryClient();
     toastHandler.success.mockClear();
@@ -478,29 +488,34 @@ describe('useMutationWithOptimistic', () => {
     queryClient.clear();
   });
 
-  it('applies optimistic update before mutation resolves', async () => {
-    const listKey = ['items', 'list'];
-    queryClient.setQueryData(listKey, { data: [{ _id: '1', name: 'Old' }] });
+  it("applies optimistic update before mutation resolves", async () => {
+    const listKey = ["items", "list"];
+    queryClient.setQueryData(listKey, { data: [{ _id: "1", name: "Old" }] });
 
     let resolve: (v: unknown) => void;
-    const mutationFn = vi.fn().mockReturnValue(new Promise(r => { resolve = r; }));
+    const mutationFn = vi.fn().mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
 
     const { result } = renderHook(
-      () => useMutationWithOptimistic({
-        mutationFn,
-        queryKeys: [listKey],
-        optimisticUpdate: (old, variables) => {
-          const d = old as { data: unknown[] };
-          return { data: [...d.data, variables] };
-        },
-        messages: { success: 'Added' },
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithOptimistic({
+          mutationFn,
+          queryKeys: [listKey],
+          optimisticUpdate: (old, variables) => {
+            const d = old as { data: unknown[] };
+            return { data: [...d.data, variables] };
+          },
+          messages: { success: "Added" },
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     let promise: Promise<unknown>;
     act(() => {
-      promise = result.current.mutateAsync({ _id: '2', name: 'New' }).catch(() => {});
+      promise = result.current.mutateAsync({ _id: "2", name: "New" }).catch(() => {});
     });
 
     // Optimistic update should be applied immediately
@@ -510,28 +525,29 @@ describe('useMutationWithOptimistic', () => {
     });
 
     await act(async () => {
-      resolve!({ _id: '2', name: 'New' });
+      resolve!({ _id: "2", name: "New" });
       await promise;
     });
   });
 
-  it('rolls back optimistic update on error', async () => {
-    const listKey = ['items', 'list'];
-    const original = { data: [{ _id: '1', name: 'Item 1' }] };
+  it("rolls back optimistic update on error", async () => {
+    const listKey = ["items", "list"];
+    const original = { data: [{ _id: "1", name: "Item 1" }] };
     queryClient.setQueryData(listKey, original);
 
-    const mutationFn = vi.fn().mockRejectedValue(new Error('Server error'));
+    const mutationFn = vi.fn().mockRejectedValue(new Error("Server error"));
 
     const { result } = renderHook(
-      () => useMutationWithOptimistic({
-        mutationFn,
-        queryKeys: [listKey],
-        optimisticUpdate: (old) => {
-          const d = old as { data: unknown[] };
-          return { data: [...d.data, { _id: '2', name: 'Optimistic' }] };
-        },
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithOptimistic({
+          mutationFn,
+          queryKeys: [listKey],
+          optimisticUpdate: (old) => {
+            const d = old as { data: unknown[] };
+            return { data: [...d.data, { _id: "2", name: "Optimistic" }] };
+          },
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -543,22 +559,23 @@ describe('useMutationWithOptimistic', () => {
     // Should be rolled back to original
     const data = queryClient.getQueryData(listKey) as { data: unknown[] };
     expect(data.data).toHaveLength(1);
-    expect(data.data[0]).toEqual({ _id: '1', name: 'Item 1' });
+    expect(data.data[0]).toEqual({ _id: "1", name: "Item 1" });
   });
 
-  it('cancels in-flight queries before optimistic update', async () => {
-    const listKey = ['items', 'list'];
+  it("cancels in-flight queries before optimistic update", async () => {
+    const listKey = ["items", "list"];
     queryClient.setQueryData(listKey, { data: [] });
-    const cancelSpy = vi.spyOn(queryClient, 'cancelQueries');
+    const cancelSpy = vi.spyOn(queryClient, "cancelQueries");
 
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithOptimistic({
-        mutationFn,
-        queryKeys: [listKey],
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithOptimistic({
+          mutationFn,
+          queryKeys: [listKey],
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -568,20 +585,21 @@ describe('useMutationWithOptimistic', () => {
     expect(cancelSpy).toHaveBeenCalledWith({ queryKey: listKey });
   });
 
-  it('invalidates queries on success', async () => {
-    const listKey = ['items', 'list'];
+  it("invalidates queries on success", async () => {
+    const listKey = ["items", "list"];
     queryClient.setQueryData(listKey, { data: [] });
-    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
 
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithOptimistic({
-        mutationFn,
-        queryKeys: [listKey],
-        messages: { success: 'OK' },
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithOptimistic({
+          mutationFn,
+          queryKeys: [listKey],
+          messages: { success: "OK" },
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -591,13 +609,12 @@ describe('useMutationWithOptimistic', () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: listKey });
   });
 
-  it('shows error toast with default message on failure', async () => {
-    const mutationFn = vi.fn().mockRejectedValue(new Error('Connection refused'));
+  it("shows error toast with default message on failure", async () => {
+    const mutationFn = vi.fn().mockRejectedValue(new Error("Connection refused"));
 
-    const { result } = renderHook(
-      () => useMutationWithOptimistic({ mutationFn }),
-      { wrapper: createWrapper(queryClient) }
-    );
+    const { result } = renderHook(() => useMutationWithOptimistic({ mutationFn }), {
+      wrapper: createWrapper(queryClient),
+    });
 
     await act(async () => {
       try {
@@ -605,23 +622,24 @@ describe('useMutationWithOptimistic', () => {
       } catch {}
     });
 
-    expect(toastHandler.error).toHaveBeenCalledWith('Connection refused');
+    expect(toastHandler.error).toHaveBeenCalledWith("Connection refused");
   });
 
-  it('works without optimisticUpdate (just invalidates)', async () => {
-    const listKey = ['items', 'list'];
-    const original = { data: [{ _id: '1' }] };
+  it("works without optimisticUpdate (just invalidates)", async () => {
+    const listKey = ["items", "list"];
+    const original = { data: [{ _id: "1" }] };
     queryClient.setQueryData(listKey, original);
 
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithOptimistic({
-        mutationFn,
-        queryKeys: [listKey],
-        messages: { success: 'Done' },
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithOptimistic({
+          mutationFn,
+          queryKeys: [listKey],
+          messages: { success: "Done" },
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
@@ -629,24 +647,25 @@ describe('useMutationWithOptimistic', () => {
     });
 
     // Data unchanged (no optimistic update), but invalidation triggered
-    expect(toastHandler.success).toHaveBeenCalledWith('Done');
+    expect(toastHandler.success).toHaveBeenCalledWith("Done");
   });
 
-  it('handles multiple query keys', async () => {
-    const listKey = ['items', 'list'];
-    const detailKey = ['items', 'detail', '1'];
+  it("handles multiple query keys", async () => {
+    const listKey = ["items", "list"];
+    const detailKey = ["items", "detail", "1"];
     queryClient.setQueryData(listKey, { data: [] });
-    queryClient.setQueryData(detailKey, { data: { _id: '1' } });
-    const cancelSpy = vi.spyOn(queryClient, 'cancelQueries');
+    queryClient.setQueryData(detailKey, { data: { _id: "1" } });
+    const cancelSpy = vi.spyOn(queryClient, "cancelQueries");
 
     const mutationFn = vi.fn().mockResolvedValue({});
 
     const { result } = renderHook(
-      () => useMutationWithOptimistic({
-        mutationFn,
-        queryKeys: [listKey, detailKey],
-      }),
-      { wrapper: createWrapper(queryClient) }
+      () =>
+        useMutationWithOptimistic({
+          mutationFn,
+          queryKeys: [listKey, detailKey],
+        }),
+      { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {

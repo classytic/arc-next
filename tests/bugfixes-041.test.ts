@@ -4,18 +4,24 @@
  * Each describe block tests a specific fix in isolation.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import React from 'react';
-import { configureClient, configureAuth, handleApiRequest, isArcApiError, createClient } from '../src/client.js';
-import { createCrudApi } from '../src/api.js';
-import { withSoftDelete } from '../src/presets/soft-delete.js';
-import { withBulk } from '../src/presets/bulk.js';
-import { createCrudHooks } from '../src/hooks.js';
-import { configureToast } from '../src/mutation.js';
-import { useEventStream } from '../src/sse.js';
-import type { CrudApi } from '../src/hooks.js';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCrudApi } from "../src/api.js";
+import {
+  configureAuth,
+  configureClient,
+  createClient,
+  handleApiRequest,
+  isArcApiError,
+} from "../src/client.js";
+import type { CrudApi } from "../src/hooks.js";
+import { createCrudHooks } from "../src/hooks.js";
+import { configureToast } from "../src/mutation.js";
+import { withBulk } from "../src/presets/bulk.js";
+import { withSoftDelete } from "../src/presets/soft-delete.js";
+import { useEventStream } from "../src/sse.js";
 
 // ============================================================================
 // Shared helpers
@@ -36,15 +42,25 @@ function createWrapper(qc: QueryClient) {
   };
 }
 
-function createMockApi(): CrudApi<{ _id: string; name: string }, { name: string }, { name: string }> {
+function createMockApi(): CrudApi<
+  { _id: string; name: string },
+  { name: string },
+  { name: string }
+> {
   return {
     getAll: vi.fn().mockResolvedValue({
-      success: true, data: [{ _id: '1', name: 'Item' }],
-      total: 1, page: 1, limit: 10, pages: 1, hasNext: false, hasPrev: false,
+      success: true,
+      data: [{ _id: "1", name: "Item" }],
+      total: 1,
+      page: 1,
+      limit: 10,
+      pages: 1,
+      hasNext: false,
+      hasPrev: false,
     }),
-    getById: vi.fn().mockResolvedValue({ success: true, data: { _id: '1', name: 'Item' } }),
-    create: vi.fn().mockResolvedValue({ success: true, data: { _id: '1', name: 'New' } }),
-    update: vi.fn().mockResolvedValue({ success: true, data: { _id: '1', name: 'Updated' } }),
+    getById: vi.fn().mockResolvedValue({ success: true, data: { _id: "1", name: "Item" } }),
+    create: vi.fn().mockResolvedValue({ success: true, data: { _id: "1", name: "New" } }),
+    update: vi.fn().mockResolvedValue({ success: true, data: { _id: "1", name: "Updated" } }),
     delete: vi.fn().mockResolvedValue({ success: true }),
   };
 }
@@ -53,60 +69,62 @@ function createMockApi(): CrudApi<{ _id: string; name: string }, { name: string 
 // Fix #1: token defaults to null in mutation methods
 // ============================================================================
 
-describe('Fix #1: token optional in mutation methods', () => {
+describe("Fix #1: token optional in mutation methods", () => {
   let fetchMock: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    configureClient({ baseUrl: 'http://api.test' });
-    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ success: true, data: { _id: '1' } }), {
+    configureClient({ baseUrl: "http://api.test" });
+    fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { _id: "1" } }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+        headers: { "Content-Type": "application/json" },
+      }),
     );
   });
 
-  afterEach(() => { fetchMock.mockRestore(); });
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
 
-  it('create() works without token', async () => {
-    const api = createCrudApi('items', { basePath: '/api' });
-    await api.create({ data: { name: 'Test' } });
+  it("create() works without token", async () => {
+    const api = createCrudApi("items", { basePath: "/api" });
+    await api.create({ data: { name: "Test" } });
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it('update() works without token', async () => {
-    const api = createCrudApi('items', { basePath: '/api' });
-    await api.update({ id: '1', data: { name: 'Updated' } });
+  it("update() works without token", async () => {
+    const api = createCrudApi("items", { basePath: "/api" });
+    await api.update({ id: "1", data: { name: "Updated" } });
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it('delete() works without token', async () => {
-    const api = createCrudApi('items', { basePath: '/api' });
-    await api.delete({ id: '1' });
+  it("delete() works without token", async () => {
+    const api = createCrudApi("items", { basePath: "/api" });
+    await api.delete({ id: "1" });
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it('upload() works without token', async () => {
-    const api = createCrudApi('items', { basePath: '/api' });
+  it("upload() works without token", async () => {
+    const api = createCrudApi("items", { basePath: "/api" });
     await api.upload({ data: new FormData() });
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it('request() works without token', async () => {
-    const api = createCrudApi('items', { basePath: '/api' });
-    await api.request('POST', '/api/items/custom', { data: { action: 'test' } });
+  it("request() works without token", async () => {
+    const api = createCrudApi("items", { basePath: "/api" });
+    await api.request("POST", "/api/items/custom", { data: { action: "test" } });
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it('restore() works without token', async () => {
-    const api = withSoftDelete(createCrudApi('items', { basePath: '/api' }));
-    await api.restore({ id: '1' });
+  it("restore() works without token", async () => {
+    const api = withSoftDelete(createCrudApi("items", { basePath: "/api" }));
+    await api.restore({ id: "1" });
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it('bulkCreate() works without token', async () => {
-    const api = withBulk(createCrudApi('items', { basePath: '/api' }));
-    await api.bulkCreate({ data: [{ name: 'A' }] });
+  it("bulkCreate() works without token", async () => {
+    const api = withBulk(createCrudApi("items", { basePath: "/api" }));
+    await api.bulkCreate({ data: [{ name: "A" }] });
     expect(fetchMock).toHaveBeenCalled();
   });
 });
@@ -115,7 +133,7 @@ describe('Fix #1: token optional in mutation methods', () => {
 // Fix #2: SSE close() → reconnect()
 // ============================================================================
 
-describe('Fix #2: SSE close → reconnect', () => {
+describe("Fix #2: SSE close → reconnect", () => {
   class MockES {
     static instances: MockES[] = [];
     url: string;
@@ -131,14 +149,28 @@ describe('Fix #2: SSE close → reconnect', () => {
       this.withCredentials = opts?.withCredentials ?? false;
       MockES.instances.push(this);
       queueMicrotask(() => {
-        if (!this.closed) { this.readyState = 1; this.onopen?.(new Event('open')); }
+        if (!this.closed) {
+          this.readyState = 1;
+          this.onopen?.(new Event("open"));
+        }
       });
     }
-    addEventListener() { /* named-event subscriptions are tested elsewhere */ }
-    removeEventListener() { /* same */ }
-    close() { this.closed = true; this.readyState = 2; }
-    static reset() { MockES.instances = []; }
-    static latest() { return MockES.instances[MockES.instances.length - 1]; }
+    addEventListener() {
+      /* named-event subscriptions are tested elsewhere */
+    }
+    removeEventListener() {
+      /* same */
+    }
+    close() {
+      this.closed = true;
+      this.readyState = 2;
+    }
+    static reset() {
+      MockES.instances = [];
+    }
+    static latest() {
+      return MockES.instances[MockES.instances.length - 1];
+    }
   }
 
   const origES = (globalThis as Record<string, unknown>).EventSource;
@@ -146,8 +178,8 @@ describe('Fix #2: SSE close → reconnect', () => {
   beforeEach(() => {
     MockES.reset();
     (globalThis as Record<string, unknown>).EventSource = MockES;
-    configureClient({ baseUrl: 'http://api.test' });
-    configureAuth({ getToken: () => 'tok', getOrgId: () => null });
+    configureClient({ baseUrl: "http://api.test" });
+    configureAuth({ getToken: () => "tok", getOrgId: () => null });
   });
 
   afterEach(() => {
@@ -156,14 +188,13 @@ describe('Fix #2: SSE close → reconnect', () => {
     configureAuth({ getToken: () => null, getOrgId: () => null });
   });
 
-  it('reconnect after close creates new connection and receives events', async () => {
+  it("reconnect after close creates new connection and receives events", async () => {
     const onEvent = vi.fn();
     const qc = createTestQueryClient();
 
-    const { result } = renderHook(
-      () => useEventStream({ resource: 'agents', onEvent }),
-      { wrapper: createWrapper(qc) }
-    );
+    const { result } = renderHook(() => useEventStream({ resource: "agents", onEvent }), {
+      wrapper: createWrapper(qc),
+    });
 
     await waitFor(() => expect(result.current.isConnected).toBe(true));
 
@@ -175,9 +206,11 @@ describe('Fix #2: SSE close → reconnect', () => {
 
     // Event on new connection works
     act(() => {
-      MockES.latest()!.onmessage?.(new MessageEvent('message', {
-        data: JSON.stringify({ type: 'test', resource: 'agents', data: {}, timestamp: '' }),
-      }));
+      MockES.latest()!.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "test", resource: "agents", data: {}, timestamp: "" }),
+        }),
+      );
     });
     expect(onEvent).toHaveBeenCalledTimes(1);
     qc.clear();
@@ -188,12 +221,12 @@ describe('Fix #2: SSE close → reconnect', () => {
 // Fix #3: Legacy signature detection — useList(null)
 // ============================================================================
 
-describe('Fix #3: useList(null) uses new signature', () => {
+describe("Fix #3: useList(null) uses new signature", () => {
   let qc: QueryClient;
 
   beforeEach(() => {
-    configureClient({ baseUrl: 'http://api.test' });
-    configureAuth({ getToken: () => 'auto-token', getOrgId: () => null });
+    configureClient({ baseUrl: "http://api.test" });
+    configureAuth({ getToken: () => "auto-token", getOrgId: () => null });
     configureToast({ success: () => {}, error: () => {} });
     qc = createTestQueryClient();
   });
@@ -203,33 +236,33 @@ describe('Fix #3: useList(null) uses new signature', () => {
     configureAuth({ getToken: () => null, getOrgId: () => null });
   });
 
-  it('useList(null) auto-injects token (new signature)', async () => {
+  it("useList(null) auto-injects token (new signature)", async () => {
     const api = createMockApi();
     const hooks = createCrudHooks({
-      api, entityKey: `fix3a-${Math.random()}`, singular: 'Item',
+      api,
+      entityKey: `fix3a-${Math.random()}`,
+      singular: "Item",
     });
 
     renderHook(() => hooks.useList(null), { wrapper: createWrapper(qc) });
 
     await waitFor(() => {
-      expect(api.getAll).toHaveBeenCalledWith(
-        expect.objectContaining({ token: 'auto-token' })
-      );
+      expect(api.getAll).toHaveBeenCalledWith(expect.objectContaining({ token: "auto-token" }));
     });
   });
 
-  it('useList(null, {}, opts) passes token=null (legacy)', async () => {
+  it("useList(null, {}, opts) passes token=null (legacy)", async () => {
     const api = createMockApi();
     const hooks = createCrudHooks({
-      api, entityKey: `fix3b-${Math.random()}`, singular: 'Item',
+      api,
+      entityKey: `fix3b-${Math.random()}`,
+      singular: "Item",
     });
 
     renderHook(() => hooks.useList(null, {}, { public: true }), { wrapper: createWrapper(qc) });
 
     await waitFor(() => {
-      expect(api.getAll).toHaveBeenCalledWith(
-        expect.objectContaining({ token: null })
-      );
+      expect(api.getAll).toHaveBeenCalledWith(expect.objectContaining({ token: null }));
     });
   });
 });
@@ -238,61 +271,65 @@ describe('Fix #3: useList(null) uses new signature', () => {
 // Fix #5: Non-JSON error responses
 // ============================================================================
 
-describe('Fix #5: non-JSON error body captured', () => {
+describe("Fix #5: non-JSON error body captured", () => {
   let fetchMock: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    configureClient({ baseUrl: 'http://api.test' });
-    fetchMock = vi.spyOn(globalThis, 'fetch');
+    configureClient({ baseUrl: "http://api.test" });
+    fetchMock = vi.spyOn(globalThis, "fetch");
   });
 
-  afterEach(() => { fetchMock.mockRestore(); });
+  afterEach(() => {
+    fetchMock.mockRestore();
+  });
 
-  it('HTML 502 captures body text', async () => {
+  it("HTML 502 captures body text", async () => {
     fetchMock.mockResolvedValue(
-      new Response('<html>Bad Gateway</html>', {
-        status: 502, statusText: 'Bad Gateway',
-        headers: { 'Content-Type': 'text/html' },
-      })
+      new Response("<html>Bad Gateway</html>", {
+        status: 502,
+        statusText: "Bad Gateway",
+        headers: { "Content-Type": "text/html" },
+      }),
     );
 
     try {
-      await handleApiRequest('GET', '/test');
-      expect.fail('Should throw');
+      await handleApiRequest("GET", "/test");
+      expect.fail("Should throw");
     } catch (error: unknown) {
       expect(isArcApiError(error)).toBe(true);
       const e = error as { status: number; json: { rawBody?: string } };
       expect(e.status).toBe(502);
-      expect(e.json?.rawBody).toContain('<html>');
+      expect(e.json?.rawBody).toContain("<html>");
     }
   });
 
-  it('empty body falls back to statusText', async () => {
+  it("empty body falls back to statusText", async () => {
     fetchMock.mockResolvedValue(
-      new Response('', { status: 500, statusText: 'Internal Server Error' })
+      new Response("", { status: 500, statusText: "Internal Server Error" }),
     );
 
     try {
-      await handleApiRequest('GET', '/test');
-      expect.fail('Should throw');
+      await handleApiRequest("GET", "/test");
+      expect.fail("Should throw");
     } catch (error: unknown) {
-      expect((error as { message: string }).message).toBe('Internal Server Error');
+      expect((error as { message: string }).message).toBe("Internal Server Error");
     }
   });
 
-  it('JSON error still works normally', async () => {
+  it("JSON error still works normally", async () => {
     fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ message: 'Validation failed' }), {
-        status: 400, statusText: 'Bad Request',
-        headers: { 'Content-Type': 'application/json' },
-      })
+      new Response(JSON.stringify({ message: "Validation failed" }), {
+        status: 400,
+        statusText: "Bad Request",
+        headers: { "Content-Type": "application/json" },
+      }),
     );
 
     try {
-      await handleApiRequest('POST', '/test');
-      expect.fail('Should throw');
+      await handleApiRequest("POST", "/test");
+      expect.fail("Should throw");
     } catch (error: unknown) {
-      expect((error as { message: string }).message).toBe('Validation failed');
+      expect((error as { message: string }).message).toBe("Validation failed");
     }
   });
 });
@@ -301,79 +338,83 @@ describe('Fix #5: non-JSON error body captured', () => {
 // M2M API Key Auth
 // ============================================================================
 
-describe('M2M API key auth (service-to-service)', () => {
+describe("M2M API key auth (service-to-service)", () => {
   let fetchMock: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ success: true }), {
-        status: 200, headers: { 'Content-Type': 'application/json' },
-      })
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     );
   });
 
   afterEach(() => {
     fetchMock.mockRestore();
-    configureClient({ baseUrl: 'http://api.test' });
+    configureClient({ baseUrl: "http://api.test" });
     configureAuth({ getToken: () => null, getOrgId: () => null });
   });
 
-  it('global header auth sends x-api-key', async () => {
-    configureClient({ baseUrl: 'http://svc.internal', authMode: 'header' });
-    configureAuth({ getToken: () => 'svc_key', headerName: 'x-api-key' });
+  it("global header auth sends x-api-key", async () => {
+    configureClient({ baseUrl: "http://svc.internal", authMode: "header" });
+    configureAuth({ getToken: () => "svc_key", headerName: "x-api-key" });
 
-    await handleApiRequest('GET', '/data', { token: 'svc_key' });
+    await handleApiRequest("GET", "/data", { token: "svc_key" });
 
     const headers = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
-    expect(headers['x-api-key']).toBe('svc_key');
-    expect(headers['Authorization']).toBeUndefined();
+    expect(headers["x-api-key"]).toBe("svc_key");
+    expect(headers["Authorization"]).toBeUndefined();
   });
 
-  it('per-client header auth sends x-admin-key', async () => {
-    configureClient({ baseUrl: 'http://default.test' });
+  it("per-client header auth sends x-admin-key", async () => {
+    configureClient({ baseUrl: "http://default.test" });
 
     const admin = createClient({
-      baseUrl: 'http://admin.internal',
-      authMode: 'header',
-      getToken: () => 'admin_key',
-      headerName: 'x-admin-key',
+      baseUrl: "http://admin.internal",
+      authMode: "header",
+      getToken: () => "admin_key",
+      headerName: "x-admin-key",
     });
 
-    await admin.request('GET', '/admin/stats');
+    await admin.request("GET", "/admin/stats");
 
     const [url, opts] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('http://admin.internal/admin/stats');
+    expect(url).toBe("http://admin.internal/admin/stats");
     const headers = (opts as RequestInit).headers as Record<string, string>;
-    expect(headers['x-admin-key']).toBe('admin_key');
-    expect(headers['Authorization']).toBeUndefined();
+    expect(headers["x-admin-key"]).toBe("admin_key");
+    expect(headers["Authorization"]).toBeUndefined();
   });
 
-  it('two services with different auth modes work side by side', async () => {
+  it("two services with different auth modes work side by side", async () => {
     // Need fresh Response per call
     fetchMock.mockImplementation(() =>
-      Promise.resolve(new Response(JSON.stringify({ success: true }), {
-        status: 200, headers: { 'Content-Type': 'application/json' },
-      }))
+      Promise.resolve(
+        new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
     );
 
-    configureClient({ baseUrl: 'http://api.test', authMode: 'bearer' });
+    configureClient({ baseUrl: "http://api.test", authMode: "bearer" });
 
     const analytics = createClient({
-      baseUrl: 'http://analytics.internal',
-      authMode: 'header',
-      getToken: () => 'analytics_key',
-      headerName: 'x-analytics-key',
+      baseUrl: "http://analytics.internal",
+      authMode: "header",
+      getToken: () => "analytics_key",
+      headerName: "x-analytics-key",
     });
 
     // Service A (bearer)
-    await handleApiRequest('GET', '/users', { token: 'jwt_token' });
+    await handleApiRequest("GET", "/users", { token: "jwt_token" });
     const aHeaders = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
-    expect(aHeaders['Authorization']).toBe('Bearer jwt_token');
+    expect(aHeaders["Authorization"]).toBe("Bearer jwt_token");
 
     // Service B (api key)
-    await analytics.request('GET', '/events');
+    await analytics.request("GET", "/events");
     const bHeaders = (fetchMock.mock.calls[1]![1] as RequestInit).headers as Record<string, string>;
-    expect(bHeaders['x-analytics-key']).toBe('analytics_key');
-    expect(bHeaders['Authorization']).toBeUndefined();
+    expect(bHeaders["x-analytics-key"]).toBe("analytics_key");
+    expect(bHeaders["Authorization"]).toBeUndefined();
   });
 });

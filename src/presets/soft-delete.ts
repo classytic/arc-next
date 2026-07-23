@@ -1,10 +1,5 @@
-import type { PaginatedResult } from '@classytic/repo-core/pagination';
-import type {
-  AnyBaseApi,
-  DocOf,
-  QueryParams,
-  ScopedArgs,
-} from '../api.js';
+import type { PaginatedResult } from "@classytic/repo-core/pagination";
+import type { AnyBaseApi, DocOf, QueryParams, ScopedArgs } from "../api.js";
 
 // ============================================================================
 // Methods added by the soft-delete preset
@@ -46,7 +41,7 @@ export function withSoftDelete<TApi extends AnyBaseApi>(
   const ext: SoftDeleteMethods<TDoc> = {
     async getDeleted({ token = null, organizationId = null, params = {}, options = {} } = {}) {
       const merged = { ...api.config.defaultParams, ...params };
-      return api.request<PaginatedResult<TDoc>>('GET', `${api.baseUrl}/deleted`, {
+      return api.request<PaginatedResult<TDoc>>("GET", `${api.baseUrl}/deleted`, {
         token,
         organizationId,
         params: merged,
@@ -54,8 +49,8 @@ export function withSoftDelete<TApi extends AnyBaseApi>(
       });
     },
     async restore({ token = null, organizationId = null, id, options = {} }) {
-      if (!id) throw new Error('ID is required');
-      return api.request<TDoc>('POST', `${api.baseUrl}/${id}/restore`, {
+      if (!id) throw new Error("ID is required");
+      return api.request<TDoc>("POST", `${api.baseUrl}/${id}/restore`, {
         token,
         organizationId,
         options,

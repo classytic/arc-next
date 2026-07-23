@@ -1,0 +1,489 @@
+{
+  ".": {
+    "runtime": [
+      "configureNavigation",
+      "createCrudHooks"
+    ],
+    "types": [
+      "AggregationQueryOptions",
+      "BulkActions",
+      "CallOptions",
+      "CrudActions",
+      "CrudApi",
+      "CrudHooksConfig",
+      "CrudHooksReturn",
+      "DeleteParams",
+      "MutationParams",
+      "NavigateFn",
+      "NavigationOptions",
+      "UpdateParams",
+      "configureNavigation",
+      "createCrudHooks"
+    ],
+    "typesHash": "0b20d13b5f94fb3b"
+  },
+  "./client": {
+    "runtime": [
+      "ArcApiError",
+      "KNOWN_ARC_ERROR_CODES",
+      "_getAuthErrorHandler",
+      "_isAuthRecoverable",
+      "_resetArcFetchClient",
+      "_resetAuthRecovery",
+      "_resetAuthWarnings",
+      "_resolveRefreshedToken",
+      "_runAuthRecovery",
+      "arc",
+      "arcAuthHeaders",
+      "arcFetch",
+      "buildStreamUrl",
+      "configureAuth",
+      "configureClient",
+      "createAuthAwareClient",
+      "createAuthRefreshHandler",
+      "createClient",
+      "createQueryString",
+      "createServerClient",
+      "getAuthContext",
+      "getAuthMode",
+      "getBaseUrl",
+      "getClientAuthContext",
+      "getQuotaDetails",
+      "handleApiRequest",
+      "hasGlobalStaticAuth",
+      "isAbortError",
+      "isArcApiError",
+      "isArcErrorCode",
+      "isAutoIdempotency",
+      "isDuplicateKeyError",
+      "isOrgContextRequiredError",
+      "isQuotaExceeded",
+      "isValidationError"
+    ],
+    "types": [
+      "AfterResponseContext",
+      "AfterResponseInterceptor",
+      "ApiRequestOptions",
+      "ArcApiError",
+      "ArcApiErrorOptions",
+      "ArcClient",
+      "ArcClientConfig",
+      "ArcErrorCode",
+      "ArcFetchOptions",
+      "AuthConfig",
+      "AuthErrorContext",
+      "AuthErrorHandler",
+      "BeforeRequestContext",
+      "BeforeRequestInterceptor",
+      "BlobResponse",
+      "ClientConfig",
+      "ClientEncryptionConfig",
+      "HttpMethod",
+      "KNOWN_ARC_ERROR_CODES",
+      "NextFetchOptions",
+      "QuotaDetails",
+      "RetryConfig",
+      "ServerClientConfig",
+      "StreamUrlProtocol",
+      "TextResponse",
+      "ToastHandler",
+      "UseRouterHook",
+      "_getAuthErrorHandler",
+      "_isAuthRecoverable",
+      "_resetArcFetchClient",
+      "_resetAuthRecovery",
+      "_resetAuthWarnings",
+      "_resolveRefreshedToken",
+      "_runAuthRecovery",
+      "arc",
+      "arcAuthHeaders",
+      "arcFetch",
+      "buildStreamUrl",
+      "configureAuth",
+      "configureClient",
+      "createAuthAwareClient",
+      "createAuthRefreshHandler",
+      "createClient",
+      "createQueryString",
+      "createServerClient",
+      "getAuthContext",
+      "getAuthMode",
+      "getBaseUrl",
+      "getClientAuthContext",
+      "getQuotaDetails",
+      "handleApiRequest",
+      "hasGlobalStaticAuth",
+      "isAbortError",
+      "isArcApiError",
+      "isArcErrorCode",
+      "isAutoIdempotency",
+      "isDuplicateKeyError",
+      "isOrgContextRequiredError",
+      "isQuotaExceeded",
+      "isValidationError"
+    ],
+    "typesHash": "f5d6aa77e8a4507a"
+  },
+  "./encryption": {
+    "runtime": [
+      "createJoseEncryption"
+    ],
+    "types": [
+      "JoseEncryptionOptions",
+      "createJoseEncryption"
+    ],
+    "typesHash": "d4e8f7d1db48531c"
+  },
+  "./field-encryption": {
+    "runtime": [
+      "FIELD_ENVELOPE_PREFIX",
+      "createFieldDecryption",
+      "isFieldEnvelope",
+      "parseFieldEnvelope"
+    ],
+    "types": [
+      "FIELD_ENVELOPE_PREFIX",
+      "FieldDecryption",
+      "FieldDecryptionOptions",
+      "ParsedFieldEnvelope",
+      "createFieldDecryption",
+      "isFieldEnvelope",
+      "parseFieldEnvelope"
+    ],
+    "typesHash": "7a81f91ba49530ef"
+  },
+  "./api": {
+    "runtime": [
+      "BaseApi",
+      "createCrudApi",
+      "isAggregatePagination",
+      "isKeysetPagination",
+      "isOffsetPagination"
+    ],
+    "types": [
+      "AggResult",
+      "AggRow",
+      "AnyBaseApi",
+      "BaseApi",
+      "BaseApiConfig",
+      "BracketOperator",
+      "BulkCreateResult",
+      "CreateOf",
+      "DeleteManyResult",
+      "DeleteResult",
+      "DocOf",
+      "ExtractDoc",
+      "FilterOperator",
+      "PopulateOption",
+      "QueryParams",
+      "RequestOptions",
+      "ScopedArgs",
+      "SortDirection",
+      "SortSpec",
+      "UpdateManyResult",
+      "UpdateOf",
+      "createCrudApi",
+      "isAggregatePagination",
+      "isKeysetPagination",
+      "isOffsetPagination"
+    ],
+    "typesHash": "3d96406293bda28b"
+  },
+  "./cache": {
+    "runtime": [
+      "DEFAULT_QUERY_CONFIG",
+      "QUERY_CONFIGS",
+      "createCacheUtils",
+      "createQueryKeys",
+      "extractItem",
+      "extractItems",
+      "getItemId",
+      "normalizePagination",
+      "prependToListCache",
+      "replaceItemInListCache",
+      "syncDetailToLists",
+      "updateListCache",
+      "withOrgParams"
+    ],
+    "types": [
+      "CacheUtils",
+      "DEFAULT_QUERY_CONFIG",
+      "PaginationData",
+      "QUERY_CONFIGS",
+      "QueryKeys",
+      "createCacheUtils",
+      "createQueryKeys",
+      "extractItem",
+      "extractItems",
+      "getItemId",
+      "normalizePagination",
+      "prependToListCache",
+      "replaceItemInListCache",
+      "syncDetailToLists",
+      "updateListCache",
+      "withOrgParams"
+    ],
+    "typesHash": "110d5802fbd95d2f"
+  },
+  "./query": {
+    "runtime": [
+      "DEFAULT_QUERY_CONFIG",
+      "QUERY_CONFIGS",
+      "createCacheUtils",
+      "createQueryKeys",
+      "extractItem",
+      "extractItems",
+      "findItemInListCache",
+      "getItemId",
+      "normalizePagination",
+      "updateListCache",
+      "useApiQuery",
+      "useDetailQuery",
+      "useInfiniteListQuery",
+      "useListQuery",
+      "useSuspenseDetailQuery",
+      "useSuspenseListQuery"
+    ],
+    "types": [
+      "CacheUtils",
+      "CreateDetailQueryConfig",
+      "CreateInfiniteListQueryConfig",
+      "CreateListQueryConfig",
+      "DEFAULT_QUERY_CONFIG",
+      "DetailQueryOptions",
+      "DetailQueryResult",
+      "ExtractData",
+      "InfiniteListQueryOptions",
+      "InfiniteListQueryResult",
+      "ListQueryOptions",
+      "ListQueryResult",
+      "PaginationData",
+      "QUERY_CONFIGS",
+      "QueryFreshness",
+      "QueryKeys",
+      "RequestPassthrough",
+      "UseApiQueryConfig",
+      "UseApiQueryOptions",
+      "UseApiQueryResult",
+      "createCacheUtils",
+      "createQueryKeys",
+      "extractItem",
+      "extractItems",
+      "findItemInListCache",
+      "getItemId",
+      "normalizePagination",
+      "updateListCache",
+      "useApiQuery",
+      "useDetailQuery",
+      "useInfiniteListQuery",
+      "useListQuery",
+      "useSuspenseDetailQuery",
+      "useSuspenseListQuery"
+    ],
+    "typesHash": "2a2fdf85edda330c"
+  },
+  "./mutation": {
+    "runtime": [
+      "configureToast",
+      "getToastHandler",
+      "useMutationWithOptimistic",
+      "useMutationWithTransition",
+      "useOptimisticMutation"
+    ],
+    "types": [
+      "CreateOptimisticMutationConfig",
+      "MutationCallbacks",
+      "MutationMessages",
+      "OptimisticMutationConfig",
+      "TransitionMutationConfig",
+      "TransitionMutationReturn",
+      "configureToast",
+      "getToastHandler",
+      "useMutationWithOptimistic",
+      "useMutationWithTransition",
+      "useOptimisticMutation"
+    ],
+    "typesHash": "02613b6f8fad0710"
+  },
+  "./hooks": {
+    "runtime": [
+      "configureNavigation",
+      "createCrudHooks"
+    ],
+    "types": [
+      "AggregationQueryOptions",
+      "BulkActions",
+      "CallOptions",
+      "CrudActions",
+      "CrudApi",
+      "CrudHooksConfig",
+      "CrudHooksReturn",
+      "DeleteParams",
+      "MutationParams",
+      "NavigateFn",
+      "NavigationOptions",
+      "UpdateParams",
+      "configureNavigation",
+      "createCrudHooks"
+    ],
+    "typesHash": "0b20d13b5f94fb3b"
+  },
+  "./query-client": {
+    "runtime": [
+      "getQueryClient"
+    ],
+    "types": [
+      "QueryClientOverrides",
+      "getQueryClient"
+    ],
+    "typesHash": "3a1c4c7675718aaf"
+  },
+  "./prefetch": {
+    "runtime": [
+      "HydrationBoundary",
+      "createCrudPrefetcher",
+      "dehydrate"
+    ],
+    "types": [
+      "CrudPrefetcher",
+      "HydrationBoundary",
+      "InfiniteData",
+      "PrefetchAuthContext",
+      "PrefetchDetailOptions",
+      "PrefetchOptions",
+      "createCrudPrefetcher",
+      "dehydrate"
+    ],
+    "typesHash": "759a51fa3da06721"
+  },
+  "./sse": {
+    "runtime": [
+      "buildSseUrl",
+      "subscribeToEvents",
+      "useEventStream"
+    ],
+    "types": [
+      "ArcServerEvent",
+      "CrudEvent",
+      "CrudOperation",
+      "EventStreamOptions",
+      "EventStreamResult",
+      "SubscribeToEventsHandle",
+      "SubscribeToEventsOptions",
+      "buildSseUrl",
+      "subscribeToEvents",
+      "useEventStream"
+    ],
+    "typesHash": "c3bebd4d0e10d665"
+  },
+  "./ws": {
+    "runtime": [
+      "buildWsUrl",
+      "connectWs",
+      "useWebSocket"
+    ],
+    "types": [
+      "ArcSubscribeFrame",
+      "ArcWsMessage",
+      "ConnectWsHandle",
+      "ConnectWsOptions",
+      "WebSocketOptions",
+      "WebSocketResult",
+      "WsOffHandle",
+      "buildWsUrl",
+      "connectWs",
+      "useWebSocket"
+    ],
+    "typesHash": "e653225494bc5550"
+  },
+  "./upload": {
+    "runtime": [
+      "uploadWithProgress",
+      "useUploadWithProgress"
+    ],
+    "types": [
+      "UploadProgress",
+      "UploadWithProgressOptions",
+      "UseUploadWithProgressOptions",
+      "UseUploadWithProgressResult",
+      "uploadWithProgress",
+      "useUploadWithProgress"
+    ],
+    "typesHash": "2d8ec6723080d155"
+  },
+  "./presets/soft-delete": {
+    "runtime": [
+      "withSoftDelete"
+    ],
+    "types": [
+      "SoftDeleteMethods",
+      "withSoftDelete"
+    ],
+    "typesHash": "b4a4f66a4d9895fb"
+  },
+  "./presets/history": {
+    "runtime": [
+      "withHistory"
+    ],
+    "types": [
+      "HistoryEntry",
+      "HistoryMethods",
+      "HistoryPage",
+      "withHistory"
+    ],
+    "typesHash": "2eaabd31da293056"
+  },
+  "./presets/bulk": {
+    "runtime": [
+      "withBulk"
+    ],
+    "types": [
+      "BulkMethods",
+      "withBulk"
+    ],
+    "typesHash": "bf6ded3037898978"
+  },
+  "./presets/slug": {
+    "runtime": [
+      "withSlugLookup"
+    ],
+    "types": [
+      "SlugLookupMethods",
+      "withSlugLookup"
+    ],
+    "typesHash": "1f202396dd9d6037"
+  },
+  "./presets/tree": {
+    "runtime": [
+      "withTree"
+    ],
+    "types": [
+      "TreeMethods",
+      "withTree"
+    ],
+    "typesHash": "d4ffdcada03fa961"
+  },
+  "./presets/search": {
+    "runtime": [
+      "withSearchPreset"
+    ],
+    "types": [
+      "SearchPresetMethods",
+      "withSearchPreset"
+    ],
+    "typesHash": "051dc5ebcfd8fd95"
+  },
+  "./query-options": {
+    "runtime": [
+      "createEntityQueries"
+    ],
+    "types": [
+      "DetailQueryOpts",
+      "EntityQueries",
+      "EntityReadApi",
+      "QueryFnContext",
+      "createEntityQueries"
+    ],
+    "typesHash": "5365a56aeec29dbf"
+  }
+}

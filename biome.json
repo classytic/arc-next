@@ -38,6 +38,18 @@
       "trailingCommas": "none"
     }
   },
+  "overrides": [
+    {
+      "includes": ["tests/**/*", "fixtures/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    }
+  ],
   "linter": {
     "enabled": true,
     "rules": {

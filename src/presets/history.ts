@@ -1,4 +1,4 @@
-import type { AnyBaseApi, DocOf, ScopedArgs } from '../api.js';
+import type { AnyBaseApi, DocOf, ScopedArgs } from "../api.js";
 
 // ============================================================================
 // Methods added by the history preset (arc 2.22 `history: true`)
@@ -9,7 +9,7 @@ export interface HistoryEntry {
   id: string;
   resource: string;
   documentId: string;
-  action: 'create' | 'update' | 'delete' | 'restore' | 'custom';
+  action: "create" | "update" | "delete" | "restore" | "custom";
   userId?: string;
   organizationId?: string;
   before?: Record<string, unknown>;
@@ -34,7 +34,9 @@ export interface HistoryMethods {
    * when the resource declares `history: true` (arc 2.22) — audit-backed,
    * newest first, gated stricter than reads (update → get → auth).
    */
-  history(args: ScopedArgs & { id: string; params?: { limit?: number; offset?: number } }): Promise<HistoryPage>;
+  history(
+    args: ScopedArgs & { id: string; params?: { limit?: number; offset?: number } },
+  ): Promise<HistoryPage>;
 }
 
 // ============================================================================
@@ -59,8 +61,8 @@ export function withHistory<TApi extends AnyBaseApi>(api: TApi): TApi & HistoryM
   type _TDoc = DocOf<TApi>; // preset carries no doc-typed payloads; timeline entries are envelope-typed
   const ext: HistoryMethods = {
     async history({ token = null, organizationId = null, id, params = {}, options = {} }) {
-      if (!id) throw new Error('ID is required');
-      return api.request<HistoryPage>('GET', `${api.baseUrl}/${id}/history`, {
+      if (!id) throw new Error("ID is required");
+      return api.request<HistoryPage>("GET", `${api.baseUrl}/${id}/history`, {
         token,
         organizationId,
         params,
