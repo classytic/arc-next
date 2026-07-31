@@ -59,6 +59,7 @@ export const KNOWN_ARC_ERROR_CODES = [
   "arc.gateway_timeout",
   "arc.validation_error",
   "arc.invalid_id",
+  "arc.tier_required",
   "arc.org.selection_required",
   "arc.org.access_denied",
   // arc business (UPPER_SNAKE) — emitted by mixins + org guards
@@ -340,6 +341,59 @@ export function isOrgContextRequiredError(error: unknown): error is ArcApiError 
   return isArcErrorCode(error, "ORG_CONTEXT_REQUIRED");
 }
 
+/** The tier/mode a `arc.tier_required` error asked for, plus the active one. */
+export interface TierRequirement {
+  /** Minimum tier/mode the feature needs (e.g. `"enterprise"`). */
+  requiredMode: string;
+  /** The deployment's current tier/mode (e.g. `"standard"`). */
+  currentMode?: string;
+}
+
+/**
+ * TIER/CAPABILITY gate predicate. True when the backend refused because the
+ * deployment's tier (FLOW_MODE / feature tier) is below what the route needs —
+ * a `arc.tier_required` error (arc-inventory's mode gate → arc's
+ * `createDomainError`). This is the DISCRIMINABLE counterpart to a bare
+ * `arc.forbidden` (a role/permission denial): switch on THIS to render an
+ * "upgrade required / requires Enterprise" surface, and on `arc.forbidden` for
+ * "access denied". The required tier is available via {@link getTierRequirement}.
+ *
+ * @example
+ * if (isTierRequiredError(error)) {
+ *   const { requiredMode } = getTierRequirement(error)!;
+ *   showUpgradePanel(requiredMode);           // "requires Enterprise"
+ * } else if (isArcErrorCode(error, "arc.forbidden")) {
+ *   showAccessDenied();                        // role/branch problem
+ * }
+ */
+export function isTierRequiredError(error: unknown): error is ArcApiError {
+  return isArcErrorCode(error, "arc.tier_required");
+}
+
+/**
+ * Extract the tier requirement from a `arc.tier_required` error's structured
+ * machine-readable context (`{ requiredMode, currentMode }`). Returns `null` for
+ * any other error, so the FE never has to hardcode a route→tier map or
+ * string-match a message.
+ *
+ * Reads `meta` (the canonical ErrorContract Record — where both arc gate paths
+ * put it: the global error handler serializes `ArcError.meta`, and the
+ * permission-slot applier emits the same `meta`). Falls back to `details` for
+ * resilience against any backend still emitting the pre-2026-07 shape.
+ */
+export function getTierRequirement(error: unknown): TierRequirement | null {
+  if (!isTierRequiredError(error)) return null;
+  type TierBag = { requiredMode?: unknown; currentMode?: unknown };
+  const j = (error.json ?? {}) as { meta?: TierBag; details?: TierBag };
+  const bag = j.meta ?? j.details ?? {};
+  const requiredMode = bag.requiredMode;
+  if (typeof requiredMode !== "string") return null;
+  return {
+    requiredMode,
+    ...(typeof bag.currentMode === "string" ? { currentMode: bag.currentMode } : {}),
+  };
+}
+
 /**
  * Specific predicate for validation failures (Fastify AJV + Mongoose
  * ValidationError). When true, `error.fieldErrors` is populated with the
@@ -438,6 +492,13 @@ export interface ClientConfig {
    * @example '2' // sends Accept-Version: 2
    */
   apiVersion?: string;
+  /**
+   * Default request cache mode applied to every request that expresses no
+   * caching intent of its own (no per-call `cache`, `revalidate`, or `next`) —
+   * the client-level analog of `BaseApiConfig.cache`, same precedence rule.
+   * Unset = the runtime's fetch default.
+   */
+  cache?: RequestCache;
   /**
    * Auto-generate `Idempotency-Key` header for POST/PUT/PATCH requests.
    * Prevents duplicate mutations on network retries.
@@ -1453,6 +1514,19 @@ async function executeRequest<T = unknown>(
     options = { ...options, idempotencyKey: globalThis.crypto.randomUUID() };
   }
 
+  // Client-level default cache mode — applied ONLY when the call expresses no
+  // caching intent of its own (mirrors BaseApi.withCacheDefault precedence: a
+  // per-call `cache`, `revalidate`, or `next` always wins, so ISR opt-ins are
+  // never clobbered by the default).
+  if (
+    config.cache !== undefined &&
+    options.cache === undefined &&
+    options.revalidate === undefined &&
+    options.next === undefined
+  ) {
+    options = { ...options, cache: config.cache };
+  }
+
   const handler = authConfig?.onAuthError;
   // Fast path — most apps haven't wired onAuthError; skip the wrapper entirely.
   if (!handler) return executeWithBackoff<T>(config, method, endpoint, options);
@@ -1706,12 +1780,19 @@ async function executeAttempt<T = unknown>(
     // saves hours of "why is the API returning HTML" debugging on broken ones.
     const isAbsolute = /^https?:\/\//i.test(endpoint);
     if (!isAbsolute && !config.baseUrl) {
+      // SSR-aware guidance: `configureClient` is a no-op on the server (it warns
+      // and returns), so pointing a Server Component author at it is a dead end.
+      // Direct them to a request-scoped / server-config client instead.
+      const serverHint =
+        `On the server, configureClient() is a no-op — configure a request-scoped ` +
+        `client instead: createServerClient({ baseUrl }), or your SDK's server config ` +
+        `(e.g. a server env baseUrl / runWithSDKConfig) so SSR reads resolve.`;
+      const clientHint =
+        `Call configureClient({ baseUrl: '...' }) at app boot (Providers) BEFORE the ` +
+        `first request — e.g. in a useState() initializer, before the children render.`;
       throw new Error(
         `[arc-next] handleApiRequest(${method} ${endpoint}): baseUrl is empty. ` +
-          `Call configureClient({ baseUrl: '...' }) BEFORE the first request. ` +
-          `If you use createAuthAwareClient() at module top-level, make sure the ` +
-          `Providers component runs configureClient() first (e.g. in a useState() ` +
-          `initializer, before the children render).`,
+          (typeof window === "undefined" ? serverHint : clientHint),
       );
     }
     const response = await fetch(`${config.baseUrl}${endpoint}`, fetchOptions);

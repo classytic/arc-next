@@ -593,6 +593,29 @@ describe("BaseApi with client", () => {
     );
   });
 
+  it("client PROVIDER thunk is re-resolved on every request (late binding)", async () => {
+    // A consumer SDK passes `() => currentClient` so reconfiguration after
+    // API construction takes effect without Proxy tricks.
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ success: true, data: [], total: 0 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    let current = createClient({ baseUrl: "http://first.test" });
+    const api = createCrudApi("items", { basePath: "/api", client: () => current });
+
+    await api.getAll();
+    expect(fetchMock.mock.calls[0]![0] as string).toContain("http://first.test/api/items");
+
+    // Swap the underlying client AFTER the API instance exists.
+    current = createClient({ baseUrl: "http://second.test" });
+    await api.getAll();
+    expect(fetchMock.mock.calls[1]![0] as string).toContain("http://second.test/api/items");
+  });
+
   it("client API sends internalApiKey", async () => {
     const client = createClient({ baseUrl: "http://other.test", internalApiKey: "key-123" });
     const api = createCrudApi("items", { basePath: "/api", client });

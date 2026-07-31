@@ -147,9 +147,11 @@ describe("executeRequest — diagnostic throw when baseUrl is empty + endpoint i
     await expect(client.request("GET", "/items")).rejects.toThrow(
       /\[arc-next\] handleApiRequest\(GET \/items\): baseUrl is empty/,
     );
-    // The error message points the caller at the actual fix.
+    // The error message points the caller at the actual fix. Tolerates prose
+    // between the call and the ordering clause — the message gained "at app
+    // boot (Providers)" and this regex silently stopped matching.
     await expect(client.request("GET", "/items")).rejects.toThrow(
-      /configureClient\(\{ baseUrl: '\.\.\.' \}\) BEFORE the first request/,
+      /configureClient\(\{ baseUrl: '\.\.\.' \}\)[\s\S]*BEFORE the first request/,
     );
   });
 

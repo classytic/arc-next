@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.13.0 (2026-08-01)
+
+### Added
+
+- **`BaseApiConfig.client` accepts a provider thunk `() => ArcClient`** in
+  addition to a retained instance. Re-resolved on every request so a consumer
+  SDK can swap or reconfigure the underlying client after APIs are constructed —
+  no Proxy tricks or stale-capture bugs. A retained `ArcClient` still binds at
+  construction; omitting `client` falls through to the module-global transport.
+- **`arc.tier_required` error code** added to `KNOWN_ARC_ERROR_CODES`.
+- **`isTierRequiredError(error)`** — discriminates a tier/capability gate refusal
+  from a role `arc.forbidden` so the frontend can render an "upgrade required"
+  surface without string-matching the message.
+- **`getTierRequirement(error)`** — extracts `{ requiredMode, currentMode }` from
+  the error's machine-readable `meta` (falls back to `details`) so the UI never
+  hard-codes a route→tier map.
+- **`TierRequirement` interface** — `{ requiredMode: string; currentMode?: string }`.
+- **`ClientConfig.cache`** — client-level default `RequestCache` mode applied to
+  every request that expresses no caching intent of its own (no per-call `cache`,
+  `revalidate`, or `next`). Per-call options still win; ISR opt-ins are never
+  clobbered.
+
 ## 0.12.0 (2026-07-22)
 
 Production-readiness wave: canonical repo-core contracts, hardened optimistic/bulk

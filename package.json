@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -171,7 +171,7 @@
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.5",
     "@classytic/dev-tools": "^0.2.0",
-    "@classytic/repo-core": "^0.14.0",
+    "@classytic/repo-core": "^0.19.0",
     "@tanstack/react-query": "^5.97.0",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.14",
@@ -182,7 +182,7 @@
     "publint": "^0.3.21",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "tsdown": "^0.21.7",
+    "tsdown": "^0.22.14",
     "typescript": "^6.0.2",
     "vitest": "^4.1.4"
   }

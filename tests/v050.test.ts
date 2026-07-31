@@ -14,6 +14,8 @@ import {
   isArcErrorCode,
   isDuplicateKeyError,
   isOrgContextRequiredError,
+  isTierRequiredError,
+  getTierRequirement,
   isValidationError,
 } from "../src/client.js";
 import { withSearchPreset } from "../src/presets/search.js";
@@ -224,6 +226,68 @@ describe("v0.5.0 — search preset", () => {
     expect(JSON.parse(init.body as string)).toEqual({
       input: ["a", "b", "c"],
       model: "text-embedding-3-small",
+    });
+  });
+});
+
+describe("tier gate — discriminable `arc.tier_required`", () => {
+  // Canonical wire: the tier Record rides on `meta` (both arc gate paths emit
+  // this — global error handler serializes `ArcError.meta`; the permission-slot
+  // applier emits the same `meta`).
+  const tierError = new ArcApiError("This feature requires 'enterprise' mode or higher.", {
+    status: 403,
+    statusText: "Forbidden",
+    json: {
+      code: "arc.tier_required",
+      message: "This feature requires 'enterprise' mode or higher.",
+      status: 403,
+      meta: { requiredMode: "enterprise", currentMode: "standard" },
+    },
+    endpoint: "/inventory/reports/health",
+    method: "GET",
+  });
+
+  // Legacy/fallback wire: same Record under `details` — a backend not yet on the
+  // canonical `meta` shape must still resolve.
+  const tierErrorLegacy = new ArcApiError("This feature requires 'standard' mode or higher.", {
+    status: 403,
+    statusText: "Forbidden",
+    json: {
+      code: "arc.tier_required",
+      message: "This feature requires 'standard' mode or higher.",
+      status: 403,
+      details: { requiredMode: "standard", currentMode: "simple" },
+    },
+    endpoint: "/inventory/stock-routes/for-sku",
+    method: "GET",
+  });
+
+  const roleError = new ArcApiError("Permission denied", {
+    status: 403,
+    statusText: "Forbidden",
+    json: { code: "arc.forbidden", message: "Permission denied", status: 403 },
+    endpoint: "/x",
+    method: "GET",
+  });
+
+  it("isTierRequiredError distinguishes a tier 403 from a role 403", () => {
+    expect(isTierRequiredError(tierError)).toBe(true);
+    expect(isTierRequiredError(roleError)).toBe(false);
+    expect(isTierRequiredError(null)).toBe(false);
+  });
+
+  it("getTierRequirement extracts the structured requirement from `meta`", () => {
+    expect(getTierRequirement(tierError)).toEqual({
+      requiredMode: "enterprise",
+      currentMode: "standard",
+    });
+    expect(getTierRequirement(roleError)).toBeNull();
+  });
+
+  it("getTierRequirement falls back to legacy `details` shape", () => {
+    expect(getTierRequirement(tierErrorLegacy)).toEqual({
+      requiredMode: "standard",
+      currentMode: "simple",
     });
   });
 });

@@ -204,7 +204,18 @@ export interface BaseApiConfig {
   };
   cache?: RequestCache;
   headers?: Record<string, string>;
-  client?: ArcClient;
+  /**
+   * Transport for this API instance.
+   *
+   * - `ArcClient` — RETAINED: the instance is captured and every request goes
+   *   through it (isolated multi-client setups, tests, background jobs).
+   * - `() => ArcClient` — PROVIDER: re-resolved on EVERY request, so a
+   *   consumer SDK can swap/reconfigure the underlying client after APIs are
+   *   constructed without Proxy tricks or stale-capture bugs (the reason the
+   *   commerce SDK previously wrapped its default client in a `Proxy`).
+   * - omitted — the module-global transport (`configureClient`/`configureAuth`).
+   */
+  client?: ArcClient | (() => ArcClient);
 }
 
 // ============================================================================
@@ -233,7 +244,14 @@ export class BaseApi<
 
   constructor(entity: string, config: BaseApiConfig = {}) {
     this.entity = entity;
-    this.requestFn = config.client?.request ?? handleApiRequest;
+    // Retained client → bind its request. Provider thunk → re-resolve the
+    // client on EVERY call (late binding; see BaseApiConfig.client docs).
+    // Neither → module-global transport.
+    const client = config.client;
+    this.requestFn =
+      typeof client === "function"
+        ? (method, endpoint, options) => client().request(method, endpoint, options)
+        : (client?.request ?? handleApiRequest);
     this.config = {
       basePath: config.basePath ?? "/api/v1",
       defaultParams: {
