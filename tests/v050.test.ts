@@ -10,12 +10,12 @@ import { BaseApi, createCrudApi } from "../src/api.js";
 import {
   ArcApiError,
   configureClient,
+  getTierRequirement,
   isArcApiError,
   isArcErrorCode,
   isDuplicateKeyError,
   isOrgContextRequiredError,
   isTierRequiredError,
-  getTierRequirement,
   isValidationError,
 } from "../src/client.js";
 import { withSearchPreset } from "../src/presets/search.js";

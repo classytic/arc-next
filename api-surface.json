@@ -20,7 +20,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "0b20d13b5f94fb3b"
+    "typesHash": "5635da8524d4956d"
   },
   "./client": {
     "runtime": [
@@ -49,6 +49,7 @@
       "getBaseUrl",
       "getClientAuthContext",
       "getQuotaDetails",
+      "getTierRequirement",
       "handleApiRequest",
       "hasGlobalStaticAuth",
       "isAbortError",
@@ -58,6 +59,7 @@
       "isDuplicateKeyError",
       "isOrgContextRequiredError",
       "isQuotaExceeded",
+      "isTierRequiredError",
       "isValidationError"
     ],
     "types": [
@@ -86,6 +88,7 @@
       "ServerClientConfig",
       "StreamUrlProtocol",
       "TextResponse",
+      "TierRequirement",
       "ToastHandler",
       "UseRouterHook",
       "_getAuthErrorHandler",
@@ -111,6 +114,7 @@
       "getBaseUrl",
       "getClientAuthContext",
       "getQuotaDetails",
+      "getTierRequirement",
       "handleApiRequest",
       "hasGlobalStaticAuth",
       "isAbortError",
@@ -120,9 +124,10 @@
       "isDuplicateKeyError",
       "isOrgContextRequiredError",
       "isQuotaExceeded",
+      "isTierRequiredError",
       "isValidationError"
     ],
-    "typesHash": "f5d6aa77e8a4507a"
+    "typesHash": "727425730cd2845e"
   },
   "./encryption": {
     "runtime": [
@@ -187,7 +192,7 @@
       "isKeysetPagination",
       "isOffsetPagination"
     ],
-    "typesHash": "3d96406293bda28b"
+    "typesHash": "8453544599ee01a2"
   },
   "./cache": {
     "runtime": [
@@ -223,7 +228,7 @@
       "updateListCache",
       "withOrgParams"
     ],
-    "typesHash": "110d5802fbd95d2f"
+    "typesHash": "ee278b339ef1bfc3"
   },
   "./query": {
     "runtime": [
@@ -303,7 +308,7 @@
       "useMutationWithTransition",
       "useOptimisticMutation"
     ],
-    "typesHash": "02613b6f8fad0710"
+    "typesHash": "12f0558333c7455d"
   },
   "./hooks": {
     "runtime": [
@@ -326,7 +331,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "0b20d13b5f94fb3b"
+    "typesHash": "5635da8524d4956d"
   },
   "./query-client": {
     "runtime": [
@@ -471,7 +476,7 @@
       "SearchPresetMethods",
       "withSearchPreset"
     ],
-    "typesHash": "051dc5ebcfd8fd95"
+    "typesHash": "601c0b3cd9cb5a1f"
   },
   "./query-options": {
     "runtime": [
@@ -484,6 +489,6 @@
       "QueryFnContext",
       "createEntityQueries"
     ],
-    "typesHash": "5365a56aeec29dbf"
+    "typesHash": "9bde5a7320fa6b97"
   }
 }

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.14.0 (2026-08-15)
+
+### Changed — `@classytic/repo-core` peer floor `>=0.14.0` → `>=0.24.0`
+
+The floor now matches the version this package is built and tested against.
+`>=0.14.0` was satisfiable by ten releases the suite has never run on — an
+untested lower bound that reads to a consumer as a support claim.
+
+No source change. The contracts arc-next imports are unaffected:
+`pagination/types` and `query-parser/types` are byte-identical between 0.19.0
+and 0.24.0, and `/errors` changed only by ADDING the conflict taxonomy
+(`VersionConflictError`, `IsTransientConflictFn`, `neverTransient`,
+`isVersionConflictError`, `conservativeMongoIsTransientConflict`). Nothing was
+removed or narrowed.
+
+### API surface (classified: additive, no narrowing)
+
+Seven subpaths report changed declaration CONTENT with no name changes — the
+additive `/errors` export list above flowing through arc-next's emitted
+declarations. No exported name was removed and no signature narrowed; the
+snapshot is refreshed accordingly.
+
 ## 0.13.0 (2026-08-01)
 
 ### Added
