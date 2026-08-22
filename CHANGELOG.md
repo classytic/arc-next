@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.1 (2026-08-22)
+
+### Added
+
+- **Resource-level polling defaults** — `CrudHooksConfig` now accepts `refetchInterval` and `refetchIntervalInBackground` as resource-level config. Previously these had to be passed at every call site (`useList(params, { refetchInterval })`); declaring them once on the resource ensures no call site can accidentally omit them. Per-call values still win (`??` merge — an explicit per-call `false` disables polling even when the resource default is set). Motivated by long-lived order dashboards where `refetchOnWindowFocus` is insufficient (a window that never blurs never refocuses).
+
 ## 0.14.0 (2026-08-15)
 
 ### Changed — `@classytic/repo-core` peer floor `>=0.14.0` → `>=0.24.0`
