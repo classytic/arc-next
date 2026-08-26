@@ -20,7 +20,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "5635da8524d4956d"
+    "typesHash": "590316dda84657e2"
   },
   "./client": {
     "runtime": [
@@ -331,7 +331,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "5635da8524d4956d"
+    "typesHash": "590316dda84657e2"
   },
   "./query-client": {
     "runtime": [

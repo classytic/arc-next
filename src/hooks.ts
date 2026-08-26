@@ -149,6 +149,30 @@ export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> 
     refetchOnWindowFocus?: boolean;
     structuralSharing?: boolean;
     /**
+     * Poll this resource's list/detail while mounted, in ms.
+     *
+     * Already supported PER CALL (`useList(params, { refetchInterval })`); this
+     * is the resource-level default, so a resource whose freshness matters
+     * declares it once instead of at every call site — and cannot be forgotten
+     * at one of them.
+     *
+     * The case that motivated it: an orders dashboard left open on a shop
+     * counter. Push notifications are best-effort, so the list is the
+     * AUTHORITATIVE path to a new order — but with no interval it relied on
+     * `refetchOnMount` / `refetchOnWindowFocus`, and a window that never blurs
+     * never refocuses, so it may never refetch. A missed push then reads as a
+     * missing record.
+     */
+    refetchInterval?: number | false;
+    /**
+     * Keep polling while the tab is hidden. Defaults to TanStack's `false`.
+     *
+     * Leave it off unless the data must be current the instant the operator
+     * returns — a background tab polling forever is load nobody is reading, and
+     * `refetchOnWindowFocus` already catches up on return.
+     */
+    refetchIntervalInBackground?: boolean;
+    /**
      * Declare this resource's read endpoints PUBLIC (`allowPublic` on the
      * server — e.g. a storefront catalog). Read hooks then enable token-less
      * requests by default, so callers never have to pass `{ public: true }`
@@ -661,8 +685,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         gcTime: queryOpts.gcTime ?? config.gcTime,
         refetchOnWindowFocus: queryOpts.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
         structuralSharing: queryOpts.structuralSharing ?? config.structuralSharing,
-        refetchInterval: queryOpts.refetchInterval,
-        refetchIntervalInBackground: queryOpts.refetchIntervalInBackground,
+        // `??` so an explicit per-call `false` still disables polling — a
+        // `||` here would let the resource default override it.
+        refetchInterval: queryOpts.refetchInterval ?? config.refetchInterval,
+        refetchIntervalInBackground:
+          queryOpts.refetchIntervalInBackground ?? config.refetchIntervalInBackground,
       },
       select: queryOpts.select,
     });
@@ -796,8 +823,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         gcTime: queryOpts.gcTime ?? config.gcTime,
         refetchOnWindowFocus: queryOpts.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
         structuralSharing: queryOpts.structuralSharing ?? config.structuralSharing,
-        refetchInterval: queryOpts.refetchInterval,
-        refetchIntervalInBackground: queryOpts.refetchIntervalInBackground,
+        // `??` so an explicit per-call `false` still disables polling — a
+        // `||` here would let the resource default override it.
+        refetchInterval: queryOpts.refetchInterval ?? config.refetchInterval,
+        refetchIntervalInBackground:
+          queryOpts.refetchIntervalInBackground ?? config.refetchIntervalInBackground,
       },
       select: queryOpts.select,
     });
@@ -1246,8 +1276,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         gcTime: queryOpts.gcTime ?? config.gcTime,
         refetchOnWindowFocus: queryOpts.refetchOnWindowFocus ?? config.refetchOnWindowFocus,
         structuralSharing: queryOpts.structuralSharing ?? config.structuralSharing,
-        refetchInterval: queryOpts.refetchInterval,
-        refetchIntervalInBackground: queryOpts.refetchIntervalInBackground,
+        // `??` so an explicit per-call `false` still disables polling — a
+        // `||` here would let the resource default override it.
+        refetchInterval: queryOpts.refetchInterval ?? config.refetchInterval,
+        refetchIntervalInBackground:
+          queryOpts.refetchIntervalInBackground ?? config.refetchIntervalInBackground,
       },
     });
     // No list → detail sync (same reasoning as `useList` — see note there).

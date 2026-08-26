@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.15.0 (2026-08-26)
+
+### Added — `refetchInterval` / `refetchIntervalInBackground` as resource-level config
+
+Both were already supported **per call** (`useList(params, { refetchInterval })`).
+They can now be declared once on the resource config, so a resource whose
+freshness matters states it in one place instead of at every call site — and
+cannot be forgotten at one of them. A per-call value still wins; the config is
+the default (`queryOpts.refetchInterval ?? config.refetchInterval`).
+
+The case that motivated it: an orders dashboard left open on a shop counter.
+Push notifications are best-effort, so the list is the **authoritative** path to
+a new order — but with no interval it fell back to `refetchOnMount` /
+`refetchOnWindowFocus`, and a window that never blurs never refocuses, so it may
+never refetch at all. A missed push then reads as a missing record.
+
+`refetchIntervalInBackground` defaults to TanStack's `false`. Leave it off
+unless the data must be current the instant the operator returns: a hidden tab
+polling forever is load nobody is reading, and `refetchOnWindowFocus` already
+catches up on return.
+
 ## 0.14.1 (2026-08-22)
 
 ### Added
