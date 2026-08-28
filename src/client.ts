@@ -467,6 +467,23 @@ export interface ClientEncryptionConfig {
 
 export interface ClientConfig {
   baseUrl: string;
+  /**
+   * Route prefix every API is mounted under, when it is not `/api/v1`.
+   *
+   * `BaseApi` defaults each instance to `/api/v1` and takes a per-instance
+   * `basePath` override. That covers an app's OWN api classes and nothing else:
+   * a package that constructs its own API internally — erp-shell's permission
+   * `platformApi`, an SDK preset — has no seam to be told, so on a host mounted
+   * anywhere but `/api/v1` it silently requests a URL that does not exist and
+   * the feature reads as "no data" rather than as a misconfiguration.
+   *
+   * Setting it here makes the mount point a property of the DEPLOYMENT, stated
+   * once, which is what it actually is. A per-instance `basePath` still wins,
+   * so nothing that already passes one changes.
+   *
+   * @example configureClient({ baseUrl, basePath: '/api' }) // host mounts at /api
+   */
+  basePath?: string;
   internalApiKey?: string;
   defaultHeaders?: Record<string, string>;
   /**
@@ -676,6 +693,18 @@ export function getAuthMode(): "bearer" | "cookie" | "header" {
 /** Get the configured base URL. Returns empty string if not configured. */
 export function getBaseUrl(): string {
   return clientConfig?.baseUrl ?? "";
+}
+
+/**
+ * The deployment's route prefix, or `null` when it has not declared one.
+ *
+ * `null` rather than the `/api/v1` default on purpose: the default belongs to
+ * `BaseApi`, which is the one place that should own it. Returning it here would
+ * put the same literal in two files, and the next person to change one would
+ * have no way to know about the other.
+ */
+export function getBasePath(): string | null {
+  return clientConfig?.basePath ?? null;
 }
 
 /** Whether auto-idempotency is enabled on the global client. */

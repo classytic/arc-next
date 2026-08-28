@@ -20,6 +20,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCrudApi } from "../src/api.js";
 import {
   ArcApiError,
   configureAuth,
@@ -211,3 +212,76 @@ describe("DetailQueryResult contract — typed-end-to-end, no raw-cache escape h
 // only kept here so this file compiles if the helper changes return types.)
 void ArcApiError;
 void isArcApiError;
+
+/**
+ * The same lazy-resolution rule, applied to the ROUTE PREFIX.
+ *
+ * `baseUrl` (the origin) was made lazy above because APIs are constructed at
+ * module load and `configureClient` runs later, inside a `"use client"`
+ * provider. `basePath` had the identical flaw and was not covered: it resolved
+ * once in the `BaseApi` constructor, so a deployment's declared prefix could
+ * never win over the `/api/v1` default.
+ *
+ * It matters because arc's own `init` template scaffolds `resourcePrefix:
+ * '/api'` while this SDK defaults to `/api/v1` — so a stock backend and a stock
+ * client disagree, and a package that builds its own API internally (an ERP
+ * shell's permission matrix, an SDK preset) has no seam to be told otherwise.
+ * The symptom is a 404 that renders as an empty list, not as a misconfiguration.
+ */
+describe("basePath — the deployment's route prefix, resolved lazily", () => {
+  it("CRITICAL regression: construct BEFORE configureClient → still uses the declared prefix", async () => {
+    resetGlobalConfig();
+    // Module-load order, exactly as a package's internal API instance sees it.
+    const api = createCrudApi("platform");
+
+    configureClient({ baseUrl: "https://api.example.com", basePath: "/api" });
+
+    const { calls } = mockFetchOk();
+    await api.invokeRoute({ method: "GET", path: "/permissions/matrix" });
+
+    // Constructor-time resolution would have frozen `/api/v1` here.
+    expect(calls[0]).toBe("https://api.example.com/api/platform/permissions/matrix");
+  });
+
+  it("keeps defaulting to /api/v1 when no prefix is declared", async () => {
+    // The pre-existing behaviour every current consumer relies on.
+    resetGlobalConfig();
+    configureClient({ baseUrl: "https://api.example.com" });
+    const api = createCrudApi("items");
+
+    const { calls } = mockFetchOk();
+    await api.getAll();
+
+    expect(calls[0]).toContain("https://api.example.com/api/v1/items");
+  });
+
+  it("an explicit per-instance basePath still wins over the global", async () => {
+    /**
+     * Load-bearing for a mixed app: one API on a legacy prefix while the rest
+     * follow the deployment default. Silently overriding an explicit value
+     * would break the narrower, more deliberate declaration.
+     */
+    resetGlobalConfig();
+    configureClient({ baseUrl: "https://api.example.com", basePath: "/api" });
+    const api = createCrudApi("legacy", { basePath: "/api/v2" });
+
+    const { calls } = mockFetchOk();
+    await api.getAll();
+
+    expect(calls[0]).toContain("https://api.example.com/api/v2/legacy");
+  });
+
+  it("picks up a prefix change mid-session, like baseUrl does", async () => {
+    resetGlobalConfig();
+    configureClient({ baseUrl: "https://api.example.com", basePath: "/api" });
+    const api = createCrudApi("items");
+    const { calls } = mockFetchOk();
+
+    await api.getAll();
+    configureClient({ baseUrl: "https://api.example.com", basePath: "/api/v1" });
+    await api.getAll();
+
+    expect(calls[0]).toContain("/api/items");
+    expect(calls[1]).toContain("/api/v1/items");
+  });
+});

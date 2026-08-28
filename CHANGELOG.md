@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.1
+
+- `ClientConfig.basePath` — deployment-level route prefix; `getBasePath()` exported from client
+- `BaseApi.basePath` / `BaseApi.baseUrl` — converted to lazy getters; resolves per-read so a package's internal API instance constructed before `configureClient()` still picks up the declared prefix (fixes silent 404 on hosts not mounted at `/api/v1`)
+
 ## 0.15.0 (2026-08-26)
 
 ### Added — `refetchInterval` / `refetchIntervalInBackground` as resource-level config

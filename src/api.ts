@@ -16,7 +16,7 @@ import type {
   UpdateManyResult,
 } from "@classytic/repo-core/repository";
 import type { ApiRequestOptions, ArcClient, NextFetchOptions } from "./client.js";
-import { createQueryString, handleApiRequest } from "./client.js";
+import { createQueryString, getBasePath, handleApiRequest } from "./client.js";
 
 // ============================================================================
 // Populate Types
@@ -238,9 +238,40 @@ export class BaseApi<
   TUpdate = Partial<TDoc>,
 > {
   readonly entity: string;
-  readonly config: Required<Omit<BaseApiConfig, "client">>;
-  readonly baseUrl: string;
+  /**
+   * `basePath` stays OPTIONAL here — it holds the explicit per-instance
+   * override and nothing else. The resolved value is {@link basePath}, which is
+   * computed per read; baking it in would defeat the whole point (see below).
+   */
+  readonly config: Required<Omit<BaseApiConfig, "client" | "basePath">> &
+    Pick<BaseApiConfig, "basePath">;
   private readonly requestFn: RequestFn;
+
+  /**
+   * Per-instance override → the deployment's declared prefix → `/api/v1`.
+   *
+   * The middle step is what lets a package construct its own API internally and
+   * still land on a host mounted elsewhere. Without it the only options were
+   * "every consumer passes `basePath`" — impossible for an instance a package
+   * owns — or "every host mounts at `/api/v1`".
+   *
+   * ## Why this is a GETTER and not resolved in the constructor
+   *
+   * `configureClient()` runs inside a `"use client"` provider, which is LATER
+   * than module evaluation. A package's API instance is created at import time,
+   * so a constructor-time read would capture `/api/v1` before the deployment
+   * ever declared `/api`, and the fallback would win permanently — producing a
+   * 404 that renders as an empty list, which is the failure this was meant to
+   * fix. An explicit `basePath` is unaffected either way.
+   */
+  get basePath(): string {
+    return this.config.basePath ?? getBasePath() ?? "/api/v1";
+  }
+
+  /** `{basePath}/{entity}` — the resource root every request is built from. */
+  get baseUrl(): string {
+    return `${this.basePath}/${this.entity}`;
+  }
 
   constructor(entity: string, config: BaseApiConfig = {}) {
     this.entity = entity;
@@ -253,7 +284,9 @@ export class BaseApi<
         ? (method, endpoint, options) => client().request(method, endpoint, options)
         : (client?.request ?? handleApiRequest);
     this.config = {
-      basePath: config.basePath ?? "/api/v1",
+      // Stored ONLY when the caller gave one — absence is what lets the
+      // getter fall through to the deployment's declared prefix.
+      ...(config.basePath !== undefined ? { basePath: config.basePath } : {}),
       defaultParams: {
         limit: 10,
         page: 1,
@@ -264,8 +297,6 @@ export class BaseApi<
         ...(config.headers || {}),
       },
     };
-
-    this.baseUrl = `${this.config.basePath}/${this.entity}`;
   }
 
   /** Merge per-instance headers into request options */
