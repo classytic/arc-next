@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.16.0
+
+### Added — `./tab-leader` subpath
+
+`useTabLeader({ key, enabled? })` elects exactly one leader tab per browser per
+key using `localStorage` coordination: the leader writes a heartbeat every
+`1500ms`; any tab may claim leadership once that heartbeat goes stale (`>5s`);
+a closing tab releases it immediately. Modelled on Odoo's
+`multi_tab_fallback_service`. When storage is unavailable every tab reports
+leader — the feature degrades rather than disappears, and the server-side
+concurrency cap is the backstop for the duplicate connections that allows.
+
+### Added — `shareAcrossTabs` option on `useEventStream` (default: `true`)
+
+Holds ONE SSE connection per browser instead of one per tab. The elected tab
+(via `useTabLeader`) connects and relays events and connection state over
+`BroadcastChannel`; followers mirror both at zero socket cost.
+
+`isConnected` on a follower tab reflects the shared socket's state — critical
+because callers gate polling on it (`refetchInterval: isConnected ? false : …`).
+A follower that assumed `true` would stop polling while nothing was delivering;
+one that assumed `false` would poll while live. Set `shareAcrossTabs: false` for
+a stream that must be per-tab.
+
+### Fixed — 429 rate-limit handled by SSE reconnect
+
+`probeConnectionFailure` (renamed from `probeForAuthFailure`) now returns a
+discriminated union that includes `rate-limited` alongside `auth-failure`. On
+`429` the reconnect is scheduled at the server's `Retry-After` value (parsed as
+delta-seconds or HTTP-date), falling back to `60s` — not at the exponential
+backoff curve that retries inside the window and refills the bucket on every
+attempt.
+
+`scheduleReconnect` accepts an explicit `delayMs` override so the probe's number
+reaches the timer without being clamped by the curve.
+
+### Fixed — probe now runs without an `onAuthError` handler
+
+The connection-failure probe was gated on an auth handler being registered, so a
+deployment with no `onAuthError` handler fell straight to backoff on every
+failure — including 429, where backoff is self-defeating. The probe now runs
+unconditionally; auth recovery is still guarded by the handler check.
+
 ## 0.15.1
 
 - `ClientConfig.basePath` — deployment-level route prefix; `getBasePath()` exported from client

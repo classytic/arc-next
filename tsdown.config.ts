@@ -13,6 +13,7 @@ export default defineConfig({
     'src/prefetch.ts',
     'src/query-options.ts',
     'src/sse.ts',
+    'src/tab-leader.ts',
     'src/ws.ts',
     'src/upload.ts',
     'src/cache.ts',

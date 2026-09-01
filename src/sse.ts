@@ -1,7 +1,7 @@
 "use client";
 
 import { type QueryKey, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   _getAuthErrorHandler,
   _runAuthRecovery,
@@ -9,6 +9,7 @@ import {
   buildStreamUrl,
   getAuthMode,
 } from "./client.js";
+import { useTabLeader } from "./tab-leader.js";
 
 // ============================================================================
 // URL builder (also exported for ad-hoc EventSource consumers)
@@ -130,7 +131,37 @@ export interface EventStreamOptions<TData = unknown> extends SubscribeToEventsOp
    * high-volume streams that don't read it.
    */
   trackEventCount?: boolean;
+  /**
+   * Hold ONE connection per browser rather than one per tab. Default: true.
+   *
+   * Browsers allow ~6 concurrent connections per origin on HTTP/1.1, so a
+   * per-tab stream lets a user starve their own app with a handful of tabs, and
+   * multiplies every reconnect against one server-side limit. The elected tab
+   * connects and relays events and connection state over `BroadcastChannel`;
+   * followers apply both without a socket.
+   *
+   * React-only — {@link subscribeToEvents} stays a plain per-caller connection,
+   * because tab coordination is a browser lifecycle concern and that function is
+   * the Node-capable core.
+   *
+   * Set false for a stream that must be per-tab.
+   */
+  shareAcrossTabs?: boolean;
 }
+
+/**
+ * Cross-tab protocol.
+ *
+ * `isConnected` must mean "this tab is receiving events", not "this tab owns a
+ * socket" — consumers gate polling on it (`refetchInterval: isConnected ? false
+ * : …`), so a follower reporting `false` polls while live, and one assuming
+ * `true` stops polling while the shared socket is down. Neither guess is safe,
+ * so the leader states it and an arriving follower asks.
+ */
+type TabMessage<TData> =
+  | { kind: "event"; event: ArcServerEvent<TData> }
+  | { kind: "state"; connected: boolean }
+  | { kind: "hello" };
 
 export interface EventStreamResult<TData = unknown> {
   isConnected: boolean;
@@ -155,10 +186,31 @@ export interface EventStreamResult<TData = unknown> {
  * `Range: bytes=0-0` for servers that 405 on HEAD. Either way, the body
  * is never read — only the status code matters.
  */
-async function probeForAuthFailure(
-  url: string,
-  retryOn403: boolean,
-): Promise<"auth-failure" | "not-auth"> {
+/** `Retry-After` is delta-seconds or an HTTP-date. Unparseable ⇒ no opinion. */
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+}
+
+interface ProbeResult {
+  kind: "auth-failure" | "rate-limited" | "not-auth";
+  /** Server-stated wait, when it gave one. */
+  retryAfterMs?: number;
+}
+
+/**
+ * Learn WHY the stream failed, since `EventSource` will not say.
+ *
+ * 429 matters as much as 401 and fails worse: a rate-limited stream that
+ * reconnects on the backoff schedule spends a token per attempt, so the window
+ * never drains and the client locks itself out indefinitely. The probe is a
+ * plain `fetch`, so unlike the stream it can read both the status and
+ * `Retry-After`.
+ */
+async function probeConnectionFailure(url: string, retryOn403: boolean): Promise<ProbeResult> {
   try {
     let res = await fetch(url, {
       method: "HEAD",
@@ -173,12 +225,18 @@ async function probeForAuthFailure(
         headers: { Range: "bytes=0-0" },
       });
     }
-    if (res.status === 401) return "auth-failure";
-    if (retryOn403 && res.status === 403) return "auth-failure";
-    return "not-auth";
+    if (res.status === 401) return { kind: "auth-failure" };
+    if (retryOn403 && res.status === 403) return { kind: "auth-failure" };
+    if (res.status === 429) {
+      return {
+        kind: "rate-limited",
+        retryAfterMs: parseRetryAfter(res.headers.get("retry-after")),
+      };
+    }
+    return { kind: "not-auth" };
   } catch {
     // Network failure — not an auth issue, let backoff handle it.
-    return "not-auth";
+    return { kind: "not-auth" };
   }
 }
 
@@ -327,12 +385,30 @@ export function subscribeToEvents<TData = unknown>(
       // reopen the EventSource (which re-reads the auth params via
       // `buildSseUrl`); on 'skip', fall back to the normal reconnect-
       // with-backoff path so transient network errors still recover.
+      /**
+       * The probe runs whether or not an auth handler is registered.
+       *
+       * It was gated on `handler`, so a deployment with no `onAuthError` never
+       * learned WHY the stream failed and fell straight to backoff — including
+       * for 429, the one status where backing off on the wrong schedule is
+       * self-defeating rather than merely slow.
+       */
       const { handler, retryOn403, maxAuthRetries } = _getAuthErrorHandler();
-      if (handler && sseAuthRetries < maxAuthRetries) {
-        sseAuthRetries += 1;
-        probeForAuthFailure(buildUrl(), retryOn403)
-          .then(async (status) => {
-            if (status === "auth-failure") {
+      if (sseProbes < maxAuthRetries) {
+        sseProbes += 1;
+        if (handler) sseAuthRetries += 1;
+        probeConnectionFailure(buildUrl(), retryOn403)
+          .then(async ({ kind, retryAfterMs }) => {
+            if (kind === "rate-limited") {
+              /**
+               * Honour the server's own number. Falling back to a full window
+               * rather than the 3s-based curve: retrying inside the window
+               * cannot succeed and each attempt refills the bucket.
+               */
+              scheduleReconnect(retryAfterMs ?? 60000);
+              return;
+            }
+            if (kind === "auth-failure" && handler && sseAuthRetries <= maxAuthRetries) {
               const { decision } = await _runAuthRecovery(handler, {
                 error: new ArcApiError("SSE pre-flight auth failure", {
                   status: 401,
@@ -365,11 +441,16 @@ export function subscribeToEvents<TData = unknown>(
     };
   };
 
-  /** Standard backoff-reconnect — shared between non-auth errors and skipped recoveries. */
-  const scheduleReconnect = (): void => {
+  /**
+   * Standard backoff-reconnect — shared between non-auth errors and skipped
+   * recoveries. `explicitDelayMs` overrides the curve when the SERVER stated a
+   * wait (`Retry-After`); its number beats any local guess.
+   */
+  const scheduleReconnect = (explicitDelayMs?: number): void => {
     if (reconnectAttempts < maxReconnectAttempts) {
       reconnectAttempts += 1;
-      const delay = Math.min(reconnectDelay * 1.5 ** (reconnectAttempts - 1), 30000);
+      const delay =
+        explicitDelayMs ?? Math.min(reconnectDelay * 1.5 ** (reconnectAttempts - 1), 30000);
       reconnectTimer = setTimeout(connect, delay);
     }
   };
@@ -377,6 +458,8 @@ export function subscribeToEvents<TData = unknown>(
   // Per-subscription auth-retry counter — reset on successful onopen so a
   // long-lived stream can recover from periodic re-auth multiple times.
   let sseAuthRetries = 0;
+  /** Probes attempted for THIS subscription — bounds the extra fetch per failure. */
+  let sseProbes = 0;
 
   connect();
 
@@ -437,6 +520,7 @@ export function useEventStream<TData = unknown>(
     enabled = true,
     trackLastEvent = true,
     trackEventCount = true,
+    shareAcrossTabs = true,
   } = options;
 
   const queryClient = useQueryClient();
@@ -460,11 +544,80 @@ export function useEventStream<TData = unknown>(
   // biome-ignore lint/correctness/useExhaustiveDependencies: eventTypesKey IS options.eventTypes, content-stabilized
   const eventTypes = useMemo(() => options.eventTypes, [eventTypesKey]);
 
+  /**
+   * The single place an event is applied, whether it arrived over this tab's
+   * socket or was relayed by the leader. Two copies would drift.
+   */
+  const applyEvent = useCallback(
+    (event: ArcServerEvent<TData>) => {
+      if (trackLastEvent) setLastEvent(event);
+      if (trackEventCount) setEventCount((n) => n + 1);
+      onEventRef.current?.(event);
+      for (const key of invalidateKeysRef.current) {
+        queryClient.invalidateQueries({ queryKey: key });
+      }
+    },
+    [queryClient, trackLastEvent, trackEventCount],
+  );
+
+  /**
+   * Stream identity shared by every tab pointing at it — the election key and
+   * the channel name. Derived from the ENDPOINT, not the built URL, so a
+   * per-tab token or org param cannot split one stream into several elections.
+   */
+  const channelName = `arc-next.sse.${resource ?? path ?? url ?? "/events/stream"}`;
+  const isLeaderTab = useTabLeader({ key: channelName, enabled: enabled && shareAcrossTabs });
+  const connectedRef = useRef(false);
+
   useEffect(() => {
     if (!enabled) {
       handleRef.current?.close();
       handleRef.current = null;
       return;
+    }
+
+    /**
+     * FOLLOWER — no socket. It mirrors the leader's events and connection
+     * state, so its cache, badge and polling decision stay correct at zero
+     * connection cost.
+     */
+    if (shareAcrossTabs && !isLeaderTab) {
+      handleRef.current?.close();
+      handleRef.current = null;
+      if (typeof BroadcastChannel === "undefined") return;
+
+      const channel = new BroadcastChannel(channelName);
+      channel.onmessage = (ev: MessageEvent) => {
+        const msg = ev.data as TabMessage<TData>;
+        if (msg?.kind === "event") {
+          applyEvent(msg.event);
+        } else if (msg?.kind === "state") {
+          setIsConnected(msg.connected);
+          onConnectionChangeRef.current?.(msg.connected);
+        }
+      };
+      // Ask rather than assume. Until the leader answers, this tab stays
+      // disconnected — the safe direction if no leader is listening at all.
+      channel.postMessage({ kind: "hello" } satisfies TabMessage<TData>);
+
+      return () => {
+        channel.close();
+        setIsConnected(false);
+      };
+    }
+
+    // LEADER — owns the socket and answers followers.
+    let channel: BroadcastChannel | null = null;
+    if (shareAcrossTabs && typeof BroadcastChannel !== "undefined") {
+      channel = new BroadcastChannel(channelName);
+      // BroadcastChannel never echoes to the sender, so this only serves others.
+      channel.onmessage = (ev: MessageEvent) => {
+        if ((ev.data as TabMessage<TData>)?.kind !== "hello") return;
+        channel?.postMessage({
+          kind: "state",
+          connected: connectedRef.current,
+        } satisfies TabMessage<TData>);
+      };
     }
 
     const handle = subscribeToEvents<TData>({
@@ -477,16 +630,18 @@ export function useEventStream<TData = unknown>(
       maxReconnectAttempts: options.maxReconnectAttempts,
       withCredentials: options.withCredentials,
       onConnectionChange: (c) => {
+        connectedRef.current = c;
         setIsConnected(c);
         onConnectionChangeRef.current?.(c);
+        // Followers must flip with the shared socket — especially to `false`,
+        // or they stop polling while nothing is delivering.
+        channel?.postMessage({ kind: "state", connected: c } satisfies TabMessage<TData>);
       },
       onEvent: (event) => {
-        if (trackLastEvent) setLastEvent(event);
-        if (trackEventCount) setEventCount((n) => n + 1);
-        onEventRef.current?.(event);
-        for (const key of invalidateKeysRef.current) {
-          queryClient.invalidateQueries({ queryKey: key });
-        }
+        // Relayed UNFILTERED: each tab applies its own `patterns`, which need
+        // not match this one's.
+        channel?.postMessage({ kind: "event", event } satisfies TabMessage<TData>);
+        applyEvent(event);
       },
     });
     handleRef.current = handle;
@@ -494,6 +649,12 @@ export function useEventStream<TData = unknown>(
     return () => {
       handle.close();
       handleRef.current = null;
+      // Losing leadership runs this cleanup; the channel must go with the
+      // socket or a demoted tab keeps answering `hello` for a stream it no
+      // longer owns.
+      channel?.close();
+      channel = null;
+      connectedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -509,6 +670,10 @@ export function useEventStream<TData = unknown>(
     trackLastEvent,
     trackEventCount,
     queryClient,
+    shareAcrossTabs,
+    isLeaderTab,
+    channelName,
+    applyEvent,
   ]);
 
   return {

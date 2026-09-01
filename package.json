@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -77,6 +77,10 @@
     "./sse": {
       "types": "./dist/sse.d.ts",
       "default": "./dist/sse.js"
+    },
+    "./tab-leader": {
+      "types": "./dist/tab-leader.d.ts",
+      "default": "./dist/tab-leader.js"
     },
     "./ws": {
       "types": "./dist/ws.d.ts",
