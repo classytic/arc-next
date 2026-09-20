@@ -20,7 +20,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "590316dda84657e2"
+    "typesHash": "28964937025d2a49"
   },
   "./client": {
     "runtime": [
@@ -46,6 +46,7 @@
       "createServerClient",
       "getAuthContext",
       "getAuthMode",
+      "getBasePath",
       "getBaseUrl",
       "getClientAuthContext",
       "getQuotaDetails",
@@ -111,6 +112,7 @@
       "createServerClient",
       "getAuthContext",
       "getAuthMode",
+      "getBasePath",
       "getBaseUrl",
       "getClientAuthContext",
       "getQuotaDetails",
@@ -127,7 +129,7 @@
       "isTierRequiredError",
       "isValidationError"
     ],
-    "typesHash": "727425730cd2845e"
+    "typesHash": "2c562952c17f7019"
   },
   "./encryption": {
     "runtime": [
@@ -192,7 +194,7 @@
       "isKeysetPagination",
       "isOffsetPagination"
     ],
-    "typesHash": "8453544599ee01a2"
+    "typesHash": "b832ed2e97361d8c"
   },
   "./cache": {
     "runtime": [
@@ -331,7 +333,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "590316dda84657e2"
+    "typesHash": "28964937025d2a49"
   },
   "./query-client": {
     "runtime": [
@@ -379,7 +381,16 @@
       "subscribeToEvents",
       "useEventStream"
     ],
-    "typesHash": "c3bebd4d0e10d665"
+    "typesHash": "f58d3a299f1efe76"
+  },
+  "./tab-leader": {
+    "runtime": [
+      "useTabLeader"
+    ],
+    "types": [
+      "useTabLeader"
+    ],
+    "typesHash": "3e7a15dee9f3db9b"
   },
   "./ws": {
     "runtime": [

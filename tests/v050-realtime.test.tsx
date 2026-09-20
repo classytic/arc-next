@@ -596,6 +596,25 @@ describe("useResourceSync (WS source)", () => {
     expect(keys).toContainEqual(KEYS.aggregations());
   });
 
+  it("invalidates every filtered count on a CRUD broadcast", async () => {
+    const { KEYS, useResourceSync } = buildHooks();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    const wrapper = createWrapper(queryClient);
+
+    renderHook(() => useResourceSync(), { wrapper });
+    await flushMicrotasks();
+
+    act(() => {
+      MockWebSocket.latest().inject({
+        type: "todo.updated",
+        data: { resource: "todo", operation: "updated", data: { _id: "c1" }, timestamp: "" },
+      });
+    });
+
+    const keys = spy.mock.calls.map(([arg]) => (arg as { queryKey: unknown }).queryKey);
+    expect(keys).toContainEqual(KEYS.custom("count"));
+  });
+
   it("forwards parsed event to onEvent callback (operation + id + data)", async () => {
     const { useResourceSync } = buildHooks();
     const seen: Array<{ operation: string; id?: string }> = [];

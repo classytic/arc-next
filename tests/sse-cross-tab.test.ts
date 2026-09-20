@@ -9,12 +9,12 @@
  * the only thing keeping the UI current.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import React from 'react';
-import { useEventStream } from '../src/sse.js';
-import { configureClient, configureAuth } from '../src/client.js';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook } from "@testing-library/react";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { configureAuth, configureClient } from "../src/client.js";
+import { useEventStream } from "../src/sse.js";
 
 /** Minimal same-realm BroadcastChannel: delivers to peers, never to the sender. */
 class FakeChannel {
@@ -71,7 +71,7 @@ function wrapperFor(qc: QueryClient) {
   };
 }
 
-describe('useEventStream — cross-tab connection state', () => {
+describe("useEventStream — cross-tab connection state", () => {
   let qc: QueryClient;
   const origES = globalThis.EventSource;
   const origBC = globalThis.BroadcastChannel;
@@ -83,8 +83,8 @@ describe('useEventStream — cross-tab connection state', () => {
     OpenEventSource.reset();
     (globalThis as Record<string, unknown>).EventSource = OpenEventSource;
     (globalThis as Record<string, unknown>).BroadcastChannel = FakeChannel;
-    configureClient({ baseUrl: 'http://api.test' });
-    configureAuth({ getToken: () => 't', getOrgId: () => 'o' });
+    configureClient({ baseUrl: "http://api.test" });
+    configureAuth({ getToken: () => "t", getOrgId: () => "o" });
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   });
 
@@ -96,63 +96,63 @@ describe('useEventStream — cross-tab connection state', () => {
     if (origBC) (globalThis as Record<string, unknown>).BroadcastChannel = origBC;
   });
 
-  it('only the leader opens a socket', () => {
-    renderHook(() => useEventStream({ resource: 'n' }), { wrapper: wrapperFor(qc) });
-    renderHook(() => useEventStream({ resource: 'n' }), { wrapper: wrapperFor(qc) });
+  it("only the leader opens a socket", () => {
+    renderHook(() => useEventStream({ resource: "n" }), { wrapper: wrapperFor(qc) });
+    renderHook(() => useEventStream({ resource: "n" }), { wrapper: wrapperFor(qc) });
 
     expect(OpenEventSource.instances).toHaveLength(1);
   });
 
-  it('a follower reports CONNECTED once the leader says it is', () => {
-    const leader = renderHook(() => useEventStream({ resource: 'n' }), { wrapper: wrapperFor(qc) });
-    const follower = renderHook(() => useEventStream({ resource: 'n' }), {
+  it("a follower reports CONNECTED once the leader says it is", () => {
+    const leader = renderHook(() => useEventStream({ resource: "n" }), { wrapper: wrapperFor(qc) });
+    const follower = renderHook(() => useEventStream({ resource: "n" }), {
       wrapper: wrapperFor(qc),
     });
 
     expect(follower.result.current.isConnected).toBe(false);
 
     act(() => {
-      OpenEventSource.latest().onopen?.(new Event('open'));
+      OpenEventSource.latest().onopen?.(new Event("open"));
     });
 
     expect(leader.result.current.isConnected).toBe(true);
     expect(follower.result.current.isConnected).toBe(true);
   });
 
-  it('a follower goes DISCONNECTED when the shared socket drops', () => {
-    renderHook(() => useEventStream({ resource: 'n' }), { wrapper: wrapperFor(qc) });
-    const follower = renderHook(() => useEventStream({ resource: 'n' }), {
+  it("a follower goes DISCONNECTED when the shared socket drops", () => {
+    renderHook(() => useEventStream({ resource: "n" }), { wrapper: wrapperFor(qc) });
+    const follower = renderHook(() => useEventStream({ resource: "n" }), {
       wrapper: wrapperFor(qc),
     });
 
     act(() => {
-      OpenEventSource.latest().onopen?.(new Event('open'));
+      OpenEventSource.latest().onopen?.(new Event("open"));
     });
     expect(follower.result.current.isConnected).toBe(true);
 
     act(() => {
-      OpenEventSource.latest().onerror?.(new Event('error'));
+      OpenEventSource.latest().onerror?.(new Event("error"));
     });
     expect(follower.result.current.isConnected).toBe(false);
   });
 
-  it('a follower receives relayed events without its own socket', () => {
-    renderHook(() => useEventStream({ resource: 'n' }), { wrapper: wrapperFor(qc) });
-    const follower = renderHook(() => useEventStream({ resource: 'n' }), {
+  it("a follower receives relayed events without its own socket", () => {
+    renderHook(() => useEventStream({ resource: "n" }), { wrapper: wrapperFor(qc) });
+    const follower = renderHook(() => useEventStream({ resource: "n" }), {
       wrapper: wrapperFor(qc),
     });
 
     act(() => {
-      OpenEventSource.latest().emit('n.created', {
-        type: 'n.created',
-        resource: 'n',
+      OpenEventSource.latest().emit("n.created", {
+        type: "n.created",
+        resource: "n",
         data: {},
-        timestamp: 'x',
+        timestamp: "x",
       });
     });
 
     expect(OpenEventSource.instances).toHaveLength(1);
     expect(follower.result.current.eventCount).toBe(1);
-    expect(follower.result.current.lastEvent?.type).toBe('n.created');
+    expect(follower.result.current.lastEvent?.type).toBe("n.created");
   });
 });

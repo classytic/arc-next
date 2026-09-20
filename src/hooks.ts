@@ -405,8 +405,8 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
    *
    * Cached under `KEYS.aggregation(name, filter)` so multiple call sites with
    * the same args share one cache entry. Mutation hooks
-   * (`useActions`/`useBulkActions`) auto-invalidate `KEYS.aggregations()` so
-   * dashboards refresh after CRUD writes — opt out via the mutation's
+   * (`useActions`/`useBulkActions`) auto-invalidate count and aggregation
+   * queries so dashboards refresh after CRUD writes — opt out via the mutation's
    * `invalidateQueries` override if you want stale-on-write.
    *
    * @example
@@ -900,9 +900,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       mutationFn: ({ token, organizationId, data }: MutationParams<TCreate>) =>
         api.create({ token, organizationId, data }),
       queryClient,
-      // Snapshot + settle-invalidate lists AND every aggregation — dashboards
-      // derive from the underlying data, so any CRUD write may shift their rows.
-      queryKeys: [KEYS.lists(), KEYS.aggregations()],
+      // Every derived read must become stale when its source rows change.
+      queryKeys: [KEYS.lists(), KEYS.custom("count"), KEYS.aggregations()],
       mutationKey: WRITE_MUTATION_KEY,
       shouldToast,
       optimisticUpdate: (oldData, variables, qKey) => {
@@ -971,7 +970,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       mutationFn: ({ token, organizationId, id, data }: UpdateParams<TUpdate>) =>
         api.update({ token, organizationId, id, data }),
       queryClient,
-      queryKeys: [KEYS.lists(), KEYS.details(), KEYS.aggregations()],
+      queryKeys: [KEYS.lists(), KEYS.details(), KEYS.custom("count"), KEYS.aggregations()],
       mutationKey: WRITE_MUTATION_KEY,
       shouldToast,
       // One key-aware updater covers every snapshotted cache family:
@@ -1031,7 +1030,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       mutationFn: ({ token, organizationId, id }: DeleteParams) =>
         api.delete({ token, organizationId, id }),
       queryClient,
-      queryKeys: [KEYS.lists(), KEYS.aggregations()],
+      queryKeys: [KEYS.lists(), KEYS.custom("count"), KEYS.aggregations()],
       mutationKey: WRITE_MUTATION_KEY,
       shouldToast,
       optimisticUpdate: (oldData, { id }, qKey) => {
@@ -1064,7 +1063,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         }
         return api.restore({ token, organizationId, id });
       },
-      invalidateQueries: [KEYS.lists(), KEYS.custom("deleted"), KEYS.aggregations()],
+      invalidateQueries: [
+        KEYS.lists(),
+        KEYS.custom("deleted"),
+        KEYS.custom("count"),
+        KEYS.aggregations(),
+      ],
       shouldToast,
       messages: {
         success: `${singular} restored successfully`,
@@ -1562,11 +1566,11 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           data: vars.data,
         });
       },
-      invalidateQueries: [KEYS.lists(), KEYS.aggregations()],
+      invalidateQueries: [KEYS.lists(), KEYS.custom("count"), KEYS.aggregations()],
       // Seed detail caches from the returned documents BEFORE lists refetch —
       // a grid that navigates straight into a just-created row renders from
       // cache instead of fetching. Detail caches are NOT invalidated (the
-      // seeded docs ARE the server truth); only lists + aggregations refetch.
+      // seeded docs ARE the server truth); lists, counts and aggregations refetch.
       onSuccess: (raw) => {
         const created = (raw as { data?: T[] } | null)?.data;
         if (!Array.isArray(created)) return;
@@ -1605,10 +1609,10 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           data: vars.data as Parameters<NonNullable<typeof api.bulkUpdate>>[0]["data"],
         });
       },
-      invalidateQueries: [KEYS.lists(), KEYS.details(), KEYS.aggregations()],
+      invalidateQueries: [KEYS.lists(), KEYS.details(), KEYS.custom("count"), KEYS.aggregations()],
       // Partial-success awareness: when the server reports zero modified rows
       // (filter matched nothing, or values were already current), skip the
-      // full lists+details+aggregations refetch — nothing changed.
+      // full lists/details/counts/aggregations refetch — nothing changed.
       shouldInvalidate: (raw) => {
         const r = raw as { modifiedCount?: number; upsertedCount?: number } | null;
         if (!r || typeof r.modifiedCount !== "number") return true;
@@ -1638,7 +1642,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           filter: vars.filter,
         });
       },
-      invalidateQueries: [KEYS.lists(), KEYS.aggregations()],
+      invalidateQueries: [KEYS.lists(), KEYS.custom("count"), KEYS.aggregations()],
       // Same partial-success rule as bulkUpdate: zero deletions = no refetch.
       shouldInvalidate: (raw) => {
         const r = raw as { deletedCount?: number } | null;
@@ -1718,9 +1722,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           data: vars.data,
         });
       },
-      // Default: invalidate the resource's lists + the specific detail so the action's
-      // state mutation propagates without each consumer having to wire it.
-      invalidateQueries: options?.invalidateQueries ?? [KEYS.lists(), KEYS.details()],
+      // State transitions can change filtered lists, counts and aggregates.
+      invalidateQueries: options?.invalidateQueries ?? [
+        KEYS.lists(),
+        KEYS.details(),
+        KEYS.custom("count"),
+        KEYS.aggregations(),
+      ],
       // Pass typed variables (with action resolved) through to user callbacks.
       onSuccess: (data, vars) => {
         const action = vars.action ?? options?.action ?? "";
@@ -1991,6 +1999,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
         // Lists always invalidate — count/order can shift on any op.
         queryClient.invalidateQueries({ queryKey: KEYS.lists() });
+        queryClient.invalidateQueries({ queryKey: KEYS.custom("count") });
         // Aggregations always invalidate too — dashboards derive from the
         // underlying data, so any broadcast may shift their rows.
         queryClient.invalidateQueries({ queryKey: KEYS.aggregations() });

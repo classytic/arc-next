@@ -656,7 +656,6 @@ export function useEventStream<TData = unknown>(
       channel = null;
       connectedRef.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     enabled,
     url,
@@ -667,9 +666,6 @@ export function useEventStream<TData = unknown>(
     options.reconnectDelay,
     options.maxReconnectAttempts,
     options.withCredentials,
-    trackLastEvent,
-    trackEventCount,
-    queryClient,
     shareAcrossTabs,
     isLeaderTab,
     channelName,

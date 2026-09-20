@@ -118,19 +118,33 @@ function showToast<TData, TVariables>(
     activeHandler.success(text);
   } else {
     const msg = messages?.error;
-    let defaultMsg = error?.message || "An error occurred";
+    // The part of the error a user can ACT on: the quota meter for a 429, or
+    // the per-field detail of a validation failure. Kept separate from the
+    // fallback so a fixed caller message can carry it rather than replace it.
+    let detail: string | undefined;
     // Quota 429s (arc 2.22) carry a renderable meter — show it instead of
     // the raw message ("Quota exceeded for 'ai.tokens': 12400 of 10000...").
     const quota = getQuotaDetails(error);
     if (quota) {
-      defaultMsg = `${quota.used.toLocaleString()} of ${quota.limit.toLocaleString()} ${quota.kind} used this period — resets ${new Date(quota.resetsAt).toLocaleDateString()}`;
+      detail = `${quota.used.toLocaleString()} of ${quota.limit.toLocaleString()} ${quota.kind} used this period — resets ${new Date(quota.resetsAt).toLocaleDateString()}`;
     } else if (isArcApiError(error) && error.fieldErrors) {
       const fields = Object.entries(error.fieldErrors);
       if (fields.length > 0) {
-        defaultMsg = fields.map(([k, v]) => `${k}: ${v}`).join(", ");
+        detail = fields.map(([k, v]) => `${k}: ${v}`).join(", ");
       }
     }
-    const text = typeof msg === "function" ? msg(error as Error, variables) : msg || defaultMsg;
+    const defaultMsg = detail ?? (error?.message || "An error occurred");
+    // A fixed string is the caller's HEADLINE, not a replacement for the
+    // detail: "Failed to record settlement" alone sent an operator hunting
+    // through a form the server had already told them how to fix.
+    const text =
+      typeof msg === "function"
+        ? msg(error as Error, variables)
+        : msg
+          ? detail
+            ? `${msg}: ${detail}`
+            : msg
+          : defaultMsg;
 
     activeHandler.error(text);
   }

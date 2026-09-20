@@ -659,11 +659,43 @@ export type AfterResponseInterceptor = <T = unknown>(
 let clientConfig: ClientConfig | null = null;
 
 /**
+ * The `ClientConfig` keys that can carry PER-REQUEST state, and so are the only
+ * ones worth warning about on the server.
+ *
+ * Everything else in `ClientConfig` is a constant of the deployment — `baseUrl`,
+ * `basePath`, `authMode`, `timeoutMs` and friends are read out of the environment
+ * and are identical for every request, so a module-level singleton holding them
+ * has nothing to leak. These three do not have that property: the two
+ * interceptors are closures, which is exactly where a caller reaches for the
+ * request they happen to be serving, and `defaultHeaders` is where a token gets
+ * pinned by hand.
+ *
+ * The warning used to fire on ANY server-side call, which made it noise in the
+ * one case a Next.js app genuinely has to configure on the server: an SSR
+ * fetcher needs `baseUrl` to build an absolute URL, and there is no other seam
+ * that supplies it. An app doing the leak-safe thing correctly got told it was
+ * wrong on every cold start, so the warning trained people to ignore it — and a
+ * warning nobody reads does not catch the real mistake either.
+ */
+const REQUEST_VARYING_CONFIG_KEYS = [
+  "beforeRequest",
+  "afterResponse",
+  "defaultHeaders",
+] as const satisfies readonly (keyof ClientConfig)[];
+
+/**
  * Configure the API client. Call once at app init before any API requests.
  *
- * **SSR safety:** This sets module-level state. In Next.js, call this only in
+ * **SSR safety:** This sets module-level state. In Next.js, call this from
  * client-side code (e.g. a `"use client"` provider or `useEffect`).
- * Calling on the server risks leaking state between requests.
+ *
+ * Configuring only the deployment's CONSTANTS on the server is supported and
+ * silent — an SSR fetcher needs `baseUrl`/`basePath` to build an absolute URL,
+ * and those are the same for every request. What must not cross to the server is
+ * anything derived from the request being served: {@link ClientConfig.beforeRequest},
+ * {@link ClientConfig.afterResponse} and {@link ClientConfig.defaultHeaders} are
+ * warned about because they are where that happens. Per-request AUTH belongs to
+ * {@link configureAuth}, which stays client-only in full.
  *
  * @example
  * // Bearer token auth (default)
@@ -671,14 +703,24 @@ let clientConfig: ClientConfig | null = null;
  *
  * // Cookie-based auth (e.g. Better Auth)
  * configureClient({ baseUrl: process.env.NEXT_PUBLIC_API_URL!, authMode: 'cookie' });
+ *
+ * // Server module graph — constants only, no warning
+ * if (typeof window === "undefined") {
+ *   configureClient({ baseUrl: process.env.NEXT_PUBLIC_API_URL!, basePath: "/api" });
+ * }
  */
 export function configureClient(config: ClientConfig): void {
   if (typeof window === "undefined") {
-    console.warn(
-      "[arc-next] configureClient() called on the server. " +
-        "This sets module-level state that persists across requests. " +
-        "Call only in client-side code (e.g., a 'use client' provider).",
-    );
+    const risky = REQUEST_VARYING_CONFIG_KEYS.filter((key) => config[key] !== undefined);
+    if (risky.length > 0) {
+      console.warn(
+        `[arc-next] configureClient() called on the server with ${risky.join(", ")}. ` +
+          "These can capture per-request state into a module-level singleton that " +
+          "persists across requests, so one request's values can serve another's. " +
+          "Set them from client-side code (e.g. a 'use client' provider); " +
+          "deployment constants such as baseUrl/basePath are safe to set here.",
+      );
+    }
   }
   clientConfig = config;
 }

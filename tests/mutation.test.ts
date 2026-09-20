@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ArcApiError } from "../src/client";
 import { configureClient } from "../src/client.js";
 import {
   configureToast,
@@ -162,6 +163,63 @@ describe("useMutationWithTransition", () => {
     });
 
     expect(toastHandler.error).toHaveBeenCalledWith("Custom error message");
+  });
+
+  it("keeps the server's field errors when a fixed error message is given", async () => {
+    // A fixed string is the HEADLINE, not a replacement: the operator was told
+    // "Failed to record COD settlement" while the response already said which
+    // field was wrong and what it accepts.
+    const error = new ArcApiError("Validation failed", {
+      status: 400,
+      statusText: "Bad Request",
+      json: {
+        code: "arc.validation_error",
+        message: "Validation failed",
+        details: [
+          {
+            path: "cashAccount",
+            code: "enum",
+            message: "must be equal to one of the allowed values",
+          },
+        ],
+      },
+      endpoint: "/orders/x/cod-settlement",
+      method: "POST",
+    });
+    const mutationFn = vi.fn().mockRejectedValue(error);
+
+    const { result } = renderHook(
+      () =>
+        useMutationWithTransition({
+          mutationFn,
+          messages: { error: "Failed to record COD settlement" },
+        }),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await act(async () => {
+      try {
+        await result.current.mutateAsync({});
+      } catch {}
+    });
+
+    expect(toastHandler.error).toHaveBeenCalledWith(
+      "Failed to record COD settlement: cashAccount: must be equal to one of the allowed values",
+    );
+  });
+
+  it("a fixed error message with no actionable detail is shown as-is", async () => {
+    const mutationFn = vi.fn().mockRejectedValue(new Error("boom"));
+    const { result } = renderHook(
+      () => useMutationWithTransition({ mutationFn, messages: { error: "Could not save" } }),
+      { wrapper: createWrapper(queryClient) },
+    );
+    await act(async () => {
+      try {
+        await result.current.mutateAsync({});
+      } catch {}
+    });
+    expect(toastHandler.error).toHaveBeenCalledWith("Could not save");
   });
 
   it("uses default error message when no custom message", async () => {

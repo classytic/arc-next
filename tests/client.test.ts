@@ -9,6 +9,7 @@ import {
   createQueryString,
   getAuthContext,
   getAuthMode,
+  getBaseUrl,
   handleApiRequest,
   isAbortError,
   isArcApiError,
@@ -43,6 +44,67 @@ describe("configureClient", () => {
     expect(result).toEqual({ success: true });
 
     fetchMock.mockRestore();
+  });
+
+  /**
+   * The SSR warning is about LEAKING per-request state, not about the server
+   * being off-limits. A Next.js app has to configure `baseUrl` in the server
+   * module graph — an SSR fetcher cannot build an absolute URL without it, and
+   * there is no other seam that supplies one. Warning on that too made the
+   * warning fire on every cold start of an app doing it correctly, which is how
+   * a warning stops being read.
+   */
+  describe("server-side call", () => {
+    let warn: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      // `typeof window` reads "undefined" once the global holds undefined.
+      vi.stubGlobal("window", undefined);
+      warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      warn.mockRestore();
+    });
+
+    it("stays silent for deployment constants", () => {
+      configureClient({ baseUrl: "http://api.test", basePath: "/api", authMode: "bearer" });
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("warns on defaultHeaders — where a caller pins one request's token", () => {
+      configureClient({
+        baseUrl: "http://api.test",
+        defaultHeaders: { authorization: "Bearer leaked" },
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("defaultHeaders");
+    });
+
+    it("warns on an interceptor — a closure is where the served request gets captured", () => {
+      configureClient({ baseUrl: "http://api.test", beforeRequest: (ctx) => ctx });
+      expect(String(warn.mock.calls[0]![0])).toContain("beforeRequest");
+    });
+
+    it("names every offending key at once, so one warning is the whole fix list", () => {
+      configureClient({
+        baseUrl: "http://api.test",
+        beforeRequest: (ctx) => ctx,
+        afterResponse: (ctx) => ctx,
+        defaultHeaders: {},
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = String(warn.mock.calls[0]![0]);
+      for (const key of ["beforeRequest", "afterResponse", "defaultHeaders"]) {
+        expect(message).toContain(key);
+      }
+    });
+
+    it("the config is applied either way — the warning informs, it does not refuse", () => {
+      configureClient({ baseUrl: "http://warned.test", defaultHeaders: { a: "b" } });
+      expect(getBaseUrl()).toBe("http://warned.test");
+    });
   });
 });
 

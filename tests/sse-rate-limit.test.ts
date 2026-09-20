@@ -9,8 +9,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { subscribeToEvents } from "../src/sse.js";
 import { configureAuth, configureClient } from "../src/client.js";
+import { subscribeToEvents } from "../src/sse.js";
 
 class FakeES {
   static instances: FakeES[] = [];

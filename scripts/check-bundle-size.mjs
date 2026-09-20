@@ -35,8 +35,9 @@ const BUDGETS = {
   "./query-client": 18_000, // raised 0.12: timeout/jitter/Retry-After landed in the client.ts closure
   "./query-options": 30_000,
   "./prefetch": 32_000,
-  "./sse": 20_000,
-  "./ws": 20_000,
+  "./sse": 28_000, // raised 0.16.0: shareAcrossTabs (BroadcastChannel leader election) landed in the sse.ts closure
+  "./tab-leader": 2_500, // new subpath 0.16.0
+  "./ws": 24_000, // raised 0.16.0: shareAcrossTabs (BroadcastChannel leader election) landed in the ws.ts closure
   "./upload": 27_000,
   "./encryption": 3_000,
   "./field-encryption": 5_000,

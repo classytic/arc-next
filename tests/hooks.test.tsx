@@ -350,6 +350,19 @@ describe("createCrudHooks", () => {
       expect(toastHandler.success).toHaveBeenCalledWith("Item created successfully");
     });
 
+    it("invalidates every filtered count after a write", async () => {
+      const wrapper = createWrapper(queryClient);
+      const countPrefix = hooks.KEYS.custom("count");
+      const spy = vi.spyOn(queryClient, "invalidateQueries");
+      const { result } = renderHook(() => hooks.useActions(), { wrapper });
+
+      await act(async () => {
+        await result.current.create({ data: { name: "New" } });
+      });
+
+      expect(spy).toHaveBeenCalledWith({ queryKey: countPrefix });
+    });
+
     it("update calls api.update", async () => {
       const wrapper = createWrapper(queryClient);
 

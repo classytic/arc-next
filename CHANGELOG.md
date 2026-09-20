@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.16.1
+
+### Fixed — release gate had been silently broken since 0.16.0
+
+`0.16.0` shipped without updating `api-surface.json` (so `check:api-surface`
+was comparing against a stale pre-tab-leader snapshot) or the bundle-size
+budgets in `scripts/check-bundle-size.mjs` for the `shareAcrossTabs`
+(BroadcastChannel leader election) code it added to `./sse` and `./ws`, and
+without a budget entry for the new `./tab-leader` subpath at all. Several
+files also had CRLF line endings invisible to `git diff` (committed blob
+stays LF; a tool that rewrites the working copy leaves Biome reporting a
+whole-file diff that never says "line endings") and one `useEffect`'s
+dependency array carried three entries (`queryClient`, `trackLastEvent`,
+`trackEventCount`) already covered by `applyEvent`, which already depends on
+them — flagged by Biome but suppressed with a stale `// eslint-disable`
+comment Biome doesn't read. All fixed; `prepublishOnly`'s 11 gate steps now
+pass clean.
+
+### Changed — `@classytic/repo-core` peer floor raised to `>=0.28.0`
+
+Was `>=0.24.0`, several releases stale.
+
+### Fixed — count queries went stale after every CRUD write
+
+`useActions`/`useBulkActions`/`useCreate`/`useUpdate`/`useDelete`/`useRestore`
+invalidated `KEYS.lists()` and `KEYS.aggregations()` on write but never
+`KEYS.custom("count")`, so a count query rendered a header/badge that drifted
+from reality until something else happened to invalidate it. Every mutation
+path (including the realtime broadcast handler) now invalidates counts
+alongside lists and aggregations.
+
+### Fixed — `configureClient()`'s server-side warning fired on every SSR call, including the safe ones
+
+The warning covered the whole config object, so a Next.js SSR fetcher setting
+only `baseUrl`/`basePath` — deployment constants, identical for every
+request — got warned on every cold start exactly as if it had set a
+per-request `beforeRequest`/`afterResponse` interceptor or `defaultHeaders`.
+A warning that fires on the correct usage trains people to ignore it, which
+defeats its purpose for the case it actually exists to catch. Now scoped to
+`REQUEST_VARYING_CONFIG_KEYS` (`beforeRequest`, `afterResponse`,
+`defaultHeaders`) — the closures/headers that can capture per-request state
+into the module-level singleton.
+
+### Fixed — a fixed `messages.error` string discarded the server's field errors
+
+`showToast` treated a caller's `messages.error` string as the whole toast, so
+an `ArcApiError` carrying `fieldErrors` (or a quota meter) rendered as the bare
+headline: "Failed to record COD settlement" hid the server's own
+`cashAccount: must be equal to one of the allowed values`, and the operator was
+left to guess at a form the response had already explained. The string is now
+the HEADLINE and the actionable detail is appended after a colon. A function
+message keeps full control, and a call with no message still gets the detail
+alone as before. Pinned in `tests/mutation.test.ts`.
+
 ## 0.16.0
 
 ### Added — `./tab-leader` subpath
