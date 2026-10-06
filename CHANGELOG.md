@@ -1,5 +1,89 @@
 # Changelog
 
+## Unreleased
+
+### Added — bearer-token sessions: `./auth-token`
+
+`createTokenStore(storage, key)` keeps the bearer token behind a synchronous `get()` for
+`configureAuth({ getToken })`, over any storage — `localStorage` (read at once) or a device's
+asynchronous secure storage (`load()` once). `bearerFetchOptions(tokens)` is the Better Auth client
+`fetchOptions` that sends it and keeps the token the server issues (`set-auth-token` header, then
+the body's `token`). One implementation for every arc app on Better Auth, web or device.
+
+### Added — server caches: `onArcChange` (`./events`) and `arcTag` (`./cache`)
+
+`createCrudHooks` reports every successful create, update, delete and restore to listeners
+registered with `onArcChange`, with the document as this client last saw it (`previous`). A
+delete's response carries only an id, so `previous` is how a listener still reaches the deleted
+document's parent; it is read before the optimistic update drops it from the lists. `arcTag`
+names server-cache tags for a resource, a record or a scoped collection, so the read that is
+cached and the write that invalidates it use one string. A listener failure is logged, never
+fails the write. Both subpaths are server-safe.
+
+### Added — `queryAuthEnabled` (`./auth-gate`) and `initialData` on `useList` / `useDetail`
+
+`queryAuthEnabled({ public?, enabled? }, client?)` is the generated hooks' enable rule
+(`authGate`) for queries written with `useQuery` directly, so a per-user query stops firing (and
+401-ing, and refreshing auth) for signed-out visitors. `user: true` marks an endpoint that answers for the signed-in
+user (`/mine`): it needs a token even when static auth (`internalApiKey`) is configured. `initialData` + `initialDataUpdatedAt` seed a
+list or detail with the response a Server Component fetched for the same params.
+
+### Added — `ClientConfig.fetch`: the transport slot
+
+`configureClient({ baseUrl, fetch })` / `createClient({ ..., fetch })` sends every request through
+the supplied `(url, init) => Promise<Response>` instead of the runtime `fetch`. Serve the API
+in-process (an offline till's device store, a test double) while envelope parsing, `ArcApiError`,
+auth, retry and interceptors still run, so a local answer reaches callers exactly as a server's
+does. Uploads (XHR), SSE and WebSockets do not go through it.
+
+### Fixed — `createAuthAwareClient` dropped global config fields
+
+It rebuilt its per-request config from a fixed field list, so `fetch`, `cache`, `timeoutMs` and
+`encryption` set with `configureClient` were silently ignored by every request made through it —
+which is every request an SDK built on `BaseApi` makes. It now starts from the whole global config
+and applies explicit overrides on top.
+
+### Fixed — query-string encoding the servers silently misread
+
+- **A `Date` is sent as ISO-8601.** A top-level `{ createdAt: date }` used to emit NOTHING (the
+  filter vanished and the read widened); as an operand it emitted locale text, which arc 2.42 /
+  mongokit 3.40 refuse with a 400. Arrays of dates are encoded the same way.
+- **`populateOptions[].match` is sent in bracket form** (`populate[p][match][field]=value`). The
+  JSON string it used to send was ignored by every server parser, so the populate matched every
+  document. A match is field equality only, and the servers refuse operators or nested objects.
+
+### Added — `./server`: call arc as the signed-in user from the server
+
+`createRequestClient({ baseUrl, headers: await headers() })` builds a per-request client that
+forwards the incoming request's `cookie`, `authorization`, `x-organization-id`, `accept-language`
+and trace headers — the server's `fetch` carries none of the browser's cookies — and never
+hop-by-hop headers (`host`, `content-length`, …). `forwardRequestHeaders(headers)` gives the same
+set for prefetchers' per-call `headers`. Framework-agnostic (`get(name)` sources). A `<Hydrate>`
+wrapper was considered and not added: `prefetch` + `dehydrate` + `HydrationBoundary` is already
+the three-line TanStack pattern, re-exported from `./prefetch`.
+
+### Changed — error codes come from the repo-core catalog, not a hand-copied list
+
+`KNOWN_ARC_ERROR_CODES` spreads `ERROR_CODES`, `ARC_ERROR_CODES` and `ARC_REASON_CODES` from
+`@classytic/repo-core/errors` — the contract arc emits from and tests against — instead of
+copying strings. The copy had drifted: it was missing `arc.precondition_failed` (412 stale
+`If-Match`), the three idempotency codes, `arc.circuit_open`, `arc.payload_too_large` and every
+`arc.auth.*` / aggregation code, and still listed `ORG_ROLE_REQUIRED` / `OWNERSHIP_DENIED`, which
+arc no longer emits. The client-synthesized realtime codes are named in `CLIENT_ERROR_CODES`.
+⚠ Peer `@classytic/repo-core` >=0.29.0.
+
+### Added — optimistic concurrency (`versionField` → `If-Match`)
+
+`createCrudApi(entity, { versionField: '__v' })` makes `update` send `If-Match: "<version>"`, so
+arc refuses a write based on a stale read (`412 arc.precondition_failed`) instead of overwriting
+a change made in between. The version is the one the EDIT was based on — explicit `version`, then
+`data[versionField]`, then the cached document — never simply the cache at submit time, which a
+background refetch may have advanced past what the user saw. It is resolved inside the per-record
+write chain, so a second queued update uses the version the first returned. `version: null` sends
+no precondition ("save anyway"). `isPreconditionFailed(err)` identifies the conflict; the failed
+write rolls back and refetches like any other. `BaseApi.versionOf(doc)` reads the field. arc's
+resource manifest publishes `versionField` (and the true `idField`), so both can come from it.
+
 ## 0.16.1
 
 ### Fixed — release gate had been silently broken since 0.16.0

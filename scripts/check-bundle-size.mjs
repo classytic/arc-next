@@ -25,18 +25,21 @@ const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
  * and rounded up ~20% for headroom.
  */
 const BUDGETS = {
-  ".": 50_000, // hooks (composition layer pulls query+mutation+cache+client+api)
+  ".": 51_000, // hooks (composition layer pulls query+mutation+cache+client+api); raised 0.17: change events + shared auth gate
   "./client": 18_000,
   "./api": 22_000,
   "./cache": 6_000,
   "./query": 30_000,
   "./mutation": 20_000,
-  "./hooks": 50_000,
+  "./hooks": 51_000, // raised 0.17: change events (./events) + shared auth gate (./auth-gate)
   "./query-client": 18_000, // raised 0.12: timeout/jitter/Retry-After landed in the client.ts closure
   "./query-options": 30_000,
   "./prefetch": 32_000,
+  "./server": 22_000, // new subpath: ./client's closure + header forwarding
   "./sse": 28_000, // raised 0.16.0: shareAcrossTabs (BroadcastChannel leader election) landed in the sse.ts closure
   "./tab-leader": 2_500, // new subpath 0.16.0
+  "./events": 2_000, // new subpath 0.17: write events for server caches
+  "./auth-gate": 19_000, // new subpath 0.17: ./client's closure + the enable rule
   "./ws": 24_000, // raised 0.16.0: shareAcrossTabs (BroadcastChannel leader election) landed in the ws.ts closure
   "./upload": 27_000,
   "./encryption": 3_000,

@@ -83,14 +83,17 @@ function Products() {
 
 | Import | Server-safe | Exports |
 |---|:-:|---|
-| `/client` | yes | `configureClient`, `configureAuth`, `createClient`, `createAuthAwareClient`, `handleApiRequest`, `ArcApiError`, `isArcApiError`, `isAbortError`, `isArcErrorCode`, `KNOWN_TOP_LEVEL_CODES`, `KNOWN_DETAILS_CODES`, `getAuthMode`, `getAuthContext`, `getBaseUrl`, `createQueryString` |
+| `/client` | yes | `configureClient`, `configureAuth`, `createClient`, `createAuthAwareClient`, `handleApiRequest`, `ArcApiError`, `isArcApiError`, `isAbortError`, `isArcErrorCode`, `isPreconditionFailed`, `KNOWN_ARC_ERROR_CODES`, `CLIENT_ERROR_CODES`, `getAuthMode`, `getAuthContext`, `getBaseUrl`, `createQueryString` |
 | `/api` | yes | `BaseApi`, `createCrudApi`, response types + type guards |
-| `/cache` | yes | `createQueryKeys`, `createCacheUtils`, `extractItem`, `extractItems`, `getItemId`, `updateListCache`, `normalizePagination`, `QUERY_CONFIGS`, `DEFAULT_QUERY_CONFIG` — server-safe utilities for RSC prefetch + Server Component imports |
+| `/cache` | yes | `createQueryKeys`, `createCacheUtils`, `extractItem`, `extractItems`, `getItemId`, `updateListCache`, `normalizePagination`, `arcTag`, `QUERY_CONFIGS`, `DEFAULT_QUERY_CONFIG` — server-safe utilities for RSC prefetch + Server Component imports |
 | `/query` | client | `useApiQuery`, `useListQuery`, `useDetailQuery`, `useInfiniteListQuery` — React hooks. Re-exports the cache utilities for back-compat, but new code should import server-safe utils from `/cache` directly |
 | `/mutation` | client | `configureToast`, `useMutationWithTransition`, `useMutationWithOptimistic` |
 | `/hooks` | client | `createCrudHooks`, `configureNavigation` (also default export) |
 | `/query-client` | yes | `getQueryClient` (SSR-safe singleton) |
-| `/prefetch` | yes | `createCrudPrefetcher`, `dehydrate` |
+| `/prefetch` | yes | `createCrudPrefetcher`, `dehydrate`, `HydrationBoundary` |
+| `/server` | yes | `createRequestClient`, `forwardRequestHeaders` — call arc as the signed-in user from Server Components / Route Handlers / Server Actions |
+| `/events` | yes | `onArcChange`, `ArcChangeEvent` — every successful write, for server-cache invalidation |
+| `/auth-gate` | yes | `queryAuthEnabled`, `authGate` — the generated hooks' enable rule, for hand-written `useQuery` |
 | `/sse` | client | `useEventStream`, `buildSseUrl`, `subscribeToEvents` |
 | `/ws` | client | `useWebSocket`, `buildWsUrl`, `connectWs` |
 | `/upload` | client | `useUploadWithProgress`, `uploadWithProgress` — XHR-based uploads with native progress events |
@@ -343,8 +346,10 @@ const api = createCrudApi("products", { client: createAuthAwareClient() });
 
 ```tsx
 // app/products/page.tsx — Server Component (no "use client")
+import { headers } from "next/headers";
 import { createCrudPrefetcher, dehydrate, HydrationBoundary } from "@classytic/arc-next/prefetch";
 import { getQueryClient } from "@classytic/arc-next/query-client";
+import { forwardRequestHeaders } from "@classytic/arc-next/server";
 import { productsApi } from "@/api/products-api";
 import { ProductsList } from "./products-list"; // "use client"
 
@@ -352,7 +357,10 @@ const prefetcher = createCrudPrefetcher(productsApi, "products");
 
 export default async function ProductsPage() {
   const queryClient = getQueryClient();              // per-request on server
-  await prefetcher.prefetchList(queryClient, { limit: 20 }, { token, organizationId });
+  // The server's fetch has no browser cookies — forward the user's identity.
+  await prefetcher.prefetchList(queryClient, { limit: 20 }, {
+    headers: forwardRequestHeaders(await headers()),
+  });
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
@@ -365,6 +373,27 @@ export default async function ProductsPage() {
 Methods: `prefetchList`, `prefetchDetail`, `prefetchBySlug`, `prefetchDeleted`, `prefetchTree`, `prefetchInfiniteList`.
 
 > `prefetchInfiniteList` seeds the `{ pages, pageParams }` cache shape `useInfiniteQuery` expects — a flat `prefetchQuery` won't match and the hook would re-fetch from scratch.
+
+### Calling arc directly on the server (`/server`)
+
+For a Route Handler, Server Action, or a Server Component that needs the data itself (not just a
+warm cache), build a client for THIS request:
+
+```ts
+import { headers } from "next/headers";
+import { createCrudApi } from "@classytic/arc-next/api";
+import { createRequestClient } from "@classytic/arc-next/server";
+
+const arc = createRequestClient({ baseUrl: process.env.API_URL!, headers: await headers() });
+const orders = await createCrudApi<Order>("orders", { client: arc }).getAll();
+```
+
+It forwards `cookie`, `authorization`, `x-organization-id`, `accept-language` and the trace
+headers (`x-request-id`, `traceparent`, `tracestate`) — never hop-by-hop headers such as `host` or
+`content-length`, which break the proxied call. Build it per request and never cache it: it
+carries one user's identity. `x-forwarded-for` is opt-in (`forward: [...FORWARDED_REQUEST_HEADERS,
+'x-forwarded-for']`) because arc should only believe it when its `trustProxy` names the Next
+server. Works with any `Headers`-like source (React Router loaders, Hono, plain `Request`).
 
 ### Streaming with promise-pending dehydration (TanStack Query 5.40+)
 
@@ -389,6 +418,48 @@ export default function ProductsPage() {
 ### Server-safe utilities
 
 Pure helpers (`createQueryKeys`, `extractItem`, `updateListCache`, etc.) live in `@classytic/arc-next/cache` — no `"use client"` directive, so they're safe to import from Server Components for custom prefetch flows. The matching React hooks live in `/query`.
+
+### Server caches: tag the read, invalidate on the write
+
+A page rendered from a server cache (ISR, `fetch` cache, `'use cache'`) goes stale when the data
+changes, unless the write tells the cache. arc-next gives the two halves one vocabulary:
+
+1. **Tag the read** with `arcTag` (`/cache`, server-safe): `arcTag('lessons')`,
+   `arcTag('lessons', id)`, or a scoped collection `arcTag('lessons', undefined, { by: 'course', id })`.
+2. **Invalidate on the write** with `onArcChange` (`/events`): `createCrudHooks` reports every
+   successful create, update, delete and restore, with the document before the write
+   (`previous`). For a delete that is the only record left of it, so you can still reach its parent.
+
+```ts
+// app/actions/revalidate.ts
+'use server';
+import { revalidateTag } from 'next/cache';
+export async function revalidateArc(tags: string[]) { for (const t of tags) revalidateTag(t, 'max'); }
+
+// app/providers.tsx ('use client') — once, for the whole app
+onArcChange(({ entity, id, item, previous }) => {
+  const doc = (item ?? previous) as { courseId?: string } | null;
+  return revalidateArc([
+    arcTag(entity, id),
+    ...(doc?.courseId ? [arcTag(entity, undefined, { by: 'course', id: doc.courseId })] : []),
+  ]);
+});
+```
+
+A listener's failure is logged and never fails the write. Several instances behind a load balancer
+need a shared server cache (a Next.js `cacheHandler` backed by Redis or similar) so one
+instance's invalidation reaches the others; the events and tags are the same either way.
+
+### Hand-written queries and seeded lists
+
+- **`queryAuthEnabled({ enabled })`** (`/auth-gate`) is the generated hooks' enable rule for a query
+  you write with `useQuery` directly. A per-user query then never fires for a signed-out visitor
+  (no 401, no auth refresh round trip). Pass `user: true` for an endpoint that answers for the
+  signed-in user (`/mine`): a static `internalApiKey` identifies the app, not a person.
+- **`useList(params, { initialData, initialDataUpdatedAt })`** (and `useDetail`) seeds the cache
+  with the response a Server Component already fetched for exactly those params, so the client
+  does not fetch it again. `createCrudPrefetcher` + `HydrationBoundary` remains the route when the
+  server read goes through arc-next itself.
 
 ### Next.js 16 `cacheComponents` + `'use cache'`
 
@@ -435,31 +506,85 @@ export default async function OrdersPage() {
 ## Errors
 
 ```ts
-import { isArcApiError, isAbortError, isArcErrorCode } from "@classytic/arc-next/client";
+import {
+  isAbortError, isArcApiError, isArcErrorCode, isDuplicateKeyError, isPreconditionFailed,
+} from "@classytic/arc-next/client";
 
 try { await api.create({ data, options: { signal } }); }
 catch (err) {
   if (isAbortError(err)) return;       // user navigated away — silence
   if (isArcApiError(err)) {
-    err.status;       // 422
+    err.status;       // 400
+    err.code;         // 'arc.validation_error'
     err.fieldErrors;  // { email: "already taken" } | null
-    err.endpoint;     // '/api/products'
   }
-  if (isArcErrorCode(err, 'DUPLICATE_KEY')) showRetryUI();
+  if (isDuplicateKeyError(err)) showRetryUI();
   if (isArcErrorCode(err, 'ORG_CONTEXT_REQUIRED')) promptOrgSelector();
 }
 ```
 
-`fieldErrors` reads three shapes: `{ errors: { field: msg } }`, `{ details: { errors: [{ field, message }] } }`, raw AJV `{ instancePath, message }`.
+`fieldErrors` maps arc's `details: [{ path, code, message }]` to `{ [path]: message }` — body
+validation, missing multipart files and duplicate keys all arrive in that shape. Legacy shapes
+(`errors: { field: msg }`, AJV `instancePath`) are read as a fallback for non-arc backends.
 
-`KNOWN_TOP_LEVEL_CODES` and `KNOWN_DETAILS_CODES` are exported as `as const` arrays — useful for runtime iteration (i18n lookup, retry whitelist, code-mapped UI):
+Putting them on the form is the form library's job, not this SDK's — with react-hook-form, use
+formkit's `applyServerErrors(form, err.fieldErrors)` (fluid's `SchemaForm` does it for you via
+`serverErrors={toFieldErrors(err)}`); any other library is one loop over `err.fieldErrors` calling
+its own `setError(path, message)`. Dot-paths (`lines.0.quantity`) land on nested fields.
+
+`KNOWN_ARC_ERROR_CODES` is every code a client can see, spread from `@classytic/repo-core/errors`
+(the catalog arc emits from) — never a hand-copied list:
 
 ```ts
-import { KNOWN_TOP_LEVEL_CODES } from "@classytic/arc-next/client";
+import { KNOWN_ARC_ERROR_CODES } from "@classytic/arc-next/client";
 
 const ERROR_MESSAGES = Object.fromEntries(
-  KNOWN_TOP_LEVEL_CODES.map((code) => [code, t(`error.${code}`)])
+  KNOWN_ARC_ERROR_CODES.map((code) => [code, t(`error.${code}`)])
 );
+```
+
+### Optimistic concurrency (`If-Match`)
+
+For a resource declared with `concurrency: { versionField }` on the server, name the field once —
+or take it from arc's resource manifest (`buildResourceManifest(resource)` / the registry), which
+publishes `versionField` and `idField` so neither is typed twice:
+
+```ts
+export const ordersApi = createCrudApi<Order>("orders", { versionField: "__v" });
+```
+
+or, from a manifest generated on the server
+(`writeFileSync('orders.manifest.json', JSON.stringify(buildResourceManifest(orders)))`):
+
+```ts
+import m from "./orders.manifest.json";
+
+// `prefix` ("/orders") is the URL segment; `name` ("order") is the resource's name.
+export const ordersApi = createCrudApi<Order>(m.prefix.replace(/^\//, ""), {
+  versionField: m.versionField,
+});
+export const orders = createCrudHooks({
+  api: ordersApi,
+  entityKey: m.name,
+  singular: m.displayName,
+  idField: m.idField,
+});
+```
+
+`useActions().update` then sends `If-Match: "<version>"`, and a write based on a stale read is
+refused `412` instead of silently overwriting a change made in between. The version is the one
+the **edit** was based on: an explicit `version`, else `data.__v` (a form that round-trips the
+document it loaded), else the cached document.
+
+```ts
+try {
+  await update({ id, data: form.values });            // form.values carries __v
+} catch (err) {
+  if (isPreconditionFailed(err)) {
+    // The record was already refetched. Offer a reload, or "save anyway":
+    await update({ id, data: form.values, version: null });
+  }
+}
 ```
 
 ## Retry + Interceptors

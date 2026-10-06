@@ -2,7 +2,13 @@
 
 import { type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { _getAuthErrorHandler, _runAuthRecovery, ArcApiError, buildStreamUrl } from "./client.js";
+import {
+  _getAuthErrorHandler,
+  _runAuthRecovery,
+  ArcApiError,
+  buildStreamUrl,
+  CLIENT_ERROR_CODES,
+} from "./client.js";
 
 // ============================================================================
 // Types
@@ -320,7 +326,7 @@ export function connectWs<TData = unknown>(
             status: 401,
             statusText: "WebSocket auth failure",
             json: {
-              code: "arc.websocket.unauthorized",
+              code: CLIENT_ERROR_CODES.WEBSOCKET_UNAUTHORIZED,
               wsCloseCode: event.code,
               reason: event.reason,
             },

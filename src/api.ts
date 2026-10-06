@@ -180,6 +180,8 @@ export interface RequestOptions {
   headerOptions?: Record<string, string>;
   responseType?: "json" | "blob" | "text";
   signal?: AbortSignal;
+  /** Per-request timeout in ms — overrides `ClientConfig.timeoutMs`. `0` disables for this request. */
+  timeoutMs?: number;
 }
 
 /**
@@ -216,6 +218,16 @@ export interface BaseApiConfig {
    * - omitted — the module-global transport (`configureClient`/`configureAuth`).
    */
   client?: ArcClient | (() => ArcClient);
+  /**
+   * The resource's optimistic-concurrency version field — the server's
+   * `defineResource({ concurrency: { versionField } })`, e.g. `'__v'`.
+   *
+   * When set, `update` sends `If-Match: "<version>"` taken from the document the
+   * edit was based on, and arc refuses a write based on a stale read with
+   * `412 arc.precondition_failed` (see `isPreconditionFailed`) instead of
+   * overwriting a change made in between.
+   */
+  versionField?: string;
 }
 
 // ============================================================================
@@ -243,8 +255,8 @@ export class BaseApi<
    * override and nothing else. The resolved value is {@link basePath}, which is
    * computed per read; baking it in would defeat the whole point (see below).
    */
-  readonly config: Required<Omit<BaseApiConfig, "client" | "basePath">> &
-    Pick<BaseApiConfig, "basePath">;
+  readonly config: Required<Omit<BaseApiConfig, "client" | "basePath" | "versionField">> &
+    Pick<BaseApiConfig, "basePath" | "versionField">;
   private readonly requestFn: RequestFn;
 
   /**
@@ -287,6 +299,7 @@ export class BaseApi<
       // Stored ONLY when the caller gave one — absence is what lets the
       // getter fall through to the deployment's declared prefix.
       ...(config.basePath !== undefined ? { basePath: config.basePath } : {}),
+      ...(config.versionField !== undefined ? { versionField: config.versionField } : {}),
       defaultParams: {
         limit: 10,
         page: 1,
@@ -297,6 +310,17 @@ export class BaseApi<
         ...(config.headers || {}),
       },
     };
+  }
+
+  /**
+   * A document's concurrency version — `doc[versionField]` when `versionField`
+   * is configured and the value is a number, else `undefined`.
+   */
+  versionOf(doc: unknown): number | undefined {
+    const field = this.config.versionField;
+    if (!field || !doc || typeof doc !== "object") return undefined;
+    const value = (doc as Record<string, unknown>)[field];
+    return typeof value === "number" ? value : undefined;
   }
 
   /** Merge per-instance headers into request options */
@@ -595,12 +619,18 @@ export class BaseApi<
     organizationId = null,
     id,
     data,
+    version,
     options = {},
   }: {
     token?: string | null;
     organizationId?: string | null;
     id: string;
     data: TUpdate;
+    /**
+     * The version the edit was based on → `If-Match: "<version>"`; a stale one is
+     * answered `412 arc.precondition_failed`. Omit (or `null`) for no precondition.
+     */
+    version?: number | null;
     options?: Omit<RequestOptions, "token" | "organizationId">;
   }): Promise<TDoc> {
     if (!id) throw new Error("ID is required");
@@ -609,6 +639,9 @@ export class BaseApi<
       body: data,
       ...options,
     };
+    if (typeof version === "number") {
+      requestOptions.headerOptions = { ...options.headerOptions, "If-Match": `"${version}"` };
+    }
 
     if (token) requestOptions.token = token;
     if (organizationId) requestOptions.organizationId = organizationId;

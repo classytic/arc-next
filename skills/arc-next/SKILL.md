@@ -121,6 +121,9 @@ for the full spec.
 | `@classytic/arc-next/hooks` | `createCrudHooks`, `configureNavigation` | Yes |
 | `@classytic/arc-next/query-client` | `getQueryClient` (SSR-safe singleton) | No |
 | `@classytic/arc-next/prefetch` | `createCrudPrefetcher`, `dehydrate` (SSR prefetch) | No |
+| `@classytic/arc-next/server` | `createRequestClient`, `forwardRequestHeaders` — per-request client forwarding the user's cookie / auth / tenant / trace headers; never global `configureClient({ defaultHeaders })` on the server | No |
+| `@classytic/arc-next/events` | `onArcChange` — every successful write (with `previous`, the doc before it) for server-cache invalidation | No |
+| `@classytic/arc-next/auth-gate` | `queryAuthEnabled` — the hooks' enable rule for hand-written `useQuery` (no 401s for signed-out visitors) | No |
 
 No barrel index — every file is its own entry point. Tree-shakeable (`sideEffects: false`).
 
@@ -572,6 +575,17 @@ export default async function ProductsPage() {
 
 **Methods:** `prefetchList(queryClient, params?, options?)`, `prefetchDetail(queryClient, id, options?)`
 
+**Seeding instead of prefetching:** when the Server Component read its data some other way (a tagged
+`fetch`), pass it as `useList(params, { initialData, initialDataUpdatedAt })` for the SAME params.
+
+**Server caches (ISR, `fetch` cache):** tag reads with `arcTag(entity, id?, scope?)` (`/cache`) and
+invalidate in one `onArcChange` listener that calls a server action with the same tags. A delete's
+event carries `previous` (the cached doc), so its parent's tag is still reachable. Behind a load
+balancer, back Next's `cacheHandler` with a shared store so invalidation reaches every instance.
+
+**Hand-written per-user queries:** `enabled: queryAuthEnabled({ user: true, enabled: !!id })`, never a bare
+`enabled: !!id` (a signed-out visitor would 401 and trigger an auth refresh).
+
 ## Custom Mutations
 
 For operations beyond CRUD (publish, schedule, upload):
@@ -742,6 +756,11 @@ try {
   }
 }
 ```
+
+Error codes (`err.code`) come from `@classytic/repo-core/errors` — `KNOWN_ARC_ERROR_CODES` spreads
+that catalog; never hardcode a list. Optimistic concurrency: `createCrudApi('orders', { versionField: '__v' })`
+makes `update` send `If-Match` from the version the edit was based on (explicit `version` →
+`data.__v` → cache); a stale write throws `isPreconditionFailed(err)`, and `version: null` saves anyway.
 
 ## Per-Instance Headers
 

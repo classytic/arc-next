@@ -1,3 +1,4 @@
+import { ARC_ERROR_CODES, ARC_REASON_CODES, ERROR_CODES } from "@classytic/repo-core/errors";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetAuthWarnings,
@@ -1709,6 +1710,22 @@ describe("KNOWN_ARC_ERROR_CODES", () => {
 
   it("is array-shaped", () => {
     expect(Array.isArray(KNOWN_ARC_ERROR_CODES)).toBe(true);
+  });
+
+  it("is the repo-core catalog, not a copy — every server code arc emits is known", () => {
+    // Spread from the contract both arc and this SDK depend on; a code arc adds
+    // reaches the client with a repo-core bump and no SDK edit.
+    for (const code of [
+      ...Object.values(ERROR_CODES),
+      ...Object.values(ARC_ERROR_CODES),
+      ...Object.values(ARC_REASON_CODES),
+    ]) {
+      expect(KNOWN_ARC_ERROR_CODES).toContain(code);
+    }
+    // The codes the arc 2.42 review found missing.
+    expect(KNOWN_ARC_ERROR_CODES).toContain("arc.precondition_failed");
+    expect(KNOWN_ARC_ERROR_CODES).toContain("arc.idempotency_key_reused");
+    expect(KNOWN_ARC_ERROR_CODES).toContain("arc.idempotency_key_required");
   });
 });
 

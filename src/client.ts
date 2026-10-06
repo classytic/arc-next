@@ -16,68 +16,52 @@ export type UseRouterHook = () => {
 // ArcApiError — unified on `@classytic/repo-core` ErrorContract
 // ============================================================================
 
-import type { ErrorContract, ErrorDetail } from "@classytic/repo-core/errors";
-import { ERROR_CODES } from "@classytic/repo-core/errors";
+import {
+  ARC_ERROR_CODES,
+  ARC_REASON_CODES,
+  type ArcReasonCode,
+  type ArcErrorCode as ArcWireCode,
+  DUPLICATE_KEY_DETAIL_CODE,
+  ERROR_CODES,
+  type ErrorCode,
+  type ErrorContract,
+  type ErrorDetail,
+} from "@classytic/repo-core/errors";
 
 /**
- * Canonical error codes arc and repo-core emit on `json.code`. Single
- * top-level slot — arc 2.13's `createError` lifts business codes from
- * `details` to top-level so `repo-core`'s `toErrorContract` round-trips
- * them on the wire. There is no separate `detailsCode` slot; everything
- * lives at `error.code`.
- *
- * Three families compose this list:
- *  1. **repo-core canonical** (`validation_error`, `not_found`, ...) — RFC 7807
- *     / Stripe-shaped lowercase + snake_case. Cross-package universals.
- *  2. **arc hierarchical** (`arc.forbidden`, `arc.validation_error`,
- *     `arc.org.access_denied`, ...) — what arc's `errorHandlerPlugin`
- *     emits for HTTP-status throws + arc-classified errors.
- *  3. **arc business** (`ORG_CONTEXT_REQUIRED`, `ALL_FIELDS_STRIPPED`,
- *     `OWNERSHIP_DENIED`, ...) — emitted by mixins / org guards via
- *     `createError(status, msg, { code })`. The UPPER_SNAKE form is
- *     intentional: these are reason codes, not HTTP-status codes.
- *
- * `(string & {})` keeps the type open so domain packages and custom
- * `errorMappers` codes still satisfy it.
+ * Codes arc-next itself puts on a synthesized `ArcApiError` when a realtime
+ * channel is refused before any arc response exists. Client-side only.
+ */
+export const CLIENT_ERROR_CODES = {
+  SSE_UNAUTHORIZED: "arc.sse.unauthorized",
+  WEBSOCKET_UNAUTHORIZED: "arc.websocket.unauthorized",
+} as const;
+
+/**
+ * Every code a client may see on `error.code`. The server vocabulary is NOT
+ * copied here — it is spread from `@classytic/repo-core/errors`, the contract
+ * both arc and this SDK depend on (arc's test suite fails on an uncatalogued
+ * code), so a code arc adds reaches the client with a repo-core bump.
  */
 export const KNOWN_ARC_ERROR_CODES = [
-  // repo-core canonical (lowercase, RFC 7807) — imported, not re-typed, so a
-  // repo-core code rename/addition surfaces here as a type change instead of
-  // silent drift.
   ...Object.values(ERROR_CODES),
-  // arc hierarchical (lowercase, dot-separated)
-  "arc.bad_request",
-  "arc.unauthorized",
-  "arc.forbidden",
-  "arc.not_found",
-  "arc.conflict",
-  "arc.unprocessable_entity",
-  "arc.rate_limited",
-  "arc.internal_error",
-  "arc.bad_gateway",
-  "arc.service_unavailable",
-  "arc.gateway_timeout",
-  "arc.validation_error",
-  "arc.invalid_id",
-  "arc.tier_required",
-  "arc.org.selection_required",
-  "arc.org.access_denied",
-  // arc business (UPPER_SNAKE) — emitted by mixins + org guards
-  "ORG_CONTEXT_REQUIRED",
-  "ORG_ROLE_REQUIRED",
-  "OWNERSHIP_DENIED",
-  "MIXED_UPDATE_SHAPE",
-  "ALL_FIELDS_STRIPPED",
-  "BEFORE_RESTORE_HOOK_ERROR",
-  "duplicate_key",
+  ...Object.values(ARC_ERROR_CODES),
+  ...Object.values(ARC_REASON_CODES),
+  DUPLICATE_KEY_DETAIL_CODE,
+  ...Object.values(CLIENT_ERROR_CODES),
 ] as const;
 
 /**
- * Canonical arc error code union. `(string & {})` keeps the type open so
- * domain packages can extend hierarchically (`'order.cart.locked'`,
- * `'payment.gateway.timeout'`) and still satisfy the type.
+ * Known codes, kept open with `(string & {})` so a domain package's own codes
+ * (`'order.cart.locked'`) and custom `errorMappers` codes still satisfy it.
  */
-export type ArcErrorCode = (typeof KNOWN_ARC_ERROR_CODES)[number] | (string & {});
+export type ArcErrorCode =
+  | ErrorCode
+  | ArcWireCode
+  | ArcReasonCode
+  | typeof DUPLICATE_KEY_DETAIL_CODE
+  | (typeof CLIENT_ERROR_CODES)[keyof typeof CLIENT_ERROR_CODES]
+  | (string & {});
 
 export interface ArcApiErrorOptions {
   status: number;
@@ -338,7 +322,7 @@ export function getQuotaDetails(error: unknown): QuotaDetails | null {
  * }
  */
 export function isOrgContextRequiredError(error: unknown): error is ArcApiError {
-  return isArcErrorCode(error, "ORG_CONTEXT_REQUIRED");
+  return isArcErrorCode(error, ARC_REASON_CODES.ORG_CONTEXT_REQUIRED);
 }
 
 /** The tier/mode a `arc.tier_required` error asked for, plus the active one. */
@@ -367,7 +351,7 @@ export interface TierRequirement {
  * }
  */
 export function isTierRequiredError(error: unknown): error is ArcApiError {
-  return isArcErrorCode(error, "arc.tier_required");
+  return isArcErrorCode(error, ARC_ERROR_CODES.TIER_REQUIRED);
 }
 
 /**
@@ -402,7 +386,21 @@ export function getTierRequirement(error: unknown): TierRequirement | null {
  */
 export function isValidationError(error: unknown): error is ArcApiError {
   if (!isArcApiError(error)) return false;
-  return error.code === "arc.validation_error" || error.code === "validation_error";
+  return error.code === ARC_ERROR_CODES.VALIDATION_ERROR || error.code === ERROR_CODES.VALIDATION;
+}
+
+/**
+ * The write was based on a stale read: the record changed since it was loaded
+ * (`412 arc.precondition_failed` — optimistic concurrency, see `versionField`).
+ * The hooks already refetched it; tell the user, and offer "save anyway" as
+ * `update({ id, data, version: null })`.
+ */
+export function isPreconditionFailed(error: unknown): error is ArcApiError {
+  if (!isArcApiError(error)) return false;
+  return (
+    error.code === ARC_ERROR_CODES.PRECONDITION_FAILED ||
+    error.code === ERROR_CODES.PRECONDITION_FAILED
+  );
 }
 
 /**
@@ -413,14 +411,14 @@ export function isValidationError(error: unknown): error is ArcApiError {
 export function isDuplicateKeyError(error: unknown): error is ArcApiError {
   if (!isArcApiError(error)) return false;
   if (
-    error.code === "arc.conflict" ||
-    error.code === "duplicate_key" ||
-    error.code === "conflict"
+    error.code === ARC_ERROR_CODES.CONFLICT ||
+    error.code === DUPLICATE_KEY_DETAIL_CODE ||
+    error.code === ERROR_CODES.CONFLICT
   ) {
     // arc.conflict can also represent non-duplicate conflicts (lease, version) —
     // narrow further by checking details[].code === 'duplicate_key' when present.
-    if (error.code === "arc.conflict") {
-      return error.details?.some((d) => d.code === "duplicate_key") ?? false;
+    if (error.code === ARC_ERROR_CODES.CONFLICT) {
+      return error.details?.some((d) => d.code === DUPLICATE_KEY_DETAIL_CODE) ?? false;
     }
     return true;
   }
@@ -516,6 +514,14 @@ export interface ClientConfig {
    * Unset = the runtime's fetch default.
    */
   cache?: RequestCache;
+  /**
+   * The transport every request goes through. Unset = the runtime's `fetch`.
+   * Supply a `(Request-like) => Response` handler to serve the API in-process
+   * (an offline device store, a test double): envelope parsing, `ArcApiError`,
+   * auth, retry and interceptors all still run, so a local answer and a server
+   * answer reach callers identically. Uploads (XHR), SSE and WebSockets do not use it.
+   */
+  fetch?: (input: string, init: RequestInit) => Promise<Response>;
   /**
    * Auto-generate `Idempotency-Key` header for POST/PUT/PATCH requests.
    * Prevents duplicate mutations on network retries.
@@ -1372,18 +1378,17 @@ export function createAuthAwareClient(overrides: Partial<ArcClientConfig> = {}):
   const authHeaderName = headerName ?? authConfig?.headerName;
   const clientAuth = { getToken: authGetToken, getOrgId: authGetOrgId, headerName: authHeaderName };
 
+  // The WHOLE global config, then the explicit overrides — never a field list, which silently
+  // dropped every field it forgot (`fetch`, `cache`, `timeoutMs`, `encryption`).
+  const setOverrides = Object.fromEntries(
+    Object.entries(overrideCfg).filter(([, value]) => value !== undefined),
+  ) as Partial<ClientConfig>;
   const resolveClientCfg = (): ClientConfig => ({
+    ...clientConfig,
+    ...setOverrides,
     baseUrl: overrideCfg.baseUrl ?? getBaseUrl(),
     authMode: overrideCfg.authMode ?? getAuthMode(),
     autoIdempotency: overrideCfg.autoIdempotency ?? isAutoIdempotency(),
-    elevated: overrideCfg.elevated ?? clientConfig?.elevated,
-    internalApiKey: overrideCfg.internalApiKey ?? clientConfig?.internalApiKey,
-    defaultHeaders: overrideCfg.defaultHeaders ?? clientConfig?.defaultHeaders,
-    credentials: overrideCfg.credentials ?? clientConfig?.credentials,
-    apiVersion: overrideCfg.apiVersion ?? clientConfig?.apiVersion,
-    retry: overrideCfg.retry ?? clientConfig?.retry,
-    beforeRequest: overrideCfg.beforeRequest ?? clientConfig?.beforeRequest,
-    afterResponse: overrideCfg.afterResponse ?? clientConfig?.afterResponse,
   });
 
   return {
@@ -1866,7 +1871,10 @@ async function executeAttempt<T = unknown>(
           (typeof window === "undefined" ? serverHint : clientHint),
       );
     }
-    const response = await fetch(`${config.baseUrl}${endpoint}`, fetchOptions);
+    const url = `${config.baseUrl}${endpoint}`;
+    const response = await (config.fetch
+      ? config.fetch(url, fetchOptions)
+      : fetch(url, fetchOptions));
 
     if (!response.ok) {
       let json: unknown = null;
@@ -2066,8 +2074,10 @@ export function createQueryString<T extends Record<string, unknown>>(params: T =
             const selectFields = opt.select.replace(/\s+/g, ",");
             searchParams.append(`populate[${opt.path}][select]`, selectFields);
           }
-          if (opt.match) {
-            searchParams.append(`populate[${opt.path}][match]`, JSON.stringify(opt.match));
+          // Bracket form, field equality only — the one shape every server parser reads. A JSON
+          // string here was silently ignored, so the populate matched every document.
+          for (const [field, fv] of Object.entries(opt.match ?? {})) {
+            searchParams.append(`populate[${opt.path}][match][${field}]`, encodeScalar(fv));
           }
           if (!opt.select && !opt.match) {
             const existing = searchParams.get("populate");
@@ -2084,12 +2094,12 @@ export function createQueryString<T extends Record<string, unknown>>(params: T =
 
     if (Array.isArray(value)) {
       if (value.length > 1) {
-        searchParams.append(`${key}[in]`, value.join(","));
+        searchParams.append(`${key}[in]`, value.map(encodeScalar).join(","));
       } else if (value.length === 1) {
-        searchParams.append(key, String(value[0]));
+        searchParams.append(key, encodeScalar(value[0]));
       }
-    } else if (value === null) {
-      searchParams.append(key, "null");
+    } else if (value === null || value instanceof Date) {
+      searchParams.append(key, encodeScalar(value));
     } else if (typeof value === "object") {
       // Nested operator object — `{ field: { gte: 18, lt: 65 } }` → `field[gte]=18&field[lt]=65`.
       // Matches `@classytic/repo-core/query-parser` bracket grammar so the
@@ -2100,11 +2110,10 @@ export function createQueryString<T extends Record<string, unknown>>(params: T =
         if (opValue === undefined || opValue === "") continue;
         const bracketKey = `${key}[${op}]`;
         if (Array.isArray(opValue)) {
-          if (opValue.length > 0) searchParams.append(bracketKey, opValue.join(","));
-        } else if (opValue === null) {
-          searchParams.append(bracketKey, "null");
+          if (opValue.length > 0)
+            searchParams.append(bracketKey, opValue.map(encodeScalar).join(","));
         } else {
-          searchParams.append(bracketKey, String(opValue));
+          searchParams.append(bracketKey, encodeScalar(opValue));
         }
       }
     } else {
@@ -2113,6 +2122,12 @@ export function createQueryString<T extends Record<string, unknown>>(params: T =
   });
 
   return searchParams.toString();
+}
+
+/** A Date goes out as ISO-8601, the form the server parsers coerce; `String(date)` is locale text they refuse. */
+function encodeScalar(value: unknown): string {
+  if (value === null) return "null";
+  return value instanceof Date ? value.toISOString() : String(value);
 }
 
 // ============================================================================

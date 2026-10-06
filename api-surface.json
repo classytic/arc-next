@@ -20,11 +20,12 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "28964937025d2a49"
+    "typesHash": "b6cc4b7d40664e66"
   },
   "./client": {
     "runtime": [
       "ArcApiError",
+      "CLIENT_ERROR_CODES",
       "KNOWN_ARC_ERROR_CODES",
       "_getAuthErrorHandler",
       "_isAuthRecoverable",
@@ -59,6 +60,7 @@
       "isAutoIdempotency",
       "isDuplicateKeyError",
       "isOrgContextRequiredError",
+      "isPreconditionFailed",
       "isQuotaExceeded",
       "isTierRequiredError",
       "isValidationError"
@@ -79,6 +81,7 @@
       "BeforeRequestContext",
       "BeforeRequestInterceptor",
       "BlobResponse",
+      "CLIENT_ERROR_CODES",
       "ClientConfig",
       "ClientEncryptionConfig",
       "HttpMethod",
@@ -125,11 +128,12 @@
       "isAutoIdempotency",
       "isDuplicateKeyError",
       "isOrgContextRequiredError",
+      "isPreconditionFailed",
       "isQuotaExceeded",
       "isTierRequiredError",
       "isValidationError"
     ],
-    "typesHash": "2c562952c17f7019"
+    "typesHash": "a5858d215d93f190"
   },
   "./encryption": {
     "runtime": [
@@ -194,12 +198,13 @@
       "isKeysetPagination",
       "isOffsetPagination"
     ],
-    "typesHash": "b832ed2e97361d8c"
+    "typesHash": "c9b898b287f93772"
   },
   "./cache": {
     "runtime": [
       "DEFAULT_QUERY_CONFIG",
       "QUERY_CONFIGS",
+      "arcTag",
       "createCacheUtils",
       "createQueryKeys",
       "extractItem",
@@ -218,6 +223,7 @@
       "PaginationData",
       "QUERY_CONFIGS",
       "QueryKeys",
+      "arcTag",
       "createCacheUtils",
       "createQueryKeys",
       "extractItem",
@@ -230,7 +236,7 @@
       "updateListCache",
       "withOrgParams"
     ],
-    "typesHash": "ee278b339ef1bfc3"
+    "typesHash": "87de93092fec539c"
   },
   "./query": {
     "runtime": [
@@ -287,7 +293,7 @@
       "useSuspenseDetailQuery",
       "useSuspenseListQuery"
     ],
-    "typesHash": "2a2fdf85edda330c"
+    "typesHash": "507c22cd4feaa01e"
   },
   "./mutation": {
     "runtime": [
@@ -333,7 +339,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "28964937025d2a49"
+    "typesHash": "b6cc4b7d40664e66"
   },
   "./query-client": {
     "runtime": [
@@ -363,6 +369,46 @@
     ],
     "typesHash": "759a51fa3da06721"
   },
+  "./server": {
+    "runtime": [
+      "FORWARDED_REQUEST_HEADERS",
+      "createRequestClient",
+      "forwardRequestHeaders"
+    ],
+    "types": [
+      "FORWARDED_REQUEST_HEADERS",
+      "HeaderSource",
+      "RequestClientConfig",
+      "createRequestClient",
+      "forwardRequestHeaders"
+    ],
+    "typesHash": "cbfd8bc16050b099"
+  },
+  "./auth-gate": {
+    "runtime": [
+      "authGate",
+      "queryAuthEnabled"
+    ],
+    "types": [
+      "QueryAuthOptions",
+      "authGate",
+      "queryAuthEnabled"
+    ],
+    "typesHash": "e3a69cb6e6c95cd0"
+  },
+  "./events": {
+    "runtime": [
+      "emitArcChange",
+      "onArcChange"
+    ],
+    "types": [
+      "ArcChangeEvent",
+      "ArcChangeListener",
+      "emitArcChange",
+      "onArcChange"
+    ],
+    "typesHash": "96c3af85a40d08be"
+  },
   "./sse": {
     "runtime": [
       "buildSseUrl",
@@ -382,6 +428,19 @@
       "useEventStream"
     ],
     "typesHash": "f58d3a299f1efe76"
+  },
+  "./auth-token": {
+    "runtime": [
+      "bearerFetchOptions",
+      "createTokenStore"
+    ],
+    "types": [
+      "TokenStorage",
+      "TokenStore",
+      "bearerFetchOptions",
+      "createTokenStore"
+    ],
+    "typesHash": "049e189303419702"
   },
   "./tab-leader": {
     "runtime": [

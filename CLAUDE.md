@@ -21,7 +21,7 @@ Always pull the relevant skill into context **before** writing code — these en
 
 - **No barrels.** Every file in `src/` is its own subpath export in `package.json`. Don't add an `index.ts`.
 - **`sideEffects: false`.** Don't add side-effectful imports.
-- **`"use client"` matters.** Client-only files: `query.ts`, `mutation.ts`, `hooks.ts`, `sse.ts`, `ws.ts`, `upload.ts` (0.12+ — it always used React hooks; the missing banner was a bug). Server-safe: `client.ts`, `api.ts`, `cache.ts`, `query-client.ts`, `query-options.ts`, `prefetch.ts`, `presets/*.ts`, `encryption.ts`, `field-encryption.ts`. **Don't import client-only modules from server-safe ones** — Server Components see `"use client"` exports as client references and can't call them. If you find yourself wanting to call a pure utility from `prefetch.ts`, move it to `cache.ts` (no directive). **Machine-enforced**: `npm run check:server-import` walks the dist import graph and fails on violations — it's in `prepublishOnly` and CI.
+- **`"use client"` matters.** Client-only files: `query.ts`, `mutation.ts`, `hooks.ts`, `sse.ts`, `ws.ts`, `upload.ts` (0.12+ — it always used React hooks; the missing banner was a bug). Server-safe: `client.ts`, `api.ts`, `cache.ts`, `events.ts`, `auth-gate.ts`, `query-client.ts`, `query-options.ts`, `prefetch.ts`, `presets/*.ts`, `encryption.ts`, `field-encryption.ts`. **Don't import client-only modules from server-safe ones** — Server Components see `"use client"` exports as client references and can't call them. If you find yourself wanting to call a pure utility from `prefetch.ts`, move it to `cache.ts` (no directive). **Machine-enforced**: `npm run check:server-import` walks the dist import graph and fails on violations — it's in `prepublishOnly` and CI.
 - **`configure*` are module singletons.** Setting them on the server leaks state across SSR requests. They warn on `typeof window === "undefined"` — preserve that.
 - **`getToken` is sync-only.** Promise/thenable returns are dropped + warned via `readToken()`. Don't widen the type to `Promise<string | null>`.
 - **`CrudApi` = `Pick<BaseApi, core>` ∪ `Partial<XxxMethods>` for each preset.** Never duplicate interfaces. When you add a CRUD-level method to `BaseApi`, add it to the `Pick` list in `hooks.ts`. When you add a method to a preset, add it to that preset's `XxxMethods` interface — the intersection in `hooks.ts` already pulls it through.
@@ -53,6 +53,8 @@ src/
   query-client.ts getQueryClient (SSR singleton)
   cache.ts        createQueryKeys, createCacheUtils, extractItem, getItemId, updateListCache, QUERY_CONFIGS — server-safe (no "use client")
   prefetch.ts     createCrudPrefetcher, dehydrate, HydrationBoundary, prefetchInfiniteList
+  events.ts       onArcChange (write events for server-cache invalidation); emitted by hooks.ts after success
+  auth-gate.ts    authGate / queryAuthEnabled: the ONE enable rule (hooks.ts uses it too)
   sse.ts          useEventStream, buildSseUrl, subscribeToEvents
   ws.ts           useWebSocket, buildWsUrl, connectWs (subscribe-replay across reconnects)
   presets/

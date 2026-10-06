@@ -493,6 +493,24 @@ export function createQueryKeys(entityKey: string): QueryKeys {
 }
 
 // ============================================================================
+// Server cache tags — one naming for whoever caches arc reads on a server
+// ============================================================================
+
+/**
+ * The server-cache tag for a resource, or for one record of it: `arc:lessons`, `arc:lessons:<id>`,
+ * or a scoped collection such as `arc:lessons@course:<courseId>`.
+ *
+ * One function for both ends of a server cache: tag the read where it is cached (a Next.js
+ * `fetch(..., { next: { tags } })`, the `request.tags` passthrough), and invalidate the same tags
+ * when a change event arrives (`onArcChange`). Two hand-written strings for the same thing drift,
+ * and a drifted tag fails silently: the page just stays stale.
+ */
+export function arcTag(entity: string, id?: string, scope?: { by: string; id: string }): string {
+  if (scope) return `arc:${entity}@${scope.by}:${scope.id}`;
+  return id ? `arc:${entity}:${id}` : `arc:${entity}`;
+}
+
+// ============================================================================
 // Cache utilities factory
 // ============================================================================
 

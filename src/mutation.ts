@@ -127,11 +127,14 @@ function showToast<TData, TVariables>(
     const quota = getQuotaDetails(error);
     if (quota) {
       detail = `${quota.used.toLocaleString()} of ${quota.limit.toLocaleString()} ${quota.kind} used this period — resets ${new Date(quota.resetsAt).toLocaleDateString()}`;
-    } else if (isArcApiError(error) && error.fieldErrors) {
-      const fields = Object.entries(error.fieldErrors);
-      if (fields.length > 0) {
-        detail = fields.map(([k, v]) => `${k}: ${v}`).join(", ");
-      }
+    } else if (isArcApiError(error) && error.fieldErrors && Object.keys(error.fieldErrors).length > 0) {
+      detail = Object.entries(error.fieldErrors)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ");
+    } else if (isArcApiError(error) && error.status >= 400 && error.status < 500 && error.message) {
+      // A refusal (4xx) carries the server's own reason — "A relationship ends after it starts." — which
+      // is what the operator acts on. A 5xx keeps the caller's headline alone: its message is not theirs.
+      detail = error.message;
     }
     const defaultMsg = detail ?? (error?.message || "An error occurred");
     // A fixed string is the caller's HEADLINE, not a replacement for the

@@ -74,6 +74,17 @@ export interface ListQueryOptions<TData = unknown> {
   prefillDetailCache?: boolean;
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
+  /**
+   * The server's response for EXACTLY this query (a Server Component fetched the same params),
+   * as the raw wire payload `api.getAll` / `api.getById` returns. It seeds the cache, so the
+   * client does not fetch again what the page already rendered. Pass it only for the params the
+   * server used; a different filter must not inherit another page's data. Pair it with
+   * `initialDataUpdatedAt` (when the server fetched) so `staleTime` decides the refetch.
+   * The Server Component alternative is `createCrudPrefetcher` + `HydrationBoundary`.
+   */
+  initialData?: unknown;
+  /** When `initialData` was fetched (ms since epoch); defaults to now. */
+  initialDataUpdatedAt?: number;
   _scope?: string;
   /** Transform raw API response before returning. Runs on each render, receives raw data. */
   select?: (data: unknown) => TData;
@@ -91,6 +102,17 @@ export interface DetailQueryOptions<TData = unknown> {
   structuralSharing?: boolean;
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
+  /**
+   * The server's response for EXACTLY this query (a Server Component fetched the same params),
+   * as the raw wire payload `api.getAll` / `api.getById` returns. It seeds the cache, so the
+   * client does not fetch again what the page already rendered. Pass it only for the params the
+   * server used; a different filter must not inherit another page's data. Pair it with
+   * `initialDataUpdatedAt` (when the server fetched) so `staleTime` decides the refetch.
+   * The Server Component alternative is `createCrudPrefetcher` + `HydrationBoundary`.
+   */
+  initialData?: unknown;
+  /** When `initialData` was fetched (ms since epoch); defaults to now. */
+  initialDataUpdatedAt?: number;
   /** Query params passed to getById (e.g. select, populate) */
   params?: { select?: string; populate?: string | string[] };
   /** Transform raw API response before returning. Runs on each render, receives raw data. */

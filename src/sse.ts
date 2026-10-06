@@ -7,6 +7,7 @@ import {
   _runAuthRecovery,
   ArcApiError,
   buildStreamUrl,
+  CLIENT_ERROR_CODES,
   getAuthMode,
 } from "./client.js";
 import { useTabLeader } from "./tab-leader.js";
@@ -413,7 +414,7 @@ export function subscribeToEvents<TData = unknown>(
                 error: new ArcApiError("SSE pre-flight auth failure", {
                   status: 401,
                   statusText: "SSE auth failure",
-                  json: { code: "arc.sse.unauthorized" },
+                  json: { code: CLIENT_ERROR_CODES.SSE_UNAUTHORIZED },
                   endpoint: ssePath,
                   method: "GET",
                 }),

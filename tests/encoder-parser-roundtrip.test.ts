@@ -91,4 +91,24 @@ describe("encoder ↔ parseUrl — bracket grammar alignment", () => {
     const encoded = createQueryString({ deletedAt: null });
     expect(encoded).toContain("deletedAt=null");
   });
+
+  it("a Date encodes as ISO-8601 — top level, as an operand, and inside an in-list", () => {
+    const d = new Date("2026-09-01T00:00:00.000Z");
+    // repo-core reads ISO back as a Date — the value survives the trip intact.
+    expect(roundtrip({ createdAt: d }).filter).toEqual(eq("createdAt", d));
+    expect(roundtrip({ createdAt: { gte: d } }).filter).toEqual(gte("createdAt", d));
+    expect(createQueryString({ at: [d, d] })).toBe(
+      `at%5Bin%5D=${encodeURIComponent(`${d.toISOString()},${d.toISOString()}`)}`,
+    );
+  });
+
+  it("populate match encodes in bracket form, which the parser reads back", () => {
+    const encoded = createQueryString({
+      populateOptions: [{ path: "customer", match: { status: "active" } }],
+    });
+    expect(decodeURIComponent(encoded)).toBe("populate[customer][match][status]=active");
+    expect(parseUrl(new URLSearchParams(encoded)).populate).toEqual([
+      { path: "customer", match: { status: "active" } },
+    ]);
+  });
 });

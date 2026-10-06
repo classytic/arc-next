@@ -2,6 +2,7 @@
 
 import type { PaginatedResult } from "@classytic/repo-core/pagination";
 import {
+  type QueryClient,
   type QueryKey,
   type UseQueryResult,
   useQuery,
@@ -26,7 +27,9 @@ import {
   withOrgParams,
 } from "./cache.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
+import { authGate } from "./auth-gate.js";
 import { getAuthMode, getClientAuthContext, hasGlobalStaticAuth } from "./client.js";
+import { emitArcChange } from "./events.js";
 import type { MutationCallbacks, MutationMessages, TransitionMutationReturn } from "./mutation.js";
 import { useMutationWithTransition, useOptimisticMutation } from "./mutation.js";
 import type { BulkMethods } from "./presets/bulk.js";
@@ -77,6 +80,8 @@ export type CrudApi<T = unknown, TCreate = Partial<T>, TUpdate = Partial<T>> = P
   invokeRoute?: BaseApi<T, TCreate, TUpdate>["invokeRoute"];
   /** Declared aggregations (arc 2.13+). Always available on BaseApi. */
   aggregate?: BaseApi<T, TCreate, TUpdate>["aggregate"];
+  /** A document's concurrency version (`BaseApiConfig.versionField`). */
+  versionOf?: BaseApi<T, TCreate, TUpdate>["versionOf"];
 } & Partial<SoftDeleteMethods<T>> &
   Partial<BulkMethods<T, TCreate, TUpdate>> &
   Partial<SlugLookupMethods<T>> &
@@ -205,6 +210,15 @@ export interface MutationParams<TData> {
 
 export interface UpdateParams<TData> extends MutationParams<TData> {
   id: string;
+  /**
+   * Optimistic concurrency (needs `versionField` on the api). The version the
+   * edit was based on, sent as `If-Match`; `null` = no precondition ("save
+   * anyway" after a conflict). When omitted it is taken from `data[versionField]`
+   * — a form that round-trips the document it loaded — then from the cached
+   * document. Pass it explicitly when the form holds the version separately:
+   * the cache may have been refetched since the user started editing.
+   */
+  version?: number | null;
 }
 
 export interface DeleteParams {
@@ -489,22 +503,14 @@ export function configureNavigation(hook: UseRouterHook): void {
 // Enabled Rule
 // ============================================================================
 
+/** The shared rule (`authGate` in client.ts), which hand-written queries reach as `queryAuthEnabled`. */
 function createEnabledRule(
   token: string | null,
   options: { public?: boolean; enabled?: boolean },
   authMode: "bearer" | "cookie" | "header" = getAuthMode(),
   hasStaticAuth = false,
 ): boolean {
-  // Cookie auth or public: always enabled
-  if (authMode === "cookie" || options.public) {
-    return options.enabled ?? true;
-  }
-  // Static auth (defaultHeaders, internalApiKey, per-client headers): always enabled
-  if (hasStaticAuth) {
-    return options.enabled ?? true;
-  }
-  // Bearer/header auth: require token
-  return options.enabled !== undefined ? options.enabled && !!token : !!token;
+  return authGate(token, options, authMode, hasStaticAuth);
 }
 
 // ============================================================================
@@ -585,6 +591,36 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       if (writeChains.get(recordId) === tail) writeChains.delete(recordId);
     });
     return result;
+  }
+
+  /**
+   * The `If-Match` version for an update: explicit `version` (`null` = none) →
+   * `data[versionField]` → the cached document (detail, else a list row).
+   * `undefined` when the api has no `versionField`.
+   */
+  function resolveVersion(
+    queryClient: QueryClient,
+    params: UpdateParams<TUpdate>,
+  ): number | null | undefined {
+    if (params.version !== undefined) return params.version;
+    const versionOf = api.versionOf?.bind(api);
+    if (!versionOf) return undefined;
+    const fromData = versionOf(params.data);
+    if (fromData !== undefined) return fromData;
+    for (const [, doc] of queryClient.getQueriesData({ queryKey: KEYS.detail(params.id) })) {
+      const v = versionOf(doc);
+      if (v !== undefined) return v;
+    }
+    return versionOf(findItemInListCache(queryClient, KEYS.lists(), params.id, idField));
+  }
+
+  /** The document as this client last saw it: a detail cache, else a list row; `null` if never loaded. */
+  function cachedDocument(queryClient: QueryClient, id: string): T | null {
+    for (const [, doc] of queryClient.getQueriesData({ queryKey: KEYS.detail(id) })) {
+      const found = extractItem<T>(doc);
+      if (found) return found;
+    }
+    return (findItemInListCache(queryClient, KEYS.lists(), id, idField) as T | undefined) ?? null;
   }
 
   // Resolve toast handler: client instance → global
@@ -690,6 +726,14 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         refetchInterval: queryOpts.refetchInterval ?? config.refetchInterval,
         refetchIntervalInBackground:
           queryOpts.refetchIntervalInBackground ?? config.refetchIntervalInBackground,
+        ...(queryOpts.initialData !== undefined
+          ? {
+              initialData: queryOpts.initialData,
+              ...(queryOpts.initialDataUpdatedAt !== undefined
+                ? { initialDataUpdatedAt: queryOpts.initialDataUpdatedAt }
+                : {}),
+            }
+          : {}),
       },
       select: queryOpts.select,
     });
@@ -766,6 +810,14 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         structuralSharing: restOptions.structuralSharing ?? config.structuralSharing,
         refetchInterval: restOptions.refetchInterval,
         refetchIntervalInBackground: restOptions.refetchIntervalInBackground,
+        ...(restOptions.initialData !== undefined
+          ? {
+              initialData: restOptions.initialData,
+              ...(restOptions.initialDataUpdatedAt !== undefined
+                ? { initialDataUpdatedAt: restOptions.initialDataUpdatedAt }
+                : {}),
+            }
+          : {}),
       },
       select: restOptions.select,
       placeholderData: listPlaceholder,
@@ -967,8 +1019,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     });
 
     const updateMutation = useOptimisticMutation({
-      mutationFn: ({ token, organizationId, id, data }: UpdateParams<TUpdate>) =>
-        api.update({ token, organizationId, id, data }),
+      mutationFn: ({ token, organizationId, id, data, version }: UpdateParams<TUpdate>) =>
+        api.update({ token, organizationId, id, data, ...(version != null ? { version } : {}) }),
       queryClient,
       queryKeys: [KEYS.lists(), KEYS.details(), KEYS.custom("count"), KEYS.aggregations()],
       mutationKey: WRITE_MUTATION_KEY,
@@ -1095,6 +1147,15 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
         try {
           const raw = await createMutation.mutateAsync(resolveActionAuth(params));
           const entity = extractItem<T>(raw) as T;
+          const createdId = resolveItemId(entity);
+          if (createdId)
+            emitArcChange({
+              entity: entityKey,
+              op: "create",
+              id: createdId,
+              item: entity,
+              previous: null,
+            });
           options?.onSuccess?.(entity);
           options?.onSettled?.(entity, null);
           return entity;
@@ -1113,10 +1174,17 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       async (params: UpdateParams<TUpdate>, options?: CallOptions<T>): Promise<T> => {
         silentRef.current = options?.silent ?? false;
         try {
-          const raw = await enqueueWrite(params.id, () =>
-            updateMutation.mutateAsync(resolveActionAuth(params)),
-          );
+          let previous: T | null = null;
+          // Resolved INSIDE the per-record chain: a second update to the same
+          // record reads the version the first one's reconcile just cached.
+          const raw = await enqueueWrite(params.id, () => {
+            previous = cachedDocument(queryClient, params.id);
+            return updateMutation.mutateAsync(
+              resolveActionAuth({ ...params, version: resolveVersion(queryClient, params) }),
+            );
+          });
           const entity = extractItem<T>(raw) as T;
+          emitArcChange({ entity: entityKey, op: "update", id: params.id, item: entity, previous });
           options?.onSuccess?.(entity);
           options?.onSettled?.(entity, null);
           return entity;
@@ -1128,16 +1196,21 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           silentRef.current = false;
         }
       },
-      [updateMutation, resolveActionAuth],
+      [updateMutation, resolveActionAuth, queryClient],
     );
 
     const remove = useCallback(
       async (params: DeleteParams, options?: CallOptions): Promise<unknown> => {
         silentRef.current = options?.silent ?? false;
         try {
-          const result = await enqueueWrite(params.id, () =>
-            deleteMutation.mutateAsync(resolveActionAuth(params)),
-          );
+          let previous: T | null = null;
+          const result = await enqueueWrite(params.id, () => {
+            // Read before the optimistic update removes it from every list: after a delete this is
+            // the only record of the document (and of its parent, for a listener that needs it).
+            previous = cachedDocument(queryClient, params.id);
+            return deleteMutation.mutateAsync(resolveActionAuth(params));
+          });
+          emitArcChange({ entity: entityKey, op: "delete", id: params.id, item: null, previous });
           options?.onSuccess?.(result);
           options?.onSettled?.(result, null);
           return result;
@@ -1149,7 +1222,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           silentRef.current = false;
         }
       },
-      [deleteMutation, resolveActionAuth],
+      [deleteMutation, resolveActionAuth, queryClient],
     );
 
     const restore = useCallback(
@@ -1160,6 +1233,13 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
             restoreMutation.mutateAsync(resolveActionAuth(params)),
           );
           const entity = extractItem<T>(raw) as T;
+          emitArcChange({
+            entity: entityKey,
+            op: "restore",
+            id: params.id,
+            item: entity,
+            previous: null,
+          });
           options?.onSuccess?.(entity);
           options?.onSettled?.(entity, null);
           return entity;
