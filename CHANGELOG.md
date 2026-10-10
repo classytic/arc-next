@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added — keyset `PaginationData.prev` / `end`
+
+`normalizePagination` carries a keyset page's `prev` cursor (send it back as `before`) and `end`
+beside `next` and `hasPrev`, so a list can page backwards. Pinned by `tests/pagination-keyset.test.ts`.
+
+### Added — `PaginationData.totalIsEstimate` / `countedAt`
+
+`normalizePagination` carries mongokit's estimate flag (`false` when absent) and count time, so a
+list's `pagination` tells the UI to render "10,000+" (fluid `DataTable` reads both). Pinned by
+`tests/pagination-estimate.test.ts`.
+
 ### Added — bearer-token sessions: `./auth-token`
 
 `createTokenStore(storage, key)` keeps the bearer token behind a synchronous `get()` for

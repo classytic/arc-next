@@ -25,6 +25,14 @@ export interface PaginationData {
   hasPrev: boolean;
   /** Keyset cursor for next page (keyset pagination only) */
   next?: string | null;
+  /** Keyset cursor for the previous page — send it back as `before` (keyset only). */
+  prev?: string | null;
+  /** Keyset cursor at the page's last row — resume a feed with `after` (keyset only). */
+  end?: string | null;
+  /** `total` is an estimate (mongokit): a floor to render as "10,000+", never an exact count. */
+  totalIsEstimate?: boolean;
+  /** When the count was taken (ISO string), when the backend says. */
+  countedAt?: string;
 }
 
 // ============================================================================
@@ -101,7 +109,15 @@ export function normalizePagination(data: unknown): PaginationData | null {
     limit: Number(d.limit ?? 10),
     hasNext: Boolean(d.hasNext ?? d.hasNextPage ?? d.hasMore ?? false),
     hasPrev: Boolean(d.hasPrev ?? d.hasPrevPage ?? false),
-    ...(isKeyset ? { next: (d.next as string | null) ?? null } : {}),
+    ...(isKeyset
+      ? {
+          next: (d.next as string | null) ?? null,
+          prev: typeof d.prev === "string" ? d.prev : null,
+          ...(d.end !== undefined ? { end: typeof d.end === "string" ? d.end : null } : {}),
+        }
+      : {}),
+    totalIsEstimate: d.totalIsEstimate === true,
+    ...(typeof d.countedAt === "string" ? { countedAt: d.countedAt } : {}),
   };
 }
 
