@@ -37,13 +37,13 @@ describe("encoder ↔ parseUrl — bracket grammar alignment", () => {
 
   it("nested operator: { age: { gte: 18 } } → gte", () => {
     const parsed = roundtrip({ age: { gte: 18 } });
-    expect(parsed.filter).toEqual(gte("age", "18"));
+    expect(parsed.filter).toEqual(gte("age", 18));
   });
 
   it("multi-op nested: { age: { gte: 18, lt: 65 } } → and(gte, lt)", () => {
     const parsed = roundtrip({ age: { gte: 18, lt: 65 } });
     // Parser ANDs multiple operators on the same field.
-    expect(parsed.filter).toEqual(and(gte("age", "18"), lt("age", "65")));
+    expect(parsed.filter).toEqual(and(gte("age", 18), lt("age", 65)));
   });
 
   it('array shorthand: { tags: ["a","b"] } → in_', () => {
@@ -64,13 +64,13 @@ describe("encoder ↔ parseUrl — bracket grammar alignment", () => {
   it("mixed: status + nested age range → AND of all three", () => {
     const parsed = roundtrip({ status: "active", age: { gte: 18, lt: 65 } });
     // Parser composes the field-level filters into an AND.
-    expect(parsed.filter).toEqual(and(eq("status", "active"), gte("age", "18"), lt("age", "65")));
+    expect(parsed.filter).toEqual(and(eq("status", "active"), gte("age", 18), lt("age", 65)));
   });
 
   it('pre-bracketed key: { "age[gte]": 18 } → gte (back-compat path)', () => {
     // Existing callers who built the bracket key themselves still work.
     const parsed = roundtrip({ "age[gte]": 18 });
-    expect(parsed.filter).toEqual(gte("age", "18"));
+    expect(parsed.filter).toEqual(gte("age", 18));
   });
 
   it("empty params → TRUE filter (no narrowing)", () => {
@@ -94,8 +94,9 @@ describe("encoder ↔ parseUrl — bracket grammar alignment", () => {
 
   it("a Date encodes as ISO-8601 — top level, as an operand, and inside an in-list", () => {
     const d = new Date("2026-09-01T00:00:00.000Z");
-    // repo-core reads ISO back as a Date — the value survives the trip intact.
-    expect(roundtrip({ createdAt: d }).filter).toEqual(eq("createdAt", d));
+    // repo-core reads ISO back as a Date for range operands only; equality keeps the string
+    // (a date-looking value is far more likely an id than a date predicate).
+    expect(roundtrip({ createdAt: d }).filter).toEqual(eq("createdAt", d.toISOString()));
     expect(roundtrip({ createdAt: { gte: d } }).filter).toEqual(gte("createdAt", d));
     expect(createQueryString({ at: [d, d] })).toBe(
       `at%5Bin%5D=${encodeURIComponent(`${d.toISOString()},${d.toISOString()}`)}`,

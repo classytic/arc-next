@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AggResult, AggRow, BaseApi } from "./api.js";
 import { isKeysetPagination, isOffsetPagination } from "./api.js";
+import { authGate } from "./auth-gate.js";
 import type { CacheUtils, QueryKeys } from "./cache.js";
 // Utilities live in the server-safe cache module — import directly so this
 // hook layer doesn't accidentally take a dependency on a client-marked path.
@@ -27,7 +28,6 @@ import {
   withOrgParams,
 } from "./cache.js";
 import type { ArcClient, ToastHandler, UseRouterHook } from "./client.js";
-import { authGate } from "./auth-gate.js";
 import { getAuthMode, getClientAuthContext, hasGlobalStaticAuth } from "./client.js";
 import { emitArcChange } from "./events.js";
 import type { MutationCallbacks, MutationMessages, TransitionMutationReturn } from "./mutation.js";

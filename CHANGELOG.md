@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.0
 
 ### Added — keyset `PaginationData.prev` / `end`
 
@@ -81,7 +81,7 @@ copying strings. The copy had drifted: it was missing `arc.precondition_failed` 
 `If-Match`), the three idempotency codes, `arc.circuit_open`, `arc.payload_too_large` and every
 `arc.auth.*` / aggregation code, and still listed `ORG_ROLE_REQUIRED` / `OWNERSHIP_DENIED`, which
 arc no longer emits. The client-synthesized realtime codes are named in `CLIENT_ERROR_CODES`.
-⚠ Peer `@classytic/repo-core` >=0.29.0.
+⚠ Peer `@classytic/repo-core` >=0.31.0 (browser-safe `./errors` catalogue, reserved `before` / `mode` list params).
 
 ### Added — optimistic concurrency (`versionField` → `If-Match`)
 

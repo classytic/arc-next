@@ -17,10 +17,25 @@ describe("normalizePagination — keyset paging back", () => {
   });
 
   it("the first page has no prev, and an offset page gets no cursor fields", () => {
-    const first = normalizePagination({ method: "keyset", data: [], limit: 5, hasMore: true, next: "n", prev: null, hasPrev: false });
+    const first = normalizePagination({
+      method: "keyset",
+      data: [],
+      limit: 5,
+      hasMore: true,
+      next: "n",
+      prev: null,
+      hasPrev: false,
+    });
     expect(first?.prev).toBeNull();
     expect(first?.hasPrev).toBe(false);
-    const offset = normalizePagination({ method: "offset", data: [], total: 3, pages: 1, page: 1, limit: 5 });
+    const offset = normalizePagination({
+      method: "offset",
+      data: [],
+      total: 3,
+      pages: 1,
+      page: 1,
+      limit: 5,
+    });
     expect(offset && "prev" in offset).toBe(false);
   });
 });

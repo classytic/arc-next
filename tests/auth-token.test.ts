@@ -3,7 +3,12 @@ import { bearerFetchOptions, createTokenStore, type TokenStorage } from "../src/
 
 const memory = (): TokenStorage & { data: Map<string, string> } => {
   const data = new Map<string, string>();
-  return { data, getItem: async (k) => data.get(k) ?? null, setItem: async (k, v) => void data.set(k, v), removeItem: async (k) => void data.delete(k) };
+  return {
+    data,
+    getItem: async (k) => data.get(k) ?? null,
+    setItem: async (k, v) => void data.set(k, v),
+    removeItem: async (k) => void data.delete(k),
+  };
 };
 
 describe("createTokenStore", () => {
@@ -25,7 +30,14 @@ describe("createTokenStore", () => {
 describe("createTokenStore over synchronous storage", () => {
   it("reads the token at once — the first request carries it without a load()", () => {
     const data = new Map([["k", "sync-token"]]);
-    const tokens = createTokenStore({ getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v), removeItem: (k) => void data.delete(k) }, "k");
+    const tokens = createTokenStore(
+      {
+        getItem: (k) => data.get(k) ?? null,
+        setItem: (k, v) => void data.set(k, v),
+        removeItem: (k) => void data.delete(k),
+      },
+      "k",
+    );
     expect(tokens.get()).toBe("sync-token");
     // Another tab signs out: this one sees it at once.
     data.delete("k");
@@ -38,9 +50,15 @@ describe("bearerFetchOptions", () => {
     const tokens = createTokenStore(memory(), "k");
     const options = bearerFetchOptions(tokens);
     expect(options.auth.token()).toBeUndefined();
-    await options.onSuccess({ response: { headers: { get: (n) => (n === "set-auth-token" ? "from-header" : null) } }, data: { token: "from-body" } });
+    await options.onSuccess({
+      response: { headers: { get: (n) => (n === "set-auth-token" ? "from-header" : null) } },
+      data: { token: "from-body" },
+    });
     expect(options.auth.token()).toBe("from-header");
-    await options.onSuccess({ response: { headers: { get: () => null } }, data: { token: "from-body" } });
+    await options.onSuccess({
+      response: { headers: { get: () => null } },
+      data: { token: "from-body" },
+    });
     expect(tokens.get()).toBe("from-body");
     await options.onSuccess({ response: { headers: { get: () => null } }, data: {} });
     expect(tokens.get()).toBe("from-body"); // a response without a token leaves the session alone

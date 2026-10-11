@@ -127,7 +127,11 @@ function showToast<TData, TVariables>(
     const quota = getQuotaDetails(error);
     if (quota) {
       detail = `${quota.used.toLocaleString()} of ${quota.limit.toLocaleString()} ${quota.kind} used this period — resets ${new Date(quota.resetsAt).toLocaleDateString()}`;
-    } else if (isArcApiError(error) && error.fieldErrors && Object.keys(error.fieldErrors).length > 0) {
+    } else if (
+      isArcApiError(error) &&
+      error.fieldErrors &&
+      Object.keys(error.fieldErrors).length > 0
+    ) {
       detail = Object.entries(error.fieldErrors)
         .map(([k, v]) => `${k}: ${v}`)
         .join(", ");

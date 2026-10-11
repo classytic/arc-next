@@ -60,7 +60,9 @@ export function bearerFetchOptions(tokens: TokenStore) {
   return {
     auth: { type: "Bearer" as const, token: () => tokens.get() ?? undefined },
     async onSuccess(ctx: FetchSuccessContext) {
-      const issued = ctx.response?.headers?.get("set-auth-token") ?? (ctx.data as { token?: unknown } | undefined)?.token;
+      const issued =
+        ctx.response?.headers?.get("set-auth-token") ??
+        (ctx.data as { token?: unknown } | undefined)?.token;
       if (typeof issued === "string" && issued) await tokens.set(issued);
     },
   };

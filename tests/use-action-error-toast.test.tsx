@@ -4,7 +4,7 @@ import { act, renderHook } from "@testing-library/react";
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ArcApiError, configureClient } from "../src/client.js";
-import { createCrudHooks, type CrudApi } from "../src/hooks.js";
+import { type CrudApi, createCrudHooks } from "../src/hooks.js";
 import { configureToast } from "../src/mutation.js";
 
 type Item = { _id: string; name: string };
@@ -21,12 +21,17 @@ async function toastFor(rejection: Error): Promise<string> {
     delete: vi.fn(),
     dispatchAction: vi.fn().mockRejectedValue(rejection),
   };
-  const hooks = createCrudHooks<Item, { name: string }, { name: string }>({ api, entityKey: "items", singular: "Item" });
+  const hooks = createCrudHooks<Item, { name: string }, { name: string }>({
+    api,
+    entityKey: "items",
+    singular: "Item",
+  });
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   const wrapper = ({ children }: { children: React.ReactNode }) =>
     React.createElement(QueryClientProvider, { client: queryClient }, children);
   const { result } = renderHook(
-    () => hooks.useAction({ action: "end", messages: { success: "Ended", error: "Failed to end" } }),
+    () =>
+      hooks.useAction({ action: "end", messages: { success: "Ended", error: "Failed to end" } }),
     { wrapper },
   );
   await act(async () => {
@@ -37,7 +42,13 @@ async function toastFor(rejection: Error): Promise<string> {
 }
 
 const apiError = (status: number, message: string) =>
-  new ArcApiError(message, { status, statusText: "", json: { message }, endpoint: "/items/1/action", method: "POST" });
+  new ArcApiError(message, {
+    status,
+    statusText: "",
+    json: { message },
+    endpoint: "/items/1/action",
+    method: "POST",
+  });
 
 describe("useAction error toast", () => {
   it("a 4xx refusal shows the headline AND the server's reason", async () => {
@@ -47,7 +58,9 @@ describe("useAction error toast", () => {
   });
 
   it("a 5xx keeps the headline alone — its message is not the operator's to act on", async () => {
-    expect(await toastFor(apiError(500, "TypeError: cannot read x of undefined"))).toBe("Failed to end");
+    expect(await toastFor(apiError(500, "TypeError: cannot read x of undefined"))).toBe(
+      "Failed to end",
+    );
   });
 
   it("a non-API error still reaches the configured error toast", async () => {

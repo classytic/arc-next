@@ -40,6 +40,7 @@ const BUDGETS = {
   "./tab-leader": 2_500, // new subpath 0.16.0
   "./events": 2_000, // new subpath 0.17: write events for server caches
   "./auth-gate": 19_000, // new subpath 0.17: ./client's closure + the enable rule
+  "./auth-token": 1_500, // new subpath 0.17: bearer-token sessions (no local imports; ~0.6 kB gzip)
   "./ws": 24_000, // raised 0.16.0: shareAcrossTabs (BroadcastChannel leader election) landed in the ws.ts closure
   "./upload": 27_000,
   "./encryption": 3_000,

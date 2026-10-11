@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BaseApi } from "../src/api.js";
-import { ArcApiError, configureClient, createAuthAwareClient, createClient, handleApiRequest } from "../src/client.js";
+import {
+  ArcApiError,
+  configureClient,
+  createAuthAwareClient,
+  createClient,
+  handleApiRequest,
+} from "../src/client.js";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -16,13 +22,19 @@ describe("ClientConfig.fetch — the transport slot", () => {
     const res = await handleApiRequest<{ data: { id: string } }>("GET", "/api/v1/products/p1");
 
     expect(res.data.id).toBe("p1");
-    expect(transport).toHaveBeenCalledWith("local:/api/v1/products/p1", expect.objectContaining({ method: "GET" }));
+    expect(transport).toHaveBeenCalledWith(
+      "local:/api/v1/products/p1",
+      expect.objectContaining({ method: "GET" }),
+    );
     expect(global).not.toHaveBeenCalled();
   });
 
   it("an error answered by the transport reaches the caller as the same ArcApiError a server's would", async () => {
     const transport = vi.fn(async () =>
-      json(501, { success: false, error: { code: "offline.unsupported", message: "Not available offline" } }),
+      json(501, {
+        success: false,
+        error: { code: "offline.unsupported", message: "Not available offline" },
+      }),
     );
     const client = createClient({ baseUrl: "local:", fetch: transport });
 
@@ -42,7 +54,10 @@ describe("createAuthAwareClient — the client SDKs use", () => {
     const res = await createAuthAwareClient().request<{ id: string }>("GET", "/api/v1/products/p1");
 
     expect(res.id).toBe("p1");
-    expect(transport).toHaveBeenCalledWith("local:/api/v1/products/p1", expect.objectContaining({ cache: "no-store" }));
+    expect(transport).toHaveBeenCalledWith(
+      "local:/api/v1/products/p1",
+      expect.objectContaining({ cache: "no-store" }),
+    );
     expect(global).not.toHaveBeenCalled();
   });
 
@@ -60,12 +75,22 @@ describe("createAuthAwareClient — the client SDKs use", () => {
 
 describe("BaseApi.request — per-request options reach the transport", () => {
   it("a per-request timeoutMs ends a request the transport never answers", async () => {
-    const hang = vi.fn((_url: string, init: RequestInit) =>
-      new Promise<Response>((_, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    const hang = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_, reject) =>
+          init.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          ),
+        ),
     );
-    const api = new BaseApi("orders", { basePath: "/api/v1", client: createClient({ baseUrl: "local:", fetch: hang }) });
+    const api = new BaseApi("orders", {
+      basePath: "/api/v1",
+      client: createClient({ baseUrl: "local:", fetch: hang }),
+    });
 
-    const err = await api.request("POST", "/api/v1/orders", { data: {}, options: { timeoutMs: 20 } }).catch((e: unknown) => e);
+    const err = await api
+      .request("POST", "/api/v1/orders", { data: {}, options: { timeoutMs: 20 } })
+      .catch((e: unknown) => e);
 
     expect((err as Error).name).toBe("TimeoutError");
   });
