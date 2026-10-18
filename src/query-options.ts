@@ -311,12 +311,22 @@ export function createEntityQueries(api: EntityReadApi, entityKey: string) {
         queryKey: [...KEYS.scopedList(scope, withOrgParams(org, rest)), "infinite"],
         queryFn: ({ pageParam, signal }) =>
           api.getAll({
-            params: { ...rest, ...(pageParam ? { page: pageParam } : {}) },
+            // Same mapping as `useInfiniteList`: a keyset cursor (string) is
+            // `after`, an offset page (number) is `page`. Sending a cursor as
+            // `page` fails arc's query validation.
+            params: {
+              ...rest,
+              ...(typeof pageParam === "string"
+                ? { after: pageParam }
+                : pageParam
+                  ? { page: pageParam }
+                  : {}),
+            },
             token: ctx.token ?? null,
             organizationId: org,
             ...fwd(ctx, signal),
           }),
-        initialPageParam: 1 as unknown,
+        initialPageParam: (rest.after ? rest.after : 1) as unknown,
         getNextPageParam: (lastPage: unknown) => {
           if (isKeysetPagination(lastPage as PaginatedResult<unknown>)) {
             return (lastPage as { hasMore: boolean; next?: unknown }).hasMore

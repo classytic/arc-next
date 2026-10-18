@@ -20,7 +20,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "b6cc4b7d40664e66"
+    "typesHash": "7068fbc1776f7106"
   },
   "./client": {
     "runtime": [
@@ -28,12 +28,14 @@
       "CLIENT_ERROR_CODES",
       "KNOWN_ARC_ERROR_CODES",
       "_getAuthErrorHandler",
+      "_getStreamConfig",
       "_isAuthRecoverable",
       "_resetArcFetchClient",
       "_resetAuthRecovery",
       "_resetAuthWarnings",
       "_resolveRefreshedToken",
       "_runAuthRecovery",
+      "_uuid",
       "arc",
       "arcAuthHeaders",
       "arcFetch",
@@ -84,6 +86,10 @@
       "CLIENT_ERROR_CODES",
       "ClientConfig",
       "ClientEncryptionConfig",
+      "EventSourceConstructor",
+      "EventSourceEventLike",
+      "EventSourceInitLike",
+      "EventSourceLike",
       "HttpMethod",
       "KNOWN_ARC_ERROR_CODES",
       "NextFetchOptions",
@@ -96,12 +102,14 @@
       "ToastHandler",
       "UseRouterHook",
       "_getAuthErrorHandler",
+      "_getStreamConfig",
       "_isAuthRecoverable",
       "_resetArcFetchClient",
       "_resetAuthRecovery",
       "_resetAuthWarnings",
       "_resolveRefreshedToken",
       "_runAuthRecovery",
+      "_uuid",
       "arc",
       "arcAuthHeaders",
       "arcFetch",
@@ -133,7 +141,7 @@
       "isTierRequiredError",
       "isValidationError"
     ],
-    "typesHash": "deed1cce48f74ba3"
+    "typesHash": "52eea792a4335834"
   },
   "./encryption": {
     "runtime": [
@@ -143,7 +151,7 @@
       "JoseEncryptionOptions",
       "createJoseEncryption"
     ],
-    "typesHash": "d4e8f7d1db48531c"
+    "typesHash": "45696d7e9723ceb9"
   },
   "./field-encryption": {
     "runtime": [
@@ -161,7 +169,7 @@
       "isFieldEnvelope",
       "parseFieldEnvelope"
     ],
-    "typesHash": "7a81f91ba49530ef"
+    "typesHash": "6ecbff30ddd5fb3d"
   },
   "./api": {
     "runtime": [
@@ -198,7 +206,7 @@
       "isKeysetPagination",
       "isOffsetPagination"
     ],
-    "typesHash": "c9b898b287f93772"
+    "typesHash": "5317fd3eef23fcce"
   },
   "./cache": {
     "runtime": [
@@ -236,7 +244,7 @@
       "updateListCache",
       "withOrgParams"
     ],
-    "typesHash": "bd0c56a825412a5c"
+    "typesHash": "7428c49bd33b35c4"
   },
   "./query": {
     "runtime": [
@@ -293,7 +301,7 @@
       "useSuspenseDetailQuery",
       "useSuspenseListQuery"
     ],
-    "typesHash": "507c22cd4feaa01e"
+    "typesHash": "b19fca07abdd2009"
   },
   "./mutation": {
     "runtime": [
@@ -316,7 +324,7 @@
       "useMutationWithTransition",
       "useOptimisticMutation"
     ],
-    "typesHash": "12f0558333c7455d"
+    "typesHash": "68eca095aba2c109"
   },
   "./hooks": {
     "runtime": [
@@ -339,7 +347,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "b6cc4b7d40664e66"
+    "typesHash": "7068fbc1776f7106"
   },
   "./query-client": {
     "runtime": [
@@ -349,7 +357,7 @@
       "QueryClientOverrides",
       "getQueryClient"
     ],
-    "typesHash": "3a1c4c7675718aaf"
+    "typesHash": "703ade6f581a7580"
   },
   "./prefetch": {
     "runtime": [
@@ -367,7 +375,7 @@
       "createCrudPrefetcher",
       "dehydrate"
     ],
-    "typesHash": "759a51fa3da06721"
+    "typesHash": "5b1e8a96a1c1040c"
   },
   "./server": {
     "runtime": [
@@ -382,7 +390,7 @@
       "createRequestClient",
       "forwardRequestHeaders"
     ],
-    "typesHash": "cbfd8bc16050b099"
+    "typesHash": "8c78515166e2b8a3"
   },
   "./auth-gate": {
     "runtime": [
@@ -394,7 +402,7 @@
       "authGate",
       "queryAuthEnabled"
     ],
-    "typesHash": "e3a69cb6e6c95cd0"
+    "typesHash": "539163c4e5a60443"
   },
   "./events": {
     "runtime": [
@@ -407,7 +415,7 @@
       "emitArcChange",
       "onArcChange"
     ],
-    "typesHash": "96c3af85a40d08be"
+    "typesHash": "3e6f0b7c6630abd4"
   },
   "./sse": {
     "runtime": [
@@ -427,7 +435,23 @@
       "subscribeToEvents",
       "useEventStream"
     ],
-    "typesHash": "f58d3a299f1efe76"
+    "typesHash": "ae49357db96e19f7"
+  },
+  "./sse-fetch": {
+    "runtime": [
+      "FetchEventSource",
+      "createSseParser"
+    ],
+    "types": [
+      "FetchEventSource",
+      "FetchEventSourceEvent",
+      "FetchEventSourceInit",
+      "SseParsedEvent",
+      "SseParser",
+      "SseParserHandlers",
+      "createSseParser"
+    ],
+    "typesHash": "0f9f2426ac885e34"
   },
   "./auth-token": {
     "runtime": [
@@ -440,7 +464,7 @@
       "bearerFetchOptions",
       "createTokenStore"
     ],
-    "typesHash": "049e189303419702"
+    "typesHash": "2e1066f304a50bff"
   },
   "./tab-leader": {
     "runtime": [
@@ -449,7 +473,7 @@
     "types": [
       "useTabLeader"
     ],
-    "typesHash": "3e7a15dee9f3db9b"
+    "typesHash": "a23ffb85032c1632"
   },
   "./ws": {
     "runtime": [
@@ -469,7 +493,7 @@
       "connectWs",
       "useWebSocket"
     ],
-    "typesHash": "e653225494bc5550"
+    "typesHash": "9de25d3367ff3a58"
   },
   "./upload": {
     "runtime": [
@@ -484,7 +508,7 @@
       "uploadWithProgress",
       "useUploadWithProgress"
     ],
-    "typesHash": "2d8ec6723080d155"
+    "typesHash": "c4adb4bda492152f"
   },
   "./presets/soft-delete": {
     "runtime": [
@@ -494,7 +518,7 @@
       "SoftDeleteMethods",
       "withSoftDelete"
     ],
-    "typesHash": "b4a4f66a4d9895fb"
+    "typesHash": "ec654af257ddcce2"
   },
   "./presets/history": {
     "runtime": [
@@ -506,7 +530,7 @@
       "HistoryPage",
       "withHistory"
     ],
-    "typesHash": "2eaabd31da293056"
+    "typesHash": "9ced4483720b7fff"
   },
   "./presets/bulk": {
     "runtime": [
@@ -516,7 +540,7 @@
       "BulkMethods",
       "withBulk"
     ],
-    "typesHash": "bf6ded3037898978"
+    "typesHash": "9f16bdf80624953a"
   },
   "./presets/slug": {
     "runtime": [
@@ -526,7 +550,7 @@
       "SlugLookupMethods",
       "withSlugLookup"
     ],
-    "typesHash": "1f202396dd9d6037"
+    "typesHash": "5f1f2c1936d55445"
   },
   "./presets/tree": {
     "runtime": [
@@ -536,7 +560,7 @@
       "TreeMethods",
       "withTree"
     ],
-    "typesHash": "d4ffdcada03fa961"
+    "typesHash": "435c28b1532a21a0"
   },
   "./presets/search": {
     "runtime": [
@@ -546,7 +570,7 @@
       "SearchPresetMethods",
       "withSearchPreset"
     ],
-    "typesHash": "601c0b3cd9cb5a1f"
+    "typesHash": "da81cf10653b984a"
   },
   "./query-options": {
     "runtime": [
@@ -559,6 +583,6 @@
       "QueryFnContext",
       "createEntityQueries"
     ],
-    "typesHash": "167679b1ac43c731"
+    "typesHash": "8d12a5244f2a3202"
   }
 }

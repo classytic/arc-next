@@ -523,6 +523,36 @@ export interface ClientConfig {
    */
   fetch?: (input: string, init: RequestInit) => Promise<Response>;
   /**
+   * The `EventSource` implementation SSE uses (`subscribeToEvents`,
+   * `useEventStream`). Unset = `globalThis.EventSource`.
+   *
+   * Inject one where the runtime has none (React Native) or where credentials
+   * should travel as headers — e.g. `react-native-sse`. The contract is
+   * {@link EventSourceConstructor}: `new (url, { withCredentials, headers? })`,
+   * events delivered through `addEventListener` (`open`, `message`, `error` and
+   * named frames), and `close()`.
+   */
+  eventSource?: EventSourceConstructor;
+  /**
+   * Where SSE credentials travel.
+   *
+   * - `'query'` (default): `?token=…&organizationId=…` in the stream URL. The
+   *   WHATWG `EventSource` cannot send headers, so in a browser this is the only
+   *   option for bearer auth (cookie auth sends no token at all).
+   * - `'header'`: the same headers a fetch carries ({@link arcAuthHeaders}),
+   *   passed as the `headers` init of the injected {@link ClientConfig.eventSource}.
+   *   The URL then carries no credentials, so the token never reaches access
+   *   logs, proxies or crash reports. With no `eventSource` injected, the SDK
+   *   loads its built-in fetch-based `FetchEventSource`
+   *   (`@classytic/arc-next/sse-fetch`, lazily — native-EventSource apps never
+   *   ship it) wherever `fetch` can stream (browsers, Node). On React Native,
+   *   whose `fetch` cannot stream, inject `react-native-sse`; without it the
+   *   SDK refuses to connect rather than silently falling back to the URL.
+   *
+   * WebSocket URLs are unaffected.
+   */
+  streamAuth?: "query" | "header";
+  /**
    * Auto-generate `Idempotency-Key` header for POST/PUT/PATCH requests.
    * Prevents duplicate mutations on network retries.
    * Default: false — opt-in per-request via `idempotencyKey` option.
@@ -596,6 +626,45 @@ export interface ClientConfig {
    */
   encryption?: ClientEncryptionConfig;
 }
+
+/** Init accepted by an {@link EventSourceConstructor}. `headers` is honoured only by implementations that support it. */
+export interface EventSourceInitLike {
+  withCredentials?: boolean;
+  headers?: Record<string, string>;
+}
+
+/** The fields the SDK reads from an SSE event (`MessageEvent` and react-native-sse events both fit). */
+export interface EventSourceEventLike {
+  type?: string;
+  data?: string | null;
+  lastEventId?: string | null;
+  /**
+   * `error` events only, and only from implementations that know it (the
+   * built-in `FetchEventSource` from `@classytic/arc-next/sse-fetch`): the
+   * stream response's HTTP status, `0` when no response arrived. When present
+   * the SDK classifies the failure from it (401/403 → `onAuthError`, 429 →
+   * `Retry-After`) instead of sending a probe request.
+   */
+  status?: number;
+  /** `error` events only: the response headers, when a response arrived. */
+  headers?: { get(name: string): string | null };
+}
+
+/**
+ * The part of an `EventSource` the SDK uses. Satisfied by the WHATWG
+ * `EventSource` and by `react-native-sse`. Built-in `open` / `message` /
+ * `error` events are consumed through `addEventListener`, never `on*`
+ * properties, because header-capable implementations only offer the former.
+ */
+export interface EventSourceLike {
+  addEventListener(type: string, listener: (event: EventSourceEventLike) => void): void;
+  close(): void;
+}
+
+export type EventSourceConstructor = new (
+  url: string,
+  init?: EventSourceInitLike,
+) => EventSourceLike;
 
 // ============================================================================
 // Retry + Interceptor types
@@ -755,9 +824,45 @@ export function getBasePath(): string | null {
   return clientConfig?.basePath ?? null;
 }
 
+/** @internal — SSE transport settings for sse.ts ({@link ClientConfig.eventSource} / `streamAuth`). */
+export function _getStreamConfig(): {
+  eventSource: EventSourceConstructor | undefined;
+  streamAuth: "query" | "header";
+} {
+  return {
+    eventSource: clientConfig?.eventSource,
+    streamAuth: clientConfig?.streamAuth ?? "query",
+  };
+}
+
 /** Whether auto-idempotency is enabled on the global client. */
 export function isAutoIdempotency(): boolean {
   return clientConfig?.autoIdempotency ?? false;
+}
+
+/**
+ * RFC 4122 v4 UUID. Internal — the one place the SDK mints ids.
+ *
+ * `crypto.randomUUID` is missing on React Native (Hermes) and on non-secure
+ * browser origins, while `crypto.getRandomValues` is present there (natively or
+ * via `react-native-get-random-values`). A runtime with neither has no
+ * cryptographic randomness, and an idempotency key built from `Math.random`
+ * could collide, so that case throws rather than degrade silently.
+ */
+export function _uuid(): string {
+  const c = globalThis.crypto;
+  if (typeof c?.randomUUID === "function") return c.randomUUID();
+  if (typeof c?.getRandomValues === "function") {
+    const b = c.getRandomValues(new Uint8Array(16));
+    b[6] = ((b[6] as number) & 0x0f) | 0x40; // version 4
+    b[8] = ((b[8] as number) & 0x3f) | 0x80; // RFC 4122 variant
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  }
+  throw new Error(
+    "[arc-next] No cryptographic random source: globalThis.crypto.getRandomValues is unavailable. " +
+      "On React Native install and import 'react-native-get-random-values' before arc-next.",
+  );
 }
 
 /**
@@ -1132,7 +1237,8 @@ export type StreamUrlProtocol = "http" | "ws";
  * Single source of truth for {@link import('./sse.js').buildSseUrl} (HTTP) and
  * {@link import('./ws.js').buildWsUrl} (WebSocket). Both delegate here so the
  * auth-injection rule (org always, token only when `authMode !== 'cookie'`)
- * stays in one place and can't drift.
+ * stays in one place and can't drift. With `streamAuth: 'header'` an `http`
+ * URL carries neither (they travel as headers instead).
  *
  * @param path Path appended to the base URL (leading slash recommended).
  * @param params Caller-supplied params; merged with auth params. Caller wins on key collision.
@@ -1151,10 +1257,13 @@ export function buildStreamUrl(
     qs.set(key, String(value));
   }
 
-  if (auth.organizationId && !qs.has("organizationId")) {
+  // `streamAuth: 'header'` moves SSE credentials to headers (see ClientConfig),
+  // so the URL must not repeat them.
+  const headerAuth = protocol === "http" && clientConfig?.streamAuth === "header";
+  if (!headerAuth && auth.organizationId && !qs.has("organizationId")) {
     qs.set("organizationId", auth.organizationId);
   }
-  if (auth.token && getAuthMode() !== "cookie" && !qs.has("token")) {
+  if (!headerAuth && auth.token && getAuthMode() !== "cookie" && !qs.has("token")) {
     qs.set("token", auth.token);
   }
 
@@ -1587,7 +1696,7 @@ async function executeRequest<T = unknown>(
     options.idempotencyKey === undefined &&
     (method === "POST" || method === "PUT" || method === "PATCH")
   ) {
-    options = { ...options, idempotencyKey: globalThis.crypto.randomUUID() };
+    options = { ...options, idempotencyKey: _uuid() };
   }
 
   // Client-level default cache mode — applied ONLY when the call expresses no

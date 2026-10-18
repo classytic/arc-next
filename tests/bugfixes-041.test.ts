@@ -155,8 +155,11 @@ describe("Fix #2: SSE close → reconnect", () => {
         }
       });
     }
-    addEventListener() {
-      /* named-event subscriptions are tested elsewhere */
+    addEventListener(type: string, fn: (e: MessageEvent) => void) {
+      // Built-in events arrive via addEventListener; named ones are tested elsewhere.
+      if (type === "open") this.onopen = fn as (e: Event) => void;
+      else if (type === "message") this.onmessage = fn;
+      else if (type === "error") this.onerror = fn as (e: Event) => void;
     }
     removeEventListener() {
       /* same */

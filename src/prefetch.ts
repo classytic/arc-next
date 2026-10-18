@@ -25,9 +25,9 @@ export interface PrefetchOptions extends PrefetchAuthContext {
   /**
    * Next.js fetch caching forwarded to the underlying API call. A Server
    * Component that prefetches with `revalidate` lets that data participate in
-   * ISR — without it the SDK's default `no-store` pins the whole route to
-   * dynamic rendering (e.g. a shared layout prefetch silently disables ISR on
-   * every page under it). Inert off-Next (React Native / plain browser fetch).
+   * ISR — without it a deployment-wide `no-store` (`ClientConfig.cache`) pins
+   * the whole route to dynamic rendering (e.g. a shared layout prefetch
+   * silently disables ISR on every page under it). Inert off-Next.
    */
   cache?: RequestCache;
   revalidate?: number | false;

@@ -63,23 +63,43 @@ describe("Next.js fetch options", () => {
 });
 
 /**
- * Regression: the instance `cache` default (`no-store`) must be ISR-aware.
+ * Regression: a configured `cache` default (instance or ClientConfig) must be
+ * ISR-aware, and there is no SDK-chosen default at all.
  *
- * A bare read defaults to `no-store` (correct — dynamic by default). But a
- * caller asking for `revalidate` is opting into ISR, and forcing `no-store`
+ * A caller asking for `revalidate` is opting into ISR, and forcing `no-store`
  * alongside it makes Next.js throw ("cache: 'no-store' and revalidate are
  * contradictory") and otherwise pins the route dynamic — so a single read can
  * never be cached. `withCacheDefault` gates the default on caller intent. This
  * is what lets a storefront product page's per-call `revalidate` produce an
  * actually-cacheable fetch instead of a silently-dynamic one.
  */
-describe("no-store default is revalidate-aware (withCacheDefault)", () => {
+describe("cache default is opt-in and revalidate-aware (withCacheDefault)", () => {
   const api = () => createCrudApi("things", { basePath: "/api" });
 
-  it("a bare read defaults to cache:no-store (dynamic) with no next", async () => {
+  it("a bare read sends no cache mode at all (no SDK default; RN whatwg-fetch appends _= for no-store)", async () => {
+    await api().getAll({});
+    expect(lastInit().cache).toBeUndefined();
+    expect(lastInit().next).toBeUndefined();
+  });
+
+  it("an instance cache is applied to bare reads", async () => {
+    await createCrudApi("things", { basePath: "/api", cache: "no-store" }).getAll({});
+    expect(lastInit().cache).toBe("no-store");
+  });
+
+  it("the deployment's ClientConfig.cache is applied to bare reads, and per-call revalidate still wins", async () => {
+    configureClient({ baseUrl: "http://api.test", cache: "no-store" });
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
     await api().getAll({});
     expect(lastInit().cache).toBe("no-store");
-    expect(lastInit().next).toBeUndefined();
+    await api().getAll({ options: { revalidate: 60 } });
+    expect(lastInit().cache).toBeUndefined();
   });
 
   it("per-call revalidate is NOT clobbered by the no-store default → ISR", async () => {
@@ -101,9 +121,9 @@ describe("no-store default is revalidate-aware (withCacheDefault)", () => {
     expect(lastInit().next).toEqual({ revalidate: 300 });
   });
 
-  it("request() with no options stays no-store (dynamic) by default", async () => {
+  it("request() with no options sends no cache mode by default", async () => {
     await api().request("GET", "/api/things/slug/widget");
-    expect(lastInit().cache).toBe("no-store");
+    expect(lastInit().cache).toBeUndefined();
     expect(lastInit().next).toBeUndefined();
   });
 });

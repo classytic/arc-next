@@ -4,10 +4,14 @@ import { type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   _getAuthErrorHandler,
+  _getStreamConfig,
   _runAuthRecovery,
   ArcApiError,
+  arcAuthHeaders,
   buildStreamUrl,
   CLIENT_ERROR_CODES,
+  type EventSourceConstructor,
+  type EventSourceLike,
   getAuthMode,
 } from "./client.js";
 import { useTabLeader } from "./tab-leader.js";
@@ -211,11 +215,16 @@ interface ProbeResult {
  * plain `fetch`, so unlike the stream it can read both the status and
  * `Retry-After`.
  */
-async function probeConnectionFailure(url: string, retryOn403: boolean): Promise<ProbeResult> {
+async function probeConnectionFailure(
+  url: string,
+  retryOn403: boolean,
+  authHeaders: Record<string, string> = {},
+): Promise<ProbeResult> {
   try {
     let res = await fetch(url, {
       method: "HEAD",
       credentials: "include",
+      headers: authHeaders,
     });
     // Some SSE servers (Fastify's sse, Cloudflare) reject HEAD with 405.
     // Fall back to a single-byte GET so we still learn the auth status.
@@ -223,7 +232,7 @@ async function probeConnectionFailure(url: string, retryOn403: boolean): Promise
       res = await fetch(url, {
         method: "GET",
         credentials: "include",
-        headers: { Range: "bytes=0-0" },
+        headers: { ...authHeaders, Range: "bytes=0-0" },
       });
     }
     if (res.status === 401) return { kind: "auth-failure" };
@@ -239,6 +248,63 @@ async function probeConnectionFailure(url: string, retryOn403: boolean): Promise
     // Network failure — not an auth issue, let backoff handle it.
     return { kind: "not-auth" };
   }
+}
+
+/**
+ * Classify a failure from a status the EventSource implementation already
+ * reported (the built-in `FetchEventSource` does), so no probe is needed.
+ * `0` = no response at all (network/CORS) — transient, like the probe's catch.
+ */
+function classifyStatus(
+  status: number,
+  retryOn403: boolean,
+  headers: { get(name: string): string | null } | undefined,
+): ProbeResult {
+  if (status === 401) return { kind: "auth-failure" };
+  if (retryOn403 && status === 403) return { kind: "auth-failure" };
+  if (status === 429) {
+    return {
+      kind: "rate-limited",
+      retryAfterMs: parseRetryAfter(headers?.get("retry-after") ?? null),
+    };
+  }
+  return { kind: "not-auth" };
+}
+
+// ============================================================================
+// Built-in header-capable transport (lazy)
+// ============================================================================
+
+/**
+ * Loaded on first use only — a dynamic import, so apps on the native
+ * `EventSource` (query auth, or an injected implementation) never ship
+ * `sse-fetch` in their `/sse` bundle.
+ */
+let fetchEventSourceCtor: EventSourceConstructor | undefined;
+let fetchEventSourceLoad: Promise<EventSourceConstructor> | undefined;
+
+function loadFetchEventSource(): Promise<EventSourceConstructor> {
+  fetchEventSourceLoad ??= import("./sse-fetch.js").then((m) => {
+    fetchEventSourceCtor = m.FetchEventSource;
+    return m.FetchEventSource;
+  });
+  return fetchEventSourceLoad;
+}
+
+/**
+ * Whether `FetchEventSource` can run here: streaming `fetch` + `TextDecoder` +
+ * `AbortController`. React Native has `fetch` and (polyfilled) streams but its
+ * `fetch` never streams a response body, so it is excluded by name and keeps
+ * needing `react-native-sse`.
+ */
+function canStreamFetch(): boolean {
+  if (typeof navigator !== "undefined" && navigator.product === "ReactNative") return false;
+  return (
+    typeof fetch === "function" &&
+    typeof ReadableStream !== "undefined" &&
+    typeof TextDecoder !== "undefined" &&
+    typeof AbortController !== "undefined"
+  );
 }
 
 // ============================================================================
@@ -274,7 +340,7 @@ export function subscribeToEvents<TData = unknown>(
     withCredentials,
   } = options;
 
-  let es: EventSource | null = null;
+  let es: EventSourceLike | null = null;
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let manualClose = false;
@@ -307,6 +373,18 @@ export function subscribeToEvents<TData = unknown>(
     options.onEvent?.(parsed);
   };
 
+  /**
+   * Last event ID seen on this subscription. Sent as `Last-Event-ID` on the
+   * next connection (header mode — the only mode whose transport can send it)
+   * so the server can replay what was missed while disconnected.
+   */
+  let lastEventId = "";
+  const noteEventId = (id: string | null | undefined): void => {
+    if (typeof id === "string") lastEventId = id;
+  };
+  /** Bumped per connect: a lazily-loaded transport must not open a superseded connection. */
+  let connectSeq = 0;
+
   const connect = (): void => {
     if (es) {
       try {
@@ -316,34 +394,86 @@ export function subscribeToEvents<TData = unknown>(
       }
     }
     manualClose = false;
+    const seq = ++connectSeq;
 
+    const { eventSource: Impl, streamAuth } = _getStreamConfig();
+    if (streamAuth === "header" && !Impl) {
+      if (!canStreamFetch()) {
+        throw new Error(
+          "[arc-next] configureClient({ streamAuth: 'header' }) requires an injected `eventSource` " +
+            "that accepts headers on this runtime (e.g. react-native-sse on React Native, whose " +
+            "fetch cannot stream). The native EventSource cannot send headers, and the SDK will " +
+            "not move the token into the URL instead.",
+        );
+      }
+      if (fetchEventSourceCtor) {
+        open(fetchEventSourceCtor, streamAuth);
+        return;
+      }
+      loadFetchEventSource().then(
+        (FetchES) => {
+          if (seq === connectSeq && !manualClose) open(FetchES, streamAuth);
+        },
+        () => {
+          if (seq === connectSeq && !manualClose) scheduleReconnect();
+        },
+      );
+      return;
+    }
+    const ES = Impl ?? (globalThis.EventSource as EventSourceConstructor | undefined);
+    if (!ES) {
+      throw new Error(
+        "[arc-next] No EventSource in this runtime. Pass one via " +
+          "configureClient({ eventSource }) (e.g. react-native-sse on React Native).",
+      );
+    }
+    open(ES, streamAuth);
+  };
+
+  const open = (ES: EventSourceConstructor, streamAuth: "query" | "header"): void => {
     const credentials = withCredentials ?? getAuthMode() === "cookie";
-    es = new EventSource(buildUrl(), { withCredentials: credentials });
+    // Re-read per connect so a refreshed token is used on reconnect.
+    const current = new ES(
+      buildUrl(),
+      streamAuth === "header"
+        ? {
+            withCredentials: credentials,
+            headers: {
+              ...arcAuthHeaders(),
+              ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
+            },
+          }
+        : { withCredentials: credentials },
+    );
+    es = current;
 
-    es.onopen = () => {
+    current.addEventListener("open", () => {
       reconnectAttempts = 0;
       sseAuthRetries = 0; // fresh budget — a future re-auth can recover again
+      sseProbes = 0; // likewise: a later drop must be diagnosed, not sent straight to backoff
       connected = true;
       options.onConnectionChange?.(true);
-    };
+    });
 
     // Default `message` channel — bodies are JSON-encoded ArcServerEvent.
-    es.onmessage = (event) => {
+    current.addEventListener("message", (event) => {
+      noteEventId(event.lastEventId);
       try {
-        dispatch(JSON.parse(event.data) as ArcServerEvent<TData>);
+        dispatch(JSON.parse(event.data ?? "") as ArcServerEvent<TData>);
       } catch {
         // Non-JSON event (heartbeat, etc.) — ignore
       }
-    };
+    });
 
     // Named-event channels — Arc's ssePlugin writes `event: <type>\ndata: <json>`
     // frames, which the EventSource spec routes through addEventListener(type)
     // rather than onmessage. Match both flavors.
     for (const eventType of resolvedEventTypes) {
-      es.addEventListener(eventType, (event: MessageEvent) => {
+      current.addEventListener(eventType, (event) => {
+        noteEventId(event.lastEventId);
         let payload: unknown;
         try {
-          payload = JSON.parse(event.data);
+          payload = JSON.parse(event.data ?? "");
         } catch {
           payload = event.data;
         }
@@ -367,7 +497,10 @@ export function subscribeToEvents<TData = unknown>(
       });
     }
 
-    es.onerror = () => {
+    current.addEventListener("error", (event) => {
+      // Implementations that track it (FetchEventSource) also see ids on
+      // event types this subscription does not listen to.
+      noteEventId((current as { lastEventId?: string | null }).lastEventId);
       try {
         es?.close();
       } catch {
@@ -377,6 +510,18 @@ export function subscribeToEvents<TData = unknown>(
       options.onConnectionChange?.(false);
 
       if (manualClose) return;
+
+      // The transport already knows the HTTP status (FetchEventSource): decide
+      // from it — no probe request, and the real status reaches onAuthError.
+      if (typeof event?.status === "number") {
+        const { handler, retryOn403, maxAuthRetries } = _getAuthErrorHandler();
+        const verdict = classifyStatus(event.status, retryOn403, event.headers);
+        if (verdict.kind === "auth-failure" && handler) sseAuthRetries += 1;
+        void handleVerdict(verdict, event.status, handler, maxAuthRetries).catch(() =>
+          scheduleReconnect(),
+        );
+        return;
+      }
 
       // EventSource doesn't expose HTTP status codes — it just fires an
       // opaque `error` for any failure (network, 401, 403, 5xx, CORS). To
@@ -398,38 +543,12 @@ export function subscribeToEvents<TData = unknown>(
       if (sseProbes < maxAuthRetries) {
         sseProbes += 1;
         if (handler) sseAuthRetries += 1;
-        probeConnectionFailure(buildUrl(), retryOn403)
-          .then(async ({ kind, retryAfterMs }) => {
-            if (kind === "rate-limited") {
-              /**
-               * Honour the server's own number. Falling back to a full window
-               * rather than the 3s-based curve: retrying inside the window
-               * cannot succeed and each attempt refills the bucket.
-               */
-              scheduleReconnect(retryAfterMs ?? 60000);
-              return;
-            }
-            if (kind === "auth-failure" && handler && sseAuthRetries <= maxAuthRetries) {
-              const { decision } = await _runAuthRecovery(handler, {
-                error: new ArcApiError("SSE pre-flight auth failure", {
-                  status: 401,
-                  statusText: "SSE auth failure",
-                  json: { code: CLIENT_ERROR_CODES.SSE_UNAUTHORIZED },
-                  endpoint: ssePath,
-                  method: "GET",
-                }),
-                request: { method: "GET", endpoint: ssePath },
-                attempt: sseAuthRetries,
-              });
-              if (decision === "retry") {
-                reconnectAttempts = 0;
-                connect();
-                return;
-              }
-            }
-            // 'not-auth' or 'skip' → backoff reconnect as before.
-            scheduleReconnect();
-          })
+        probeConnectionFailure(
+          buildUrl(),
+          retryOn403,
+          _getStreamConfig().streamAuth === "header" ? arcAuthHeaders() : {},
+        )
+          .then((verdict) => handleVerdict(verdict, null, handler, maxAuthRetries))
           .catch(() => {
             // Probe itself failed (network down) — treat as transient and
             // fall back to backoff reconnect.
@@ -439,7 +558,51 @@ export function subscribeToEvents<TData = unknown>(
       }
 
       scheduleReconnect();
-    };
+    });
+  };
+
+  /**
+   * Act on a classified failure — from the probe (`status: null`) or from a
+   * status the transport reported. One copy so the two paths cannot drift.
+   */
+  const handleVerdict = async (
+    { kind, retryAfterMs }: ProbeResult,
+    status: number | null,
+    handler: ReturnType<typeof _getAuthErrorHandler>["handler"],
+    maxAuthRetries: number,
+  ): Promise<void> => {
+    if (kind === "rate-limited") {
+      /**
+       * Honour the server's own number. Falling back to a full window
+       * rather than the 3s-based curve: retrying inside the window
+       * cannot succeed and each attempt refills the bucket.
+       */
+      scheduleReconnect(retryAfterMs ?? 60000);
+      return;
+    }
+    if (kind === "auth-failure" && handler && sseAuthRetries <= maxAuthRetries) {
+      const { decision } = await _runAuthRecovery(handler, {
+        error: new ArcApiError(
+          status === null ? "SSE pre-flight auth failure" : `SSE auth failure (HTTP ${status})`,
+          {
+            status: status ?? 401,
+            statusText: "SSE auth failure",
+            json: { code: CLIENT_ERROR_CODES.SSE_UNAUTHORIZED },
+            endpoint: ssePath,
+            method: "GET",
+          },
+        ),
+        request: { method: "GET", endpoint: ssePath },
+        attempt: sseAuthRetries,
+      });
+      if (decision === "retry") {
+        reconnectAttempts = 0;
+        connect();
+        return;
+      }
+    }
+    // 'not-auth' or 'skip' → backoff reconnect as before.
+    scheduleReconnect();
   };
 
   /**
@@ -567,7 +730,13 @@ export function useEventStream<TData = unknown>(
    * per-tab token or org param cannot split one stream into several elections.
    */
   const channelName = `arc-next.sse.${resource ?? path ?? url ?? "/events/stream"}`;
-  const isLeaderTab = useTabLeader({ key: channelName, enabled: enabled && shareAcrossTabs });
+  /**
+   * Sharing needs a relay. Without `BroadcastChannel` (React Native, old
+   * webviews) a follower could never receive anything, so every instance
+   * behaves as `shareAcrossTabs: false` and holds its own connection.
+   */
+  const coordinated = shareAcrossTabs && typeof BroadcastChannel !== "undefined";
+  const isLeaderTab = useTabLeader({ key: channelName, enabled: enabled && coordinated });
   const connectedRef = useRef(false);
 
   useEffect(() => {
@@ -582,10 +751,9 @@ export function useEventStream<TData = unknown>(
      * state, so its cache, badge and polling decision stay correct at zero
      * connection cost.
      */
-    if (shareAcrossTabs && !isLeaderTab) {
+    if (coordinated && !isLeaderTab) {
       handleRef.current?.close();
       handleRef.current = null;
-      if (typeof BroadcastChannel === "undefined") return;
 
       const channel = new BroadcastChannel(channelName);
       channel.onmessage = (ev: MessageEvent) => {
@@ -609,7 +777,7 @@ export function useEventStream<TData = unknown>(
 
     // LEADER — owns the socket and answers followers.
     let channel: BroadcastChannel | null = null;
-    if (shareAcrossTabs && typeof BroadcastChannel !== "undefined") {
+    if (coordinated) {
       channel = new BroadcastChannel(channelName);
       // BroadcastChannel never echoes to the sender, so this only serves others.
       channel.onmessage = (ev: MessageEvent) => {
@@ -667,7 +835,7 @@ export function useEventStream<TData = unknown>(
     options.reconnectDelay,
     options.maxReconnectAttempts,
     options.withCredentials,
-    shareAcrossTabs,
+    coordinated,
     isLeaderTab,
     channelName,
     applyEvent,

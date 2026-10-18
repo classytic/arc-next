@@ -269,7 +269,7 @@ Creates a typed API client instance.
 const api = createCrudApi<Product, CreateProduct>("products", {
   basePath: "/api",       // default: "/api/v1"
   defaultParams: { limit: 20 },
-  cache: "no-store",      // default
+  cache: "no-store",      // optional; no default (never on React Native: whatwg-fetch appends _=)
   headers: {              // optional — sent with every request from this instance
     "x-arc-scope": "platform",  // e.g. for superadmin elevation
   },

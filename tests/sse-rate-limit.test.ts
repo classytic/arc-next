@@ -17,7 +17,11 @@ class FakeES {
   onopen: ((e: Event) => void) | null = null;
   onerror: ((e: Event) => void) | null = null;
   onmessage: ((e: MessageEvent) => void) | null = null;
-  addEventListener() {}
+  addEventListener(type: string, fn: (e: MessageEvent) => void) {
+    if (type === "open") this.onopen = fn as (e: Event) => void;
+    else if (type === "message") this.onmessage = fn;
+    else if (type === "error") this.onerror = fn as (e: Event) => void;
+  }
   constructor(public url: string) {
     FakeES.instances.push(this);
   }
@@ -100,6 +104,30 @@ describe("SSE rate-limit handling", () => {
     await flush();
 
     expect(fetchMock).toHaveBeenCalled();
+    handle.close();
+  });
+
+  it("a successful open restores the probe budget, so a later drop is diagnosed too", async () => {
+    // Regression: `sseProbes` never reset, so after the first probe every later
+    // failure on a long-lived stream went straight to backoff — a 429 included.
+    const fetchMock = vi.fn().mockResolvedValue({ status: 503, headers: { get: () => null } });
+    (globalThis as Record<string, unknown>).fetch = fetchMock;
+
+    const handle = subscribeToEvents({ resource: "n", reconnectDelay: 1000 });
+    FakeES.instances[0].onerror?.(new Event("error"));
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // one HEAD probe
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    const reopened = FakeES.instances.at(-1)!;
+    expect(reopened).not.toBe(FakeES.instances[0]);
+    reopened.onopen?.(new Event("open"));
+
+    const before = fetchMock.mock.calls.length;
+    reopened.onerror?.(new Event("error"));
+    await flush();
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(before);
+
     handle.close();
   });
 });

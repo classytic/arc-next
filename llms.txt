@@ -17,6 +17,9 @@ bug in apps using this package. Before writing any data-fetching code, check:
 - Aggregations        → useAggregation(name, filter)
 - Realtime            → SSE/WS modules; uploads → useUpload/useFileUpload
 - Auth/org context    → configureClient/configureAuth once at app init; hooks read it — never thread tokens by hand
+- React Native        → configureClient({ eventSource: RNEventSource /* react-native-sse */, streamAuth: 'header' }) + import 'react-native-get-random-values'; no EventSource/randomUUID polyfills, never set cache 'no-store' (whatwg-fetch appends _= and arc 400s)
+- SSE token in URL    → configureClient({ streamAuth: 'header' }) in the browser: the built-in FetchEventSource (@classytic/arc-next/sse-fetch, lazy-loaded) sends Authorization/x-organization-id/Last-Event-ID as headers; never hand-roll a fetch SSE reader or append ?token= yourself. RN still injects react-native-sse
+- Request cache mode  → no SDK default; set ClientConfig.cache / BaseApiConfig.cache / per-call cache only when the deployment needs it
 
 Type flow: the generic T in createCrudApi<T> should be the kernel/module's exported
 WIRE type (plain JSON shape) — never a mongoose-flavored document type.

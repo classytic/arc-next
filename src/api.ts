@@ -255,8 +255,8 @@ export class BaseApi<
    * override and nothing else. The resolved value is {@link basePath}, which is
    * computed per read; baking it in would defeat the whole point (see below).
    */
-  readonly config: Required<Omit<BaseApiConfig, "client" | "basePath" | "versionField">> &
-    Pick<BaseApiConfig, "basePath" | "versionField">;
+  readonly config: Required<Omit<BaseApiConfig, "client" | "basePath" | "versionField" | "cache">> &
+    Pick<BaseApiConfig, "basePath" | "versionField" | "cache">;
   private readonly requestFn: RequestFn;
 
   /**
@@ -305,7 +305,8 @@ export class BaseApi<
         page: 1,
         ...(config.defaultParams || {}),
       },
-      cache: config.cache ?? "no-store",
+      // No SDK-chosen default — see withCacheDefault.
+      ...(config.cache !== undefined ? { cache: config.cache } : {}),
       headers: {
         ...(config.headers || {}),
       },
@@ -338,21 +339,29 @@ export class BaseApi<
    * ONLY when the caller expressed no caching intent of their own.
    *
    * A per-call `revalidate`/`next` (time-based ISR) or an explicit `cache`
-   * takes precedence. The default is `no-store`; forcing it alongside a
-   * `revalidate` makes Next.js throw ("cache: 'no-store' and revalidate are
-   * contradictory") and otherwise silently pins the route to dynamic
-   * rendering — so a consumer can never opt a single read into ISR. Gating the
-   * default here lets `getBySlug({ slug, options: { revalidate: 60 } })` become
-   * statically cacheable without every other call losing its no-store default.
+   * takes precedence. Forcing a `cache` alongside a `revalidate` makes Next.js
+   * throw ("cache: 'no-store' and revalidate are contradictory") and otherwise
+   * silently pins the route to dynamic rendering — so a consumer could never
+   * opt a single read into ISR.
    *
-   * Framework-agnostic: `cache` / `revalidate` / `next` are inert pass-throughs
-   * on runtimes (React Native, plain browser fetch) that don't implement the
-   * Next.js fetch extensions, so this never assumes a Next host.
+   * ## No SDK default
+   *
+   * `cache` is sent only when someone asked for it: the call, this instance's
+   * `BaseApiConfig.cache`, or the deployment's `ClientConfig.cache` (applied
+   * by the executor with the same precedence). The SDK used to default to
+   * `no-store`, which is not inert: React Native's whatwg-fetch turns a
+   * `no-store`/`no-cache` GET into `?_=<timestamp>`, and arc's strict query
+   * validation rejects that param, so every list call failed with 400. Next.js
+   * does not need it either — since Next 15 a `fetch` is uncached unless it
+   * opts in, and a Server Component that reads cookies/headers is dynamic
+   * anyway. A deployment that wants `no-store` everywhere states it once with
+   * `configureClient({ cache: 'no-store' })`.
    */
   private withCacheDefault(
     options: Omit<RequestOptions, "token" | "organizationId"> = {},
   ): Omit<RequestOptions, "token" | "organizationId"> {
     if (
+      this.config.cache === undefined ||
       options.cache !== undefined ||
       options.revalidate !== undefined ||
       options.next !== undefined

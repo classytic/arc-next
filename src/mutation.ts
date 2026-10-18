@@ -10,7 +10,7 @@ import {
 } from "@tanstack/react-query";
 import { useRef, useTransition } from "react";
 import type { ToastHandler } from "./client.js";
-import { getQuotaDetails, isArcApiError, isAutoIdempotency } from "./client.js";
+import { _uuid, getQuotaDetails, isArcApiError, isAutoIdempotency } from "./client.js";
 
 // ============================================================================
 // Types
@@ -218,7 +218,7 @@ export function useMutationWithTransition<TData, TVariables>(
 
     onMutate: () => {
       // Generate one key per mutate() call — retries reuse this same key
-      idempotencyKeyRef.current = isAutoIdempotency() ? globalThis.crypto.randomUUID() : null;
+      idempotencyKeyRef.current = isAutoIdempotency() ? _uuid() : null;
     },
 
     onSuccess: (data, variables) => {

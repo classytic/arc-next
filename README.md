@@ -41,7 +41,7 @@ configureNavigation(useRouter);
 
 Without `configureToast`, mutation feedback is a silent no-op (0.12+) — the SDK never writes to your console; errors still reach `onError` / the rejected promise.
 
-> **Targets:** React 19 browser apps + Next.js App Router. React Native is NOT officially supported — the fetch client may work, but SSE needs an `EventSource` polyfill, uploads depend on RN's XHR/FormData behavior, and field encryption needs Web Crypto. File an issue if you need an RN adapter.
+> **Targets:** React 19 browser apps + Next.js App Router, and React Native for the core surface — see [React Native](#react-native).
 
 `getToken` **must be synchronous** — cache async tokens out-of-band. Promise returns are dropped + warned in dev.
 
@@ -262,6 +262,46 @@ useEventStream({
 
 // Build authenticated SSE URLs for ad-hoc EventSource consumers:
 const url = buildSseUrl("/jobs/stream", { jobId });
+```
+
+### Keeping the token out of the stream URL (`streamAuth: 'header'`)
+
+The native `EventSource` cannot send headers, so by default a bearer token rides in the URL
+(`?token=`), where access logs and proxies keep it. Set `streamAuth: 'header'` and the stream
+authenticates like every other request (`Authorization` / custom `headerName`, `x-organization-id`)
+and the URL carries neither:
+
+```ts
+configureClient({ baseUrl: API_URL, streamAuth: "header" });
+```
+
+With no `eventSource` injected, the SDK uses its built-in `FetchEventSource`
+(`@classytic/arc-next/sse-fetch`): an `EventSource` over streaming `fetch` with full WHATWG
+parsing (`event` / multi-line `data` / `id` / `retry` / comments / CRLF), `addEventListener` +
+`onopen` / `onmessage` / `onerror`, `readyState`, and `close()` aborting the request. It is
+loaded with a dynamic import on first use, so apps on the native `EventSource` never ship it.
+
+- **Reconnect** stays in `subscribeToEvents` (backoff, auth recovery, 429). `FetchEventSource`
+  never reconnects by itself; on failure it goes `CLOSED` and fires `error`. The next connection
+  sends `Last-Event-ID` (the last id the stream delivered), so a server that replays can resume.
+- **The failure carries the HTTP status.** Its `error` event has `status` (`0` = no response) and
+  the response `headers`, so a 401 reaches `onAuthError` with the real status and a 429 waits out
+  `Retry-After` without the extra probe request the native `EventSource` needs.
+- **Server**: accept `Authorization` on the stream route, and with CORS allow the `Authorization`,
+  `x-organization-id` and `Last-Event-ID` request headers (the request is preflighted).
+- **React Native**: its `fetch` does not stream response bodies, so keep injecting
+  `react-native-sse` there (see [React Native](#react-native)); without it, `streamAuth: 'header'`
+  throws rather than fall back to `?token=`.
+
+Use it directly anywhere you need an authenticated stream:
+
+```ts
+import { arcAuthHeaders } from "@classytic/arc-next/client";
+import { FetchEventSource } from "@classytic/arc-next/sse-fetch";
+
+const es = new FetchEventSource(url, { headers: arcAuthHeaders(), lastEventId });
+es.addEventListener("job.progress", (e) => render(JSON.parse(e.data!)));
+es.onerror = (e) => console.warn("stream failed", e.status); // then reconnect yourself
 ```
 
 ## WebSocket — Real-Time + Bidirectional
@@ -771,6 +811,28 @@ const { mutateAsync: publish, isPending } = useMutationWithTransition({
 | `bearer` (default) | JWT / opaque token | `getToken()` returns the token |
 | `cookie` | Better Auth, session cookies | No token needed; `credentials: 'include'` automatic |
 | `header` | API keys (`x-api-key`, etc.) | Set `headerName` on `configureAuth` or `createClient` |
+
+## React Native
+
+Supported: `/client`, `/api`, `/query`, `/query-options`, `/hooks`, `/mutation`, `/sse`, `/auth-token`. `tests/runtime/react-native.test.tsx` runs them under React Native's globals (no `localStorage`, `BroadcastChannel`, `EventSource` or `crypto.randomUUID`; whatwg-fetch's `_=` cache-buster) as part of `npm test`.
+
+```ts
+import "react-native-get-random-values"; // crypto.getRandomValues, for Idempotency-Key
+import RNEventSource from "react-native-sse";
+import { configureAuth, configureClient } from "@classytic/arc-next/client";
+
+configureClient({
+  baseUrl: API_URL,
+  eventSource: RNEventSource, // RN has no EventSource; pass one, no global polyfill
+  streamAuth: "header",       // token + org travel as headers, never in the stream URL
+});
+configureAuth({ getToken: () => tokens.get(), getOrgId: () => orgId });
+```
+
+- **SSE.** `eventSource` takes any `new (url, { withCredentials, headers? })` that delivers `open` / `message` / `error` and named frames through `addEventListener` and has `close()`. With `streamAuth: 'header'` the `Authorization` (or custom `headerName`) and `x-organization-id` headers go in `headers` (plus `Last-Event-ID` on a reconnect), the failure probe sends the same headers, and the URL carries neither. On React Native, `streamAuth: 'header'` without an injected `eventSource` throws instead of falling back to `?token=` (browsers get the built-in `FetchEventSource`, but RN's `fetch` cannot stream). Without `BroadcastChannel`, `useEventStream` holds its own connection (cross-tab sharing is a browser concern).
+- **Ids.** Idempotency keys come from `crypto.randomUUID` when present, otherwise `crypto.getRandomValues`. No `randomUUID` polyfill is needed. With neither, minting throws rather than fall back to `Math.random`.
+- **Caching.** The SDK sends `cache` only when you set it (per call, `BaseApiConfig.cache` or `ClientConfig.cache`). Do not set `no-store` / `no-cache` on React Native: whatwg-fetch turns those GETs into `?_=<timestamp>`, which arc's strict query validation rejects with 400.
+- **Not covered:** uploads (XHR progress events) and `/field-encryption` (needs Web Crypto `subtle`).
 
 ## License
 

@@ -12,9 +12,13 @@
  * tests pin the contract for every read surface.
  */
 
-import { hashKey } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { hashKey, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook, waitFor } from "@testing-library/react";
+import React from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createQueryKeys, withOrgParams } from "../src/cache.js";
+import { configureAuth } from "../src/client.js";
+import { createCrudHooks } from "../src/hooks.js";
 import { createEntityQueries, type EntityReadApi } from "../src/query-options.js";
 
 const KEYS = createQueryKeys("products");
@@ -246,4 +250,66 @@ describe("queryOptions factory ↔ hook key parity", () => {
       ),
     ).toBe("cur_9");
   });
+
+  it("infiniteList sends the page param exactly like useInfiniteList (cursor → after, page → page)", async () => {
+    // Regression: a keyset cursor went out as `page=<cursor>`, which arc's
+    // query validation rejects.
+    const getAll = vi.fn(async () => ({ data: [] }));
+    const F = createEntityQueries({ ...stubApi, getAll }, "products");
+    const opts = F.infiniteList({ limit: 5 });
+    const run = (pageParam: unknown) =>
+      (opts.queryFn as (ctx: unknown) => Promise<unknown>)({
+        pageParam,
+        signal: new AbortController().signal,
+      });
+
+    await run("cur_9");
+    expect(getAll).toHaveBeenLastCalledWith(
+      expect.objectContaining({ params: { limit: 5, after: "cur_9" } }),
+    );
+    await run(2);
+    expect(getAll).toHaveBeenLastCalledWith(
+      expect.objectContaining({ params: { limit: 5, page: 2 } }),
+    );
+    // A resumed keyset list starts from the caller's cursor, as the hook does.
+    expect(F.infiniteList({ after: "cur_1" }).initialPageParam).toBe("cur_1");
+  });
+});
+
+// ============================================================================
+// Real hooks — keys read from the cache a rendered hook populated, not from a
+// hand-written mirror, so a hook that drifts from the factory fails here.
+// ============================================================================
+
+describe("rendered hook ↔ factory key parity", () => {
+  afterEach(() => configureAuth({ getToken: () => null, getOrgId: () => null }));
+
+  // The last case is the one that split the cache: an explicit
+  // `organizationId: null` was hashed into the suspense key but not the factory's.
+  for (const { label, org, rest } of [
+    ...CASES,
+    { label: "explicit organizationId: null", org: null, rest: { organizationId: null, limit: 5 } },
+  ]) {
+    it(`useSuspenseList — ${label}`, async () => {
+      configureAuth({ getToken: () => "t", getOrgId: () => org });
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const hooks = createCrudHooks<{ _id: string }>({
+        api: { ...stubApi, getAll: async () => ({ method: "offset", data: [] }) } as never,
+        entityKey: "products",
+        singular: "Product",
+      });
+      const wrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          QueryClientProvider,
+          { client: qc },
+          React.createElement(React.Suspense, { fallback: null }, children),
+        );
+      renderHook(() => hooks.useSuspenseList(rest), { wrapper });
+      await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(1));
+      expect(qc.getQueryCache().getAll()[0]!.queryHash).toBe(
+        hashKey(Q.list(rest, { organizationId: org }).queryKey),
+      );
+      qc.clear();
+    });
+  }
 });

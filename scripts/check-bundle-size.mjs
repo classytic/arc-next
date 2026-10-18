@@ -25,18 +25,19 @@ const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
  * and rounded up ~20% for headroom.
  */
 const BUDGETS = {
-  ".": 51_000, // hooks (composition layer pulls query+mutation+cache+client+api); raised 0.17: change events + shared auth gate
+  ".": 53_500, // hooks (composition layer pulls query+mutation+cache+client+api); raised 0.17: change events + shared auth gate; raised 0.18: React Native runtime (injectable EventSource, header stream auth, uuid fallback); raised 0.18: sse.ts status-classified failures + Last-Event-ID + lazy FetchEventSource loader (sse-fetch itself is a dynamic import, not in this closure)
   "./client": 18_000,
-  "./api": 22_000,
+  "./api": 23_000, // raised 0.18: uuid fallback + stream config in the client.ts closure
   "./cache": 6_000,
   "./query": 30_000,
   "./mutation": 20_000,
-  "./hooks": 51_000, // raised 0.17: change events (./events) + shared auth gate (./auth-gate)
-  "./query-client": 18_000, // raised 0.12: timeout/jitter/Retry-After landed in the client.ts closure
+  "./hooks": 53_500, // raised 0.17: change events (./events) + shared auth gate (./auth-gate); raised 0.18: React Native runtime + sse.ts header-transport wiring (see ".")
+  "./query-client": 19_000, // raised 0.12: timeout/jitter/Retry-After landed in the client.ts closure; raised 0.18: uuid fallback + stream config
   "./query-options": 30_000,
   "./prefetch": 32_000,
   "./server": 22_000, // new subpath: ./client's closure + header forwarding
   "./sse": 28_000, // raised 0.16.0: shareAcrossTabs (BroadcastChannel leader election) landed in the sse.ts closure
+  "./sse-fetch": 3_500, // new subpath 0.18: header-capable fetch EventSource (type-only import of ./client; ./sse loads it lazily, so ./sse's budget is unaffected)
   "./tab-leader": 2_500, // new subpath 0.16.0
   "./events": 2_000, // new subpath 0.17: write events for server caches
   "./auth-gate": 19_000, // new subpath 0.17: ./client's closure + the enable rule

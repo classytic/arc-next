@@ -48,7 +48,11 @@ class OpenEventSource {
     OpenEventSource.instances.push(this);
   }
   addEventListener(type: string, fn: (e: MessageEvent) => void) {
-    this.listeners.set(type, fn);
+    // Built-in events go to the on* slots the tests fire directly.
+    if (type === "open") this.onopen = fn as (e: Event) => void;
+    else if (type === "message") this.onmessage = fn;
+    else if (type === "error") this.onerror = fn as (e: Event) => void;
+    else this.listeners.set(type, fn);
   }
   emit(type: string, payload: unknown) {
     const ev = new MessageEvent(type, { data: JSON.stringify(payload) });

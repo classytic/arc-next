@@ -62,8 +62,14 @@ export function useTabLeader(options: { key: string; enabled?: boolean }): boole
   const [isLeader, setIsLeader] = useState(false);
 
   useEffect(() => {
-    if (!enabled || typeof window === "undefined" || typeof localStorage === "undefined") {
+    if (!enabled || typeof window === "undefined") {
       setIsLeader(false);
+      return;
+    }
+    // No storage to coordinate through (React Native, locked-down webviews):
+    // there are no sibling tabs to defer to, so this instance leads.
+    if (typeof localStorage === "undefined") {
+      setIsLeader(true);
       return;
     }
 

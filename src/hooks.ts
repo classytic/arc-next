@@ -344,7 +344,7 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
   /** Count-only query via arc's `?_count=true` dispatch verb — zero documents fetched. */
   useCount: (
     params?: Record<string, unknown>,
-    options?: { enabled?: boolean; staleTime?: number; gcTime?: number },
+    options?: { enabled?: boolean; public?: boolean; staleTime?: number; gcTime?: number },
   ) => UseQueryResult<number, Error>;
   useDetailBySlug: (slug: string | null, options?: DetailQueryOptions<T>) => DetailQueryResult<T>;
   useTree: (params?: Record<string, unknown>, options?: ListQueryOptions<T>) => ListQueryResult<T>;
@@ -862,7 +862,12 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     const { request: requestOpts, ...queryOpts } = options;
 
     return useSuspenseListQuery<T>({
-      queryKey: KEYS.scopedList(scope, { organizationId, ...restParams }),
+      // Same org-normalized key as useList (see withOrgParams), so a suspense
+      // read and a plain read of the same list share one cache entry.
+      queryKey: KEYS.scopedList(
+        scope,
+        withOrgParams(organizationId as string | null | undefined, restParams),
+      ),
       queryFn: ({ signal }) =>
         api.getAll({
           token,
@@ -1468,7 +1473,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
 
   function useCount(
     params?: Record<string, unknown>,
-    options?: { enabled?: boolean; staleTime?: number; gcTime?: number },
+    options?: { enabled?: boolean; public?: boolean; staleTime?: number; gcTime?: number },
   ): UseQueryResult<number, Error> {
     const auth = resolveAuth();
     const mergedParams = params ?? {};
@@ -1478,7 +1483,9 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
     return useQuery<number, Error>({
       queryKey: KEYS.custom("count", withOrgParams(organizationId, restParams)),
       queryFn: () => api.count({ token: auth.token, organizationId, params: restParams }),
-      enabled: options?.enabled ?? true,
+      // Same auth gate as every other read hook — a token-less bearer client
+      // must not fire a count that can only 401.
+      enabled: computeEnabled(auth.token, options ?? {}),
       staleTime: options?.staleTime ?? config.staleTime,
       gcTime: options?.gcTime ?? config.gcTime,
     });

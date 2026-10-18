@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.18.0 — 2026-10-18
+
+### Added — React Native as a supported runtime
+
+`ClientConfig.eventSource` injects the SSE transport (e.g. `react-native-sse`); unset falls back to
+`globalThis.EventSource`. `ClientConfig.streamAuth: 'header'` sends `Authorization` /
+`x-organization-id` as EventSource headers (and on the failure probe) instead of `?token=` in the
+URL; it refuses to connect without an injected implementation rather than leak the token into the
+URL. New types `EventSourceConstructor`, `EventSourceLike`, `EventSourceInitLike`,
+`EventSourceEventLike`. SSE now consumes `open` / `message` / `error` through `addEventListener`
+(the contract both implementations share), not `on*` properties. `tests/runtime/react-native.test.tsx`
+runs the core surface under React Native globals as part of `npm test`.
+
+### Added — `./sse-fetch`: header-authenticated SSE in the browser
+
+`FetchEventSource` is a dependency-free `EventSource` over streaming `fetch` that satisfies
+`EventSourceConstructor`: request headers, `credentials` from `withCredentials`, `Accept:
+text/event-stream`, WHATWG-conformant parsing (`event`, multi-line `data`, `id` with NULL
+rejection, digits-only `retry`, comments, CRLF / LF / CR across chunk boundaries, BOM),
+`addEventListener` / `removeEventListener` + `onopen` / `onmessage` / `onerror`, `readyState`,
+`lastEventId` (sent as `Last-Event-ID`), `reconnectionTime`, and `close()` aborting the fetch. It
+never reconnects itself; its `error` event carries the response `status` (`0` = none) and `headers`.
+Also exported: `createSseParser` (the incremental parser) and the types `FetchEventSourceInit`,
+`FetchEventSourceEvent`, `SseParsedEvent`, `SseParser`, `SseParserHandlers`.
+
+`streamAuth: 'header'` with no injected `eventSource` now uses `FetchEventSource` wherever `fetch`
+can stream, instead of throwing, so a browser keeps the bearer token out of the stream URL (access
+logs, proxies). It is a dynamic import, so `./sse` consumers on the native `EventSource` do not pay
+for it (`./sse` budget unchanged). React Native (`navigator.product === 'ReactNative'`), whose
+`fetch` cannot stream, still requires an injected `eventSource` and still throws without one.
+
+`subscribeToEvents` keeps owning reconnect and backoff, and now: sends `Last-Event-ID` (header
+mode) with the last id the subscription saw; classifies a failure from `EventSourceEventLike.status`
+when the transport reports it (401 / 403-with-`retryOn403` → `onAuthError` with the real status,
+429 → `Retry-After`, anything else → backoff) instead of sending the HEAD / Range-GET probe, which
+remains the path for the native `EventSource`. `EventSourceEventLike` gains optional `status` and
+`headers`. Pinned by `tests/sse-fetch.test.ts`; the React Native simulation now sets
+`navigator.product`.
+
+### ⚠ Changed — no SDK `cache` default
+
+`BaseApi` no longer defaults `cache` to `'no-store'`; `cache` is sent only when the call, the
+instance (`BaseApiConfig.cache`) or the deployment (`ClientConfig.cache`) sets it. React Native's
+whatwg-fetch turned the default into `?_=<timestamp>`, which arc's strict query validation rejects
+(every list call 400'd). Next.js 15+ leaves `fetch` uncached unless it opts in, so it did not need
+the default. To keep the old behaviour: `configureClient({ cache: 'no-store' })`.
+`BaseApi.config.cache` is now optional.
+
+### Fixed
+
+- `useEventStream` never connected without `localStorage` / `BroadcastChannel` (React Native):
+  `useTabLeader` now leads when there is no storage to coordinate through, and the stream only
+  shares across tabs when a `BroadcastChannel` relay exists.
+- `useCount` ignored the auth gate and fired token-less; it now uses the same enable rule as every
+  read hook (and accepts `public`).
+- `createEntityQueries().infiniteList` sent a keyset cursor as `page`; it now sends `after`, and
+  starts from a caller's `after` like `useInfiniteList`.
+- `useSuspenseList` built its key without `withOrgParams`, splitting the cache from `useList` and
+  the factories when `organizationId: null` was passed.
+- SSE failure probes were budgeted per subscription and never reset, so a long-lived stream
+  stopped diagnosing drops (429 included) after the first; a successful open now resets it.
+- Idempotency keys called `crypto.randomUUID()` unguarded; `_uuid()` falls back to
+  `crypto.getRandomValues` and throws a clear error when there is no random source.
+
+### Changed — build tooling
+
+`tsdown` 0.23 (types are emitted as inline `export interface X`, not a trailing `export { }` list), `typescript` 7, `vitest` 5. `scripts/check-api-surface.mjs` reads both forms; the snapshot's names are unchanged and only the `typesHash` values moved.
+
 ## 0.17.0
 
 ### Added — keyset `PaginationData.prev` / `end`

@@ -54,6 +54,19 @@ describe("useTabLeader", () => {
     expect(next.result.current).toBe(true);
   });
 
+  it("leads when there is no localStorage to coordinate through (React Native)", () => {
+    // Regression: it returned false, so useEventStream sat in the follower path
+    // and never connected on React Native.
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    delete (globalThis as Record<string, unknown>).localStorage;
+    try {
+      const { result } = renderHook(() => useTabLeader({ key: "stream" }));
+      expect(result.current).toBe(true);
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+    }
+  });
+
   it("does not lead when disabled", () => {
     const { result } = renderHook(() => useTabLeader({ key: "stream", enabled: false }));
     expect(result.current).toBe(false);

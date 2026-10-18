@@ -62,6 +62,11 @@ class MockEventSource {
     this.closed = true;
   }
   addEventListener(type: string, listener: (e: MessageEvent) => void) {
+    // Built-in events go to the on* slots the simulate helpers fire.
+    if (type === "open") this.onopen = listener as (e: Event) => void;
+    else if (type === "message") this.onmessage = listener;
+    else if (type === "error") this.onerror = listener as (e: Event) => void;
+    if (type === "open" || type === "message" || type === "error") return;
     const list = this.namedListeners.get(type) ?? [];
     list.push(listener);
     this.namedListeners.set(type, list);

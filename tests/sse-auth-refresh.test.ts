@@ -45,8 +45,11 @@ class MockES {
     this.closed = true;
     this.readyState = 2;
   }
-  addEventListener(): void {
-    /* not exercised here */
+  addEventListener(type: string, fn: (e: MessageEvent) => void): void {
+    // Built-in events arrive via addEventListener; named ones are not exercised here.
+    if (type === "open") this.onopen = fn as (e: Event) => void;
+    else if (type === "message") this.onmessage = fn;
+    else if (type === "error") this.onerror = fn as (e: Event) => void;
   }
   removeEventListener(): void {
     /* not exercised here */

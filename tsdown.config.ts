@@ -16,6 +16,7 @@ export default defineConfig({
     'src/auth-gate.ts',
     'src/query-options.ts',
     'src/sse.ts',
+    'src/sse-fetch.ts',
     'src/auth-token.ts',
     'src/tab-leader.ts',
     'src/ws.ts',

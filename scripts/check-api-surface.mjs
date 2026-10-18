@@ -42,7 +42,7 @@ function declarationExports(dtsPath) {
     return [];
   }
   const names = new Set();
-  for (const block of text.matchAll(/export\s*\{([\s\S]*?)\}/g)) {
+  for (const block of text.matchAll(/export\s+(?:type\s*)?\{([\s\S]*?)\}/g)) {
     for (const raw of block[1].split(",")) {
       const entry = raw.trim();
       if (!entry) continue;
@@ -51,8 +51,10 @@ function declarationExports(dtsPath) {
       if (/^\w+$/.test(name) && name !== "default") names.add(name);
     }
   }
+  // tsdown >=0.23 writes a type as `export interface X` / `export type X` (no `declare`); earlier
+  // output listed it in the trailing `export { }` block. Functions and consts keep `declare`.
   for (const m of text.matchAll(
-    /export\s+declare\s+(?:function|class|const|let|interface|enum|type)\s+(\w+)/g,
+    /^export\s+(?:declare\s+)?(?:abstract\s+)?(?:function|class|const|let|interface|enum|type)\s+(\w+)/gm,
   )) {
     names.add(m[1]);
   }
