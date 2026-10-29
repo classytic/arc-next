@@ -63,6 +63,10 @@ src/
     slug.ts         withSlugLookup  → getBySlug
     tree.ts         withTree        → getTree, getChildren
     search.ts       withSearchPreset → searchEngine, searchSimilar, embed
+  runtime.ts      definePublicEnv: runtime public settings (server env -> nonce'd script -> browser), server-safe
+  csp.ts          contentSecurityPolicy, Trusted Types default policy, createProxy (host passes NextResponse; no next import), server-safe
+  auth-proxy.ts   createAuthProxy: same-origin reverse-proxy route handlers, server-safe
+  sdk/            host SDK core, one subpath per file (messages, actions, hooks, init, resource, download, transport, errors, error-capture, route, localized); hooks.ts + init.ts are "use client"
 tests/            Co-located vitest (1:1 with src files; tests/presets/ mirrors src/presets/)
 ```
 

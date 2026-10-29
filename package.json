@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -134,6 +134,62 @@
       "types": "./dist/presets/search.d.ts",
       "default": "./dist/presets/search.js"
     },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    },
+    "./csp": {
+      "types": "./dist/csp.d.ts",
+      "default": "./dist/csp.js"
+    },
+    "./auth-proxy": {
+      "types": "./dist/auth-proxy.d.ts",
+      "default": "./dist/auth-proxy.js"
+    },
+    "./sdk/messages": {
+      "types": "./dist/sdk/messages.d.ts",
+      "default": "./dist/sdk/messages.js"
+    },
+    "./sdk/error-capture": {
+      "types": "./dist/sdk/error-capture.d.ts",
+      "default": "./dist/sdk/error-capture.js"
+    },
+    "./sdk/errors": {
+      "types": "./dist/sdk/errors.d.ts",
+      "default": "./dist/sdk/errors.js"
+    },
+    "./sdk/transport": {
+      "types": "./dist/sdk/transport.d.ts",
+      "default": "./dist/sdk/transport.js"
+    },
+    "./sdk/download": {
+      "types": "./dist/sdk/download.d.ts",
+      "default": "./dist/sdk/download.js"
+    },
+    "./sdk/actions": {
+      "types": "./dist/sdk/actions.d.ts",
+      "default": "./dist/sdk/actions.js"
+    },
+    "./sdk/route": {
+      "types": "./dist/sdk/route.d.ts",
+      "default": "./dist/sdk/route.js"
+    },
+    "./sdk/localized": {
+      "types": "./dist/sdk/localized.d.ts",
+      "default": "./dist/sdk/localized.js"
+    },
+    "./sdk/resource": {
+      "types": "./dist/sdk/resource.d.ts",
+      "default": "./dist/sdk/resource.js"
+    },
+    "./sdk/hooks": {
+      "types": "./dist/sdk/hooks.d.ts",
+      "default": "./dist/sdk/hooks.js"
+    },
+    "./sdk/init": {
+      "types": "./dist/sdk/init.d.ts",
+      "default": "./dist/sdk/init.js"
+    },
     "./package.json": "./package.json",
     "./query-options": {
       "types": "./dist/query-options.d.ts",
@@ -160,7 +216,7 @@
     "push": "classytic-push",
     "release:tag": "node -e \"require('child_process').execSync('npm run push -- v'+require('./package.json').version,{stdio:'inherit'})\"",
     "release": "npm run push -- main && npm run release:tag && npm publish",
-    "prepublishOnly": "npm run typecheck && npm run typecheck:tests && npm run lint && npm run check:dead-code && npm test && npm run build && npm run check:package && npm run check:api-surface && npm run check:server-import && npm run check:bundle && npm run check:fixtures",
+    "prepublishOnly": "npm run typecheck && npm run typecheck:tests && npm run lint && npm run check:dead-code && npm test && npm run build && npm run check:package && npm run check:api-surface && npm run check:server-import && npm run check:bundle && npm run check:fixtures && npm run check:skills",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test.json",
     "check:package": "publint --strict && attw --pack . --profile esm-only",
     "check:api-surface": "node scripts/check-api-surface.mjs",
@@ -168,14 +224,15 @@
     "check:server-import": "node scripts/check-server-import.mjs",
     "check:bundle": "node scripts/check-bundle-size.mjs",
     "check:fixtures": "tsc -p fixtures/tsconfig.json",
+    "check:skills": "node scripts/check-skills.mjs",
     "lint": "biome check src/ tests/ scripts/ fixtures/",
     "check:dead-code": "knip"
   },
   "peerDependencies": {
-    "@classytic/repo-core": ">=0.31.0",
-    "@tanstack/react-query": ">=5.62.0",
-    "jose": ">=5.0.0",
-    "react": ">=19.0.0"
+    "@classytic/repo-core": ">=0.36.0",
+    "@tanstack/react-query": ">=5.105.0",
+    "jose": ">=6.2.14",
+    "react": ">=19.3.1"
   },
   "peerDependenciesMeta": {
     "react": {
@@ -193,20 +250,20 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.4",
     "@classytic/dev-tools": "^0.2.1",
-    "@classytic/repo-core": "^0.31.1",
-    "@tanstack/react-query": "^5.104.4",
+    "@classytic/repo-core": "^0.36.0",
+    "@tanstack/react-query": "^5.105.0",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "jose": "^6.2.12",
+    "jose": "^6.2.14",
     "jsdom": "^30.1.3",
-    "knip": "^6.41.0",
+    "knip": "^6.44.0",
     "publint": "^0.3.25",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "tsdown": "^0.23.1",
+    "tsdown": "^0.23.4",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }

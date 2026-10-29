@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.19.0 — 2026-10-30
+
+### Added — portal bootstrap and SDK core subpaths
+
+Generic code extracted from two production Next.js portals. Additive: no existing export changed. The
+host supplies every origin, name and schema.
+
+- `./runtime`: `definePublicEnv({ globalName, read })` (server reads `process.env`, the root layout writes a nonce'd script, the browser reads it back), `publicEnvScript` escaping `<` and U+2028/2029, `trimSlash`, `csv`, `serializeForScript`.
+- `./csp`: `contentSecurityPolicy` (nonce, `strict-dynamic`, Trusted Types in production, host-supplied api / storage / map / embed origins, `extra` per directive), `TRUSTED_TYPES_DEFAULT_POLICY`, `originOf` / `originsOf` / `hostOrigins`, `createNonce`, and `createProxy({ NextResponse, policy })` for Next's `proxy.ts` (no `next` import: the host passes `NextResponse`).
+- `./auth-proxy`: `createAuthProxy({ upstream, internalUpstream })` route-handler factory (hop-by-hop filtering, every `set-cookie` preserved, `redirect: "manual"`, configurable 502 body, per-request upstream).
+- `./sdk/transport`, `./sdk/init`, `./sdk/messages`, `./sdk/error-capture`, `./sdk/errors`, `./sdk/actions`, `./sdk/hooks`, `./sdk/resource`, `./sdk/download`, `./sdk/route`, `./sdk/localized`: SDK core. `defineRouteAction` / `useRouteAction` / `useQuietRouteAction`, `useRouteQuery` / `useRouteList` (`enabled`, `placeholderData`), message-KEY toasts with a host `messages` resolver and `listMessageKeys` (key prefix configurable), server `code` / `details` in the message context, a streamed `createDownloader` reporting a truncation header, trailing-slash normalization, `localizedName`, `createIsolatedClient`, `initSDK`, `defineSdkResource`. Composes `./client`, `./api`, `./mutation`, `./hooks` and `./auth-gate`; duplicates none of them.
+- `api-surface.json` regenerated (additions only); bundle budgets added for the new subpaths. Tests: `tests/runtime.test.ts`, `tests/csp.test.ts`, `tests/auth-proxy.test.ts`, `tests/sdk/`.
+- Agent skill rewritten for the current API only (`skills/arc-next/SKILL.md` plus `references/*.md`, `llms.txt`), covering the new subpaths. `npm run check:skills` (`scripts/check-skills.mjs`, also run by `tests/skills.test.ts` and `prepublishOnly`) fails on size budgets, unknown subpaths / imports / identifiers, banned wording and drift between `llms.txt` and the SKILL.md table. Golden paths are type-checked in `fixtures/next-consumer/golden-*.ts*`.
+
+### Changed — peer floors to the latest published
+
+`@classytic/repo-core >=0.36.0`, `@tanstack/react-query >=5.105.0`, `jose >=6.2.14`, `react >=19.3.1` (all optional peers). Dev toolchain: tsdown `^0.23.4`, Biome 2.6 (its new `noComponentHookFactories` rule is off: this package is a hook factory by design), knip 6.44. The declaration snapshot hashes were regenerated for tsdown 0.23.4's declaration formatting; no exported name was added, removed or renamed by it.
+
 ## 0.18.0 — 2026-10-18
 
 ### Added — React Native as a supported runtime

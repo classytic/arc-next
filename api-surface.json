@@ -20,7 +20,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "7068fbc1776f7106"
+    "typesHash": "12e3f54c99d9aee2"
   },
   "./client": {
     "runtime": [
@@ -141,7 +141,7 @@
       "isTierRequiredError",
       "isValidationError"
     ],
-    "typesHash": "52eea792a4335834"
+    "typesHash": "8003521d9dd97fb0"
   },
   "./encryption": {
     "runtime": [
@@ -151,7 +151,7 @@
       "JoseEncryptionOptions",
       "createJoseEncryption"
     ],
-    "typesHash": "45696d7e9723ceb9"
+    "typesHash": "95f951654ee0d275"
   },
   "./field-encryption": {
     "runtime": [
@@ -169,7 +169,7 @@
       "isFieldEnvelope",
       "parseFieldEnvelope"
     ],
-    "typesHash": "6ecbff30ddd5fb3d"
+    "typesHash": "3b34e8f3d920c8c1"
   },
   "./api": {
     "runtime": [
@@ -206,7 +206,7 @@
       "isKeysetPagination",
       "isOffsetPagination"
     ],
-    "typesHash": "5317fd3eef23fcce"
+    "typesHash": "04223feb480d452b"
   },
   "./cache": {
     "runtime": [
@@ -244,7 +244,7 @@
       "updateListCache",
       "withOrgParams"
     ],
-    "typesHash": "7428c49bd33b35c4"
+    "typesHash": "fff1ad9fed2ffa36"
   },
   "./query": {
     "runtime": [
@@ -301,7 +301,7 @@
       "useSuspenseDetailQuery",
       "useSuspenseListQuery"
     ],
-    "typesHash": "b19fca07abdd2009"
+    "typesHash": "d1dc3b7b003f3c60"
   },
   "./mutation": {
     "runtime": [
@@ -324,7 +324,7 @@
       "useMutationWithTransition",
       "useOptimisticMutation"
     ],
-    "typesHash": "68eca095aba2c109"
+    "typesHash": "fb97f4fe370de175"
   },
   "./hooks": {
     "runtime": [
@@ -347,7 +347,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "7068fbc1776f7106"
+    "typesHash": "12e3f54c99d9aee2"
   },
   "./query-client": {
     "runtime": [
@@ -357,7 +357,7 @@
       "QueryClientOverrides",
       "getQueryClient"
     ],
-    "typesHash": "703ade6f581a7580"
+    "typesHash": "4f551fdc6f7ce16b"
   },
   "./prefetch": {
     "runtime": [
@@ -375,7 +375,7 @@
       "createCrudPrefetcher",
       "dehydrate"
     ],
-    "typesHash": "5b1e8a96a1c1040c"
+    "typesHash": "c1b8a1b0b0eb8208"
   },
   "./server": {
     "runtime": [
@@ -390,7 +390,7 @@
       "createRequestClient",
       "forwardRequestHeaders"
     ],
-    "typesHash": "8c78515166e2b8a3"
+    "typesHash": "dfa7dadf296e33b3"
   },
   "./auth-gate": {
     "runtime": [
@@ -402,7 +402,7 @@
       "authGate",
       "queryAuthEnabled"
     ],
-    "typesHash": "539163c4e5a60443"
+    "typesHash": "ee71421494ef8985"
   },
   "./events": {
     "runtime": [
@@ -415,7 +415,7 @@
       "emitArcChange",
       "onArcChange"
     ],
-    "typesHash": "3e6f0b7c6630abd4"
+    "typesHash": "9040c771946e3211"
   },
   "./sse": {
     "runtime": [
@@ -435,7 +435,7 @@
       "subscribeToEvents",
       "useEventStream"
     ],
-    "typesHash": "ae49357db96e19f7"
+    "typesHash": "7695985c5288262e"
   },
   "./sse-fetch": {
     "runtime": [
@@ -451,7 +451,7 @@
       "SseParserHandlers",
       "createSseParser"
     ],
-    "typesHash": "0f9f2426ac885e34"
+    "typesHash": "9554a050e99cbe9e"
   },
   "./auth-token": {
     "runtime": [
@@ -464,7 +464,7 @@
       "bearerFetchOptions",
       "createTokenStore"
     ],
-    "typesHash": "2e1066f304a50bff"
+    "typesHash": "622732312c25e5d2"
   },
   "./tab-leader": {
     "runtime": [
@@ -473,7 +473,7 @@
     "types": [
       "useTabLeader"
     ],
-    "typesHash": "a23ffb85032c1632"
+    "typesHash": "13fde95b5cee457e"
   },
   "./ws": {
     "runtime": [
@@ -493,7 +493,7 @@
       "connectWs",
       "useWebSocket"
     ],
-    "typesHash": "9de25d3367ff3a58"
+    "typesHash": "8dcd9a771f9c995b"
   },
   "./upload": {
     "runtime": [
@@ -508,7 +508,7 @@
       "uploadWithProgress",
       "useUploadWithProgress"
     ],
-    "typesHash": "c4adb4bda492152f"
+    "typesHash": "30ebcf237f3daaf1"
   },
   "./presets/soft-delete": {
     "runtime": [
@@ -518,7 +518,7 @@
       "SoftDeleteMethods",
       "withSoftDelete"
     ],
-    "typesHash": "ec654af257ddcce2"
+    "typesHash": "d7279ce2ddb3a415"
   },
   "./presets/history": {
     "runtime": [
@@ -530,7 +530,7 @@
       "HistoryPage",
       "withHistory"
     ],
-    "typesHash": "9ced4483720b7fff"
+    "typesHash": "b4d194115eac25bb"
   },
   "./presets/bulk": {
     "runtime": [
@@ -540,7 +540,7 @@
       "BulkMethods",
       "withBulk"
     ],
-    "typesHash": "9f16bdf80624953a"
+    "typesHash": "4809d68e5dabda2e"
   },
   "./presets/slug": {
     "runtime": [
@@ -550,7 +550,7 @@
       "SlugLookupMethods",
       "withSlugLookup"
     ],
-    "typesHash": "5f1f2c1936d55445"
+    "typesHash": "d34040449f035b76"
   },
   "./presets/tree": {
     "runtime": [
@@ -560,7 +560,7 @@
       "TreeMethods",
       "withTree"
     ],
-    "typesHash": "435c28b1532a21a0"
+    "typesHash": "5b94d9710bd00f7b"
   },
   "./presets/search": {
     "runtime": [
@@ -570,7 +570,311 @@
       "SearchPresetMethods",
       "withSearchPreset"
     ],
-    "typesHash": "da81cf10653b984a"
+    "typesHash": "49fbf3c8b4aeb096"
+  },
+  "./runtime": {
+    "runtime": [
+      "csv",
+      "definePublicEnv",
+      "serializeForScript",
+      "trimSlash"
+    ],
+    "types": [
+      "DefinePublicEnvOptions",
+      "EnvSource",
+      "PublicEnvModule",
+      "csv",
+      "definePublicEnv",
+      "serializeForScript",
+      "trimSlash"
+    ],
+    "typesHash": "c300b8088e4ddddb"
+  },
+  "./csp": {
+    "runtime": [
+      "CSP_HEADER",
+      "NONCE_HEADER",
+      "TRUSTED_TYPES_DEFAULT_POLICY",
+      "TRUSTED_TYPES_POLICIES",
+      "contentSecurityPolicy",
+      "createNonce",
+      "createProxy",
+      "hostOrigins",
+      "originOf",
+      "originsOf"
+    ],
+    "types": [
+      "CSP_HEADER",
+      "CreateProxyOptions",
+      "CspInput",
+      "NONCE_HEADER",
+      "ProxyRequest",
+      "ProxyResponseFactory",
+      "TRUSTED_TYPES_DEFAULT_POLICY",
+      "TRUSTED_TYPES_POLICIES",
+      "contentSecurityPolicy",
+      "createNonce",
+      "createProxy",
+      "hostOrigins",
+      "originOf",
+      "originsOf"
+    ],
+    "typesHash": "8508cc2146002321"
+  },
+  "./auth-proxy": {
+    "runtime": [
+      "DECODED_RESPONSE_HEADERS",
+      "DEFAULT_UNAVAILABLE",
+      "HOP_BY_HOP_HEADERS",
+      "createAuthProxy",
+      "resolveUpstream"
+    ],
+    "types": [
+      "AuthProxyHandler",
+      "AuthProxyHandlers",
+      "AuthProxyOptions",
+      "DECODED_RESPONSE_HEADERS",
+      "DEFAULT_UNAVAILABLE",
+      "HOP_BY_HOP_HEADERS",
+      "Upstream",
+      "createAuthProxy",
+      "resolveUpstream"
+    ],
+    "typesHash": "9582c919e1f423fe"
+  },
+  "./sdk/messages": {
+    "runtime": [
+      "DEFAULT_KEY_PREFIX",
+      "actionMessageKey",
+      "configureMessages",
+      "crudMessageKey",
+      "crudSuccessText",
+      "listMessageKeys",
+      "localizeToastHandler",
+      "registerActionMessages",
+      "registerCrudMessages",
+      "resolveToastText"
+    ],
+    "types": [
+      "ActionFallback",
+      "ConfigureMessagesOptions",
+      "CrudMessageKeys",
+      "CrudOperation",
+      "DEFAULT_KEY_PREFIX",
+      "MessageContext",
+      "MessageErrorFields",
+      "MessageOutcome",
+      "MessageResolver",
+      "actionMessageKey",
+      "configureMessages",
+      "crudMessageKey",
+      "crudSuccessText",
+      "listMessageKeys",
+      "localizeToastHandler",
+      "registerActionMessages",
+      "registerCrudMessages",
+      "resolveToastText"
+    ],
+    "typesHash": "c1c66189862a41e5"
+  },
+  "./sdk/error-capture": {
+    "runtime": [
+      "captureServerErrors",
+      "clearServerErrors",
+      "matchServerError",
+      "recordServerError"
+    ],
+    "types": [
+      "CapturedServerError",
+      "ServerErrorDetail",
+      "captureServerErrors",
+      "clearServerErrors",
+      "matchServerError",
+      "recordServerError"
+    ],
+    "typesHash": "3dc9c43e66feeed3"
+  },
+  "./sdk/errors": {
+    "runtime": [
+      "SdkRequestError",
+      "errorCode",
+      "errorStatus",
+      "isNetworkFailure",
+      "mapError"
+    ],
+    "types": [
+      "MappedError",
+      "SdkRequestError",
+      "errorCode",
+      "errorStatus",
+      "isNetworkFailure",
+      "mapError"
+    ],
+    "typesHash": "9a028c10a104ff41"
+  },
+  "./sdk/transport": {
+    "runtime": [
+      "DEFAULT_API_BASE_PATH",
+      "bareCollectionPath",
+      "clientConfigFor",
+      "createIsolatedClient",
+      "requireGlobalTransport",
+      "resolveTransport",
+      "setGlobalTransport",
+      "withBareCollectionPaths"
+    ],
+    "types": [
+      "DEFAULT_API_BASE_PATH",
+      "RawTransport",
+      "ResolvedTransport",
+      "SdkConfig",
+      "bareCollectionPath",
+      "clientConfigFor",
+      "createIsolatedClient",
+      "requireGlobalTransport",
+      "resolveTransport",
+      "setGlobalTransport",
+      "withBareCollectionPaths"
+    ],
+    "typesHash": "02b0914674626977"
+  },
+  "./sdk/download": {
+    "runtime": [
+      "DEFAULT_TRUNCATED_HEADER",
+      "createDownloader",
+      "downloadUrl",
+      "filenameFromDisposition",
+      "saveDownload",
+      "streamDownload"
+    ],
+    "types": [
+      "DEFAULT_TRUNCATED_HEADER",
+      "DownloadParams",
+      "DownloadRequest",
+      "DownloadResult",
+      "Downloader",
+      "DownloaderOptions",
+      "createDownloader",
+      "downloadUrl",
+      "filenameFromDisposition",
+      "saveDownload",
+      "streamDownload"
+    ],
+    "typesHash": "1430026eece8d3cf"
+  },
+  "./sdk/actions": {
+    "runtime": [
+      "createCommitActionDefiner",
+      "defineAction",
+      "defineCommitAction",
+      "defineRouteAction",
+      "messagesFor",
+      "runAction",
+      "runRouteAction"
+    ],
+    "types": [
+      "ActionBody",
+      "ActionDescriptor",
+      "ActionOptions",
+      "CommitActionDefinerOptions",
+      "DescriptorMessages",
+      "RouteActionDef",
+      "RouteActionDescriptor",
+      "RouteApi",
+      "RouteMethod",
+      "createCommitActionDefiner",
+      "defineAction",
+      "defineCommitAction",
+      "defineRouteAction",
+      "messagesFor",
+      "runAction",
+      "runRouteAction"
+    ],
+    "typesHash": "b6cbc9d5bfb54b30"
+  },
+  "./sdk/route": {
+    "runtime": [
+      "PageLimitError",
+      "compact",
+      "enc",
+      "fetchAllPages",
+      "getRoute"
+    ],
+    "types": [
+      "AllPagesOptions",
+      "PageLike",
+      "PageLimitError",
+      "compact",
+      "enc",
+      "fetchAllPages",
+      "getRoute"
+    ],
+    "typesHash": "3ca8772915afcebc"
+  },
+  "./sdk/localized": {
+    "runtime": [
+      "localized",
+      "localizedName"
+    ],
+    "types": [
+      "BilingualText",
+      "NamedEntity",
+      "localized",
+      "localizedName"
+    ],
+    "typesHash": "ab7dad8532a2c538"
+  },
+  "./sdk/resource": {
+    "runtime": [
+      "defineSdkResource",
+      "invalidateRoots",
+      "keyRoot"
+    ],
+    "types": [
+      "CrudVerb",
+      "KeyRoot",
+      "SdkResource",
+      "SdkResourceDef",
+      "defineSdkResource",
+      "invalidateRoots",
+      "keyRoot"
+    ],
+    "typesHash": "c7e9d076fa68e165"
+  },
+  "./sdk/hooks": {
+    "runtime": [
+      "toastCrudSuccess",
+      "useQuietRouteAction",
+      "useResourceAction",
+      "useRouteAction",
+      "useRouteList",
+      "useRouteQuery"
+    ],
+    "types": [
+      "ActionHooksLike",
+      "ListHookOptions",
+      "RouteHooksLike",
+      "RouteQueryOptions",
+      "UseQuietRouteActionOptions",
+      "UseResourceActionOptions",
+      "UseRouteActionOptions",
+      "toastCrudSuccess",
+      "useQuietRouteAction",
+      "useResourceAction",
+      "useRouteAction",
+      "useRouteList",
+      "useRouteQuery"
+    ],
+    "typesHash": "0f025cd603c11985"
+  },
+  "./sdk/init": {
+    "runtime": [
+      "initSDK"
+    ],
+    "types": [
+      "initSDK"
+    ],
+    "typesHash": "2669ed8b26244d61"
   },
   "./query-options": {
     "runtime": [
@@ -583,6 +887,6 @@
       "QueryFnContext",
       "createEntityQueries"
     ],
-    "typesHash": "8d12a5244f2a3202"
+    "typesHash": "dfab29b8d9298460"
   }
 }

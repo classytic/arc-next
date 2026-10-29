@@ -834,6 +834,45 @@ configureAuth({ getToken: () => tokens.get(), getOrgId: () => orgId });
 - **Caching.** The SDK sends `cache` only when you set it (per call, `BaseApiConfig.cache` or `ClientConfig.cache`). Do not set `no-store` / `no-cache` on React Native: whatwg-fetch turns those GETs into `?_=<timestamp>`, which arc's strict query validation rejects with 400.
 - **Not covered:** uploads (XHR progress events) and `/field-encryption` (needs Web Crypto `subtle`).
 
+## Portal bootstrap and SDK core (Unreleased)
+
+Generic building blocks for a Next.js app on an arc API. The host supplies every origin, name and schema; nothing is hard-coded. Server-safe unless marked `"use client"`.
+
+| Subpath | What |
+|---|---|
+| `/runtime` | `definePublicEnv({ globalName, read })`: runtime settings. The server reads `process.env` through your typed `read`; the root layout writes `publicEnvScript()` (nonce'd, `<` escaped); the browser reads `window[globalName]`. Also `trimSlash`, `csv`, `serializeForScript`. |
+| `/csp` | `contentSecurityPolicy({ nonce, apiOrigin, storageOrigin, mapOrigins, embedOrigins, extra, dev })` (nonce + `strict-dynamic`, Trusted Types in production), `TRUSTED_TYPES_DEFAULT_POLICY`, `originOf` / `originsOf` / `hostOrigins`, and `createProxy({ NextResponse, policy })` for Next's `proxy.ts`. No `next` import: you pass `NextResponse`. |
+| `/auth-proxy` | `createAuthProxy({ upstream, internalUpstream })` returns `GET/POST/PUT/PATCH/DELETE` route handlers that reverse-proxy an auth service same-origin: hop-by-hop headers filtered, every `set-cookie` kept, `redirect: "manual"`, a 502 JSON body when the upstream is down. |
+| `/sdk/transport` | `SdkConfig`, `createIsolatedClient`, `resolveTransport`, `bareCollectionPath` (no trailing slash on a collection route). |
+| `/sdk/init` | `initSDK(config)`: one boot call for client, auth, toast (message keys resolved at display time), navigation, messages. `"use client"`. |
+| `/sdk/messages` | Message KEYS instead of English: `registerCrudMessages`, `configureMessages(resolver, { keyPrefix })`, `listMessageKeys`, `resolveToastText`, `localizeToastHandler`. The resolver context carries the server `code` and `details` of a refused request. |
+| `/sdk/actions` | `defineCommitAction`, `defineAction`, `defineRouteAction`, `runAction`, `runRouteAction`: one typed descriptor per verb (method, path, body, params, message keys). |
+| `/sdk/hooks` | `useResourceAction`, `useRouteAction`, `useQuietRouteAction`, `useRouteQuery`, `useRouteList` (`enabled`, `placeholderData`), `toastCrudSuccess`. Composes `createCrudHooks` bundles. `"use client"`. |
+| `/sdk/resource` | `defineSdkResource`, `keyRoot`, `invalidateRoots`: route, cache key root, names and permission in one definition. |
+| `/sdk/download` | `createDownloader` / `streamDownload` / `saveDownload`: streamed file download, token in a header, filename from `content-disposition`, `truncated` from a configurable header. |
+| `/sdk/errors`, `/sdk/error-capture`, `/sdk/route`, `/sdk/localized` | `errorCode` / `errorStatus` / `mapError` / `SdkRequestError`; the refused-response ring behind the message context; `enc` / `compact` / `fetchAllPages`; `localized` / `localizedName`. |
+
+```ts
+// proxy.ts
+import { NextResponse } from "next/server";
+import { contentSecurityPolicy, createProxy } from "@classytic/arc-next/csp";
+import { publicEnv } from "@/lib/env"; // definePublicEnv(...)
+
+export const proxy = createProxy({
+  NextResponse,
+  policy: ({ nonce, dev }) =>
+    contentSecurityPolicy({ nonce, dev, apiOrigin: publicEnv.apiUrl, storageOrigin: publicEnv.storageOrigin }),
+});
+
+// app/api/auth/[...path]/route.ts
+import { createAuthProxy } from "@classytic/arc-next/auth-proxy";
+
+export const { DELETE, GET, PATCH, POST, PUT } = createAuthProxy({
+  upstream: () => publicEnv.apiUrl,
+  internalUpstream: () => process.env.API_INTERNAL_URL,
+});
+```
+
 ## License
 
 MIT

@@ -1,25 +1,30 @@
 # @classytic/arc-next
 
-> React + TanStack Query SDK for @classytic/arc backends. Typed CRUD hooks,
-> optimistic updates with rollback, tenant-scoped cache keys, pagination
-> normalization (offset + keyset), SSE, uploads.
+> React + TanStack Query SDK for arc APIs, plus Next.js portal bootstrap and SDK core.
+> Peers: React 19+, TanStack Query 5+. Every file is its own subpath. Full guide: skills/arc-next/SKILL.md
 
-IMPORTANT for coding agents: hand-rolled `fetch()`/axios against an arc API is a
-bug in apps using this package. Before writing any data-fetching code, check:
+Hand-rolled fetch/axios against an arc API is a bug. Need -> use (subpath):
 
-- CRUD + queries      → createCrudApi<T>('resource') + createCrudHooks (useList, useDetail, useInfiniteList, useSuspense*)
-- "How many?"         → api.count() / useCount() — arc's ?_count=true verb, zero documents fetched (also api.exists / api.distinct)
-- Mutations           → useActions/useBulkActions/useCustomMutation (optimistic updates + rollback + toast built in)
-- Custom actions      → useAction (arc's POST /:id/action router)
-- Server presets      → compose the matching wrapper: withSoftDelete/withBulk/withTree/withSlugLookup/withSearch/withHistory
-- Record timeline     → withHistory(api) + api.history(id) — arc 2.22 `history: true` audit timeline
-- Quota 429s          → isQuotaExceeded(err) + getQuotaDetails(err) → render "X of Y {kind}, resets {date}"; NEVER auto-retry (the shared query client already refuses)
-- Aggregations        → useAggregation(name, filter)
-- Realtime            → SSE/WS modules; uploads → useUpload/useFileUpload
-- Auth/org context    → configureClient/configureAuth once at app init; hooks read it — never thread tokens by hand
-- React Native        → configureClient({ eventSource: RNEventSource /* react-native-sse */, streamAuth: 'header' }) + import 'react-native-get-random-values'; no EventSource/randomUUID polyfills, never set cache 'no-store' (whatwg-fetch appends _= and arc 400s)
-- SSE token in URL    → configureClient({ streamAuth: 'header' }) in the browser: the built-in FetchEventSource (@classytic/arc-next/sse-fetch, lazy-loaded) sends Authorization/x-organization-id/Last-Event-ID as headers; never hand-roll a fetch SSE reader or append ?token= yourself. RN still injects react-native-sse
-- Request cache mode  → no SDK default; set ClientConfig.cache / BaseApiConfig.cache / per-call cache only when the deployment needs it
+- CRUD + list/detail/mutations -> createCrudApi (/api), createCrudHooks (/hooks)
+- Boot config, once, browser only -> configureClient, configureAuth (/client), configureToast (/mutation), configureNavigation (/hooks), or initSDK (/sdk/init)
+- Count / exists without rows -> api.count(), useCount
+- State transition (POST /:id/action) -> useAction, api.dispatchAction; typed: defineCommitAction (/sdk/actions)
+- Custom route read or write -> api.invokeRoute; typed: defineRouteAction, useRouteAction, useRouteQuery, useRouteList (/sdk/hooks)
+- Autosave / ping with no toast -> useQuietRouteAction (/sdk/hooks)
+- Hand-written useQuery auth gate -> queryAuthEnabled (/auth-gate)
+- Outside hooks (handlers, actions) -> arc.get/post, arcFetch (/client)
+- Server Components / route handlers -> createRequestClient (/server), createServerClient (/client), createCrudPrefetcher (/prefetch)
+- 401 refresh and retry -> createAuthRefreshHandler + onAuthError (/client)
+- Server error handling -> isArcApiError, isAbortError, isQuotaExceeded, isPreconditionFailed (/client); mapError (/sdk/errors)
+- Backend presets -> withSoftDelete, withBulk, withTree, withSlugLookup, withSearchPreset, withHistory (/presets/*)
+- Realtime -> useEventStream (/sse), useWebSocket (/ws), useUploadWithProgress (/upload)
+- Runtime public settings (one image, many envs) -> definePublicEnv (/runtime)
+- CSP with nonce + Trusted Types -> contentSecurityPolicy, createProxy (/csp)
+- Same-origin auth reverse proxy -> createAuthProxy (/auth-proxy)
+- Localized toasts (message keys) -> configureMessages, listMessageKeys (/sdk/messages)
+- Streamed file download -> createDownloader, streamDownload, saveDownload (/sdk/download)
+- Resource definition (path, key root, names) -> defineSdkResource, invalidateRoots (/sdk/resource)
+- SSR / test client with no globals -> createIsolatedClient (/sdk/transport)
+- Bilingual names, bounded page walks -> localizedName (/sdk/localized), fetchAllPages (/sdk/route)
 
-Type flow: the generic T in createCrudApi<T> should be the kernel/module's exported
-WIRE type (plain JSON shape) — never a mongoose-flavored document type.
+Type flow: T in createCrudApi<T> is the module's WIRE type (plain JSON), never a mongoose document.

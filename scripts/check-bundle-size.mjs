@@ -52,6 +52,20 @@ const BUDGETS = {
   "./presets/slug": 25_000,
   "./presets/tree": 25_000,
   "./presets/search": 25_000,
+  "./runtime": 1_500, // new subpath (Unreleased)
+  "./csp": 3_000, // new subpath (Unreleased)
+  "./auth-proxy": 1_800, // new subpath (Unreleased)
+  "./sdk/messages": 3_200, // new subpath (Unreleased)
+  "./sdk/error-capture": 1_200, // new subpath (Unreleased)
+  "./sdk/errors": 22_500, // new subpath (Unreleased)
+  "./sdk/transport": 23_000, // new subpath (Unreleased)
+  "./sdk/download": 26_000, // new subpath (Unreleased)
+  "./sdk/actions": 4_500, // new subpath (Unreleased)
+  "./sdk/route": 1_200, // new subpath (Unreleased)
+  "./sdk/localized": 900, // new subpath (Unreleased)
+  "./sdk/resource": 30_500, // new subpath (Unreleased)
+  "./sdk/hooks": 31_500, // new subpath (Unreleased)
+  "./sdk/init": 69_000, // new subpath (Unreleased)
 };
 
 function localClosure(distFile, seen = new Set()) {
