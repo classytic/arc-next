@@ -19,6 +19,7 @@ export default defineConfig({
     'src/sse-fetch.ts',
     'src/auth-token.ts',
     'src/tab-leader.ts',
+    'src/service-worker.ts',
     'src/ws.ts',
     'src/upload.ts',
     'src/cache.ts',

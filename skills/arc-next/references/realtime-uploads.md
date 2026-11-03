@@ -25,7 +25,37 @@ const es = new FetchEventSource(url, { headers: arcAuthHeaders(), lastEventId })
 es.addEventListener("job.progress", (e) => render(JSON.parse(e.data!)));
 ```
 
-`createSseParser` is the incremental WHATWG parser behind it.
+`createSseParser` is the incremental WHATWG parser behind it. Its `onActivity` handler, and `FetchEventSource`'s `onActivity` init option, fire per received chunk, heartbeat comments included.
+
+### Resumable alarm-grade streams
+
+For a stream served by arc's replay hub (`@classytic/arc/utils`). Frame names are shared: `STREAM_FRAMES` = `ready`, `resync`, `revoked`, `retry`. `retry` on a live stream: reconnect from the cursor after a 0-500 ms jitter (no backoff, health `connecting`); before live it backs off.
+
+```ts
+const sub = subscribeToEvents({
+  url: `${API_URL}/alerts/stream`,
+  eventTypes: ["alert"],
+  resumeFrom: store.cursor,                      // persisted cursor, or null
+  onEvent: (e) => store.apply(e),                // e.id is the cursor
+  onResync: ({ cursor }) => store.reload(cursor), // 'initial' | server reason
+  staleAfterMs: 45_000,                          // server heartbeat every 20 s
+  backoff: { jitter: 0.5 },
+  terminalStatuses: [403],                       // `revoked` frame: terminal by default
+  onTerminal: () => session.end(),
+  onStatus: (s) => badge.set(s.health),          // connecting live stale offline revoked closed
+});
+sub.status(); sub.restart();                     // restart after re-authentication
+```
+
+- Resume cursor: `Last-Event-ID` in header mode; in query mode only with `resumeQueryParam: "lastEventId"`.
+- `ready` and `resync` never reach `onEvent`. They are handled once the stream opts into resume (`resumeFrom`, `resumeQueryParam`, `onReady` or `onResync`).
+- `onResync` runs once per server signal: `initial` on a fresh connection (no cursor sent), or the server reason (`cursor_expired`, `gap_too_large`, `cursor_invalid`). Reload the snapshot, then keep applying frames. A frame without `id:` never clears the cursor; an id-only frame (no data, sent after entries this viewer cannot see) moves it in header mode.
+- `terminalEvents` defaults to `[STREAM_FRAMES.REVOKED]` once the stream opts into resume (`[]` opts out). The server must still refuse a revoked client.
+- Health is `live` on the connection's `ready` frame once the stream opts into resume (`liveOn: "ready"`), not on the response headers; `liveOn: "open"` restores live-on-open for a server without `ready`. `maxResumeFailures` (default 3): that many drops before `ready` on one cursor and the next connect sends no cursor (fresh `ready`, `onResync` `initial`).
+- `compareCursors: (a, b) => (a < b ? -1 : a > b ? 1 : 0)` (arc's replay hub comparator): a data frame whose id is at or below the last delivered one is a repeat and never reaches `onEvent`, so an at-least-once replay applies once. The floor starts at `resumeFrom` and is reset by `resync` / a fresh `ready`. Every data frame must carry its own id.
+- `staleAfterMs` counts heartbeats only on a transport that reports them (`FetchEventSource`, used by `streamAuth: "header"`). The native `EventSource` hides comments, so a quiet stream cycles every `staleAfterMs` there (dev warning).
+- Backoff: `min(maxMs, initialMs * factor^(n-1)) * (1 - jitter * random())`; defaults 3000, 1.5, 30000, 0. A `Retry-After` still wins.
+- `useEventStream` takes the same options and returns `status`. The leader tab relays status, control frames and its cursor, so each follower runs its own `onResync` and a tab taking over resumes where the leader was. An effect re-run resumes from the hook's last cursor, not the `resumeFrom` prop.
 
 ## WebSocket
 

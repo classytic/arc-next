@@ -36,6 +36,7 @@ export function initSDK(config: SdkConfig): ResolvedTransport {
   configureAuth({
     getToken: config.getToken,
     ...(config.onAuthError ? { onAuthError: config.onAuthError } : {}),
+    ...(config.onSessionChange ? { onSessionChange: config.onSessionChange } : {}),
   });
   configureMessages(config.messages, {
     ...(config.messageKeyPrefix ? { keyPrefix: config.messageKeyPrefix } : {}),

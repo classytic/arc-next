@@ -8,7 +8,7 @@ metadata:
 
 # @classytic/arc-next
 
-Peers: React 19+, TanStack Query 5+. Every file is its own subpath (no barrel). `T` in `createCrudApi<T>` is the module's WIRE type (plain JSON), never a mongoose document.
+Peers: React 19+, TanStack Query 5.52.1+. Every file is its own subpath (no barrel). `T` in `createCrudApi<T>` is the module's WIRE type (plain JSON), never a mongoose document.
 
 ## Do not hand-roll
 
@@ -26,10 +26,11 @@ Peers: React 19+, TanStack Query 5+. Every file is its own subpath (no barrel). 
 | 401 refresh and retry | `createAuthRefreshHandler` + `onAuthError` (`/client`) |
 | Server error handling | `isArcApiError`, `isAbortError`, `isQuotaExceeded`, `isPreconditionFailed` (`/client`); `mapError` (`/sdk/errors`) |
 | Backend presets | `withSoftDelete`, `withBulk`, `withTree`, `withSlugLookup`, `withSearchPreset`, `withHistory` (`/presets/*`) |
-| Realtime | `useEventStream` (`/sse`), `useWebSocket` (`/ws`), `useUploadWithProgress` (`/upload`) |
+| Realtime | `useEventStream` (`/sse`), `useWebSocket` (`/ws`), `useUploadWithProgress` (`/upload`); replay: `resumeFrom`, `onResync` |
 | Runtime public settings (one image, many envs) | `definePublicEnv` (`/runtime`) |
 | CSP with nonce + Trusted Types | `contentSecurityPolicy`, `createProxy` (`/csp`) |
 | Same-origin auth reverse proxy | `createAuthProxy` (`/auth-proxy`) |
+| Installable app, update on request | `useServiceWorker` (`/service-worker`) |
 | Localized toasts (message keys) | `configureMessages`, `listMessageKeys` (`/sdk/messages`) |
 | Streamed file download | `createDownloader`, `streamDownload`, `saveDownload` (`/sdk/download`) |
 | Resource definition (path, key root, names) | `defineSdkResource`, `invalidateRoots` (`/sdk/resource`) |
@@ -39,7 +40,7 @@ Peers: React 19+, TanStack Query 5+. Every file is its own subpath (no barrel). 
 ## Golden path
 
 ```ts
-// api + hooks (one file per resource, "use client" for the hooks half)
+// api + hooks, one file per resource
 const api = withBulk(createCrudApi<Product>("products", { basePath: "/api" }));
 export const { KEYS, useList, useDetail, useActions } = createCrudHooks<Product>({
   api, entityKey: "products", singular: "Product",
@@ -70,7 +71,7 @@ const page = await createCrudApi<Order>("orders", { client }).getAll();
 ```
 
 ```ts
-// proxy.ts; the matcher export stays a static literal in your file
+// proxy.ts
 export const proxy = createProxy({
   NextResponse,
   policy: ({ nonce, dev }) => contentSecurityPolicy({ nonce, dev, apiOrigin: publicEnv.apiUrl }),

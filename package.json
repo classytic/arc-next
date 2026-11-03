@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -101,6 +101,10 @@
     "./tab-leader": {
       "types": "./dist/tab-leader.d.ts",
       "default": "./dist/tab-leader.js"
+    },
+    "./service-worker": {
+      "types": "./dist/service-worker.d.ts",
+      "default": "./dist/service-worker.js"
     },
     "./ws": {
       "types": "./dist/ws.d.ts",
@@ -225,14 +229,15 @@
     "check:bundle": "node scripts/check-bundle-size.mjs",
     "check:fixtures": "tsc -p fixtures/tsconfig.json",
     "check:skills": "node scripts/check-skills.mjs",
+    "check:peer-floors": "node scripts/check-peer-floors.mjs",
     "lint": "biome check src/ tests/ scripts/ fixtures/",
     "check:dead-code": "knip"
   },
   "peerDependencies": {
-    "@classytic/repo-core": ">=0.36.0",
-    "@tanstack/react-query": ">=5.105.0",
-    "jose": ">=6.2.14",
-    "react": ">=19.3.1"
+    "@classytic/repo-core": ">=0.29.0",
+    "@tanstack/react-query": ">=5.52.1",
+    "jose": ">=4.8.1",
+    "react": ">=19.0.0"
   },
   "peerDependenciesMeta": {
     "react": {
@@ -252,19 +257,19 @@
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.6.4",
     "@classytic/dev-tools": "^0.2.1",
-    "@classytic/repo-core": "^0.36.0",
-    "@tanstack/react-query": "^5.105.0",
+    "@classytic/repo-core": "^0.37.0",
+    "@tanstack/react-query": "^5.105.3",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "jose": "^6.2.14",
+    "jose": "^6.2.15",
     "jsdom": "^30.1.3",
-    "knip": "^6.44.0",
+    "knip": "^6.44.1",
     "publint": "^0.3.25",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tsdown": "^0.23.4",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }

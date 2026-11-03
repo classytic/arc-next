@@ -30,7 +30,7 @@ Operators go in params with bracket keys: `"priority[gte]": 5`, `"title[contains
 | Member | Use |
 |---|---|
 | `KEYS`, `cache` | Key builders and cache writers |
-| `useList(params, options)`, `useInfiniteList`, `useSuspenseList` | Lists; `{ items, pagination, isLoading, refetch }` |
+| `useList(params, options)`, `useInfiniteList`, `useSuspenseList` | Lists; `{ items, pagination, isLoading, dataUpdatedAt, refetch }` (`dataUpdatedAt`: when this list's data landed, `0` before) |
 | `useDetail(id, options)`, `useSuspenseDetail` | `{ item, isPlaceholderData }` |
 | `useActions()` | `create`, `update`, `remove`, `restore` with optimistic update and rollback |
 | `useBulkActions()` | With `withBulk` |

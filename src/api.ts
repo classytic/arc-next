@@ -178,7 +178,13 @@ export interface RequestOptions {
    */
   next?: NextFetchOptions;
   headerOptions?: Record<string, string>;
+  /** How to read a 2xx body (see `ApiRequestOptions.responseType`). Omitted: by `Content-Type`. */
   responseType?: "json" | "blob" | "text";
+  /**
+   * `Idempotency-Key` for this call (arc replays the first answer to a retry with the same key).
+   * Keep one key per user intent (a sheet opening, a press) and reuse it on retries.
+   */
+  idempotencyKey?: string;
   signal?: AbortSignal;
   /** Per-request timeout in ms — overrides `ClientConfig.timeoutMs`. `0` disables for this request. */
   timeoutMs?: number;

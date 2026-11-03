@@ -4,6 +4,7 @@
   "include": [
     "src/**/*",
     "tests/presets/compose.test.ts",
-    "tests/next-fetch-options.test.ts"
+    "tests/next-fetch-options.test.ts",
+    "tests/sdk/actions-types.test.ts"
   ]
 }

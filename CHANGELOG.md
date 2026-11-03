@@ -1,5 +1,323 @@
 # Changelog
 
+## 0.20.0 — 2026-11-03
+
+### Added: `./service-worker` (register a worker, offer a waiting update)
+
+`useServiceWorker({ url, scope, checkEveryMs, enabled })` registers a service worker with
+`updateViaCache: "none"` and returns `{ updateReady, applyUpdate }`. A new worker installs and waits;
+the page decides how to offer the reload, and `applyUpdate()` posts `SKIP_WAITING_MESSAGE`
+(`{ type: "SKIP_WAITING" }`) to the waiting worker and reloads once it controls the page. A first
+install is not reported as an update. Because the browser looks for a new worker only on navigation,
+a long-open page also checks when it becomes visible again and every `checkEveryMs`. Framework-free
+halves: `watchServiceWorker(options, onUpdateReady)` and `applyServiceWorkerUpdate(registration)`.
+`"use client"`, no dependencies; what the worker caches stays with the host. Additive.
+
+### Added: `errorDetails(error)` (`./sdk/errors`)
+
+Reads a refusal's structured context (`422 { missing: [...] }`, `{ field }`, `429 { retryAfterSeconds }`)
+so hosts stop hand-rolling `error.json.meta ?? error.json.details`. arc serializes a thrown error's
+`details` object as the envelope's `meta`, so `meta` is read first and an object `details` (older or
+non-arc backends) is the fallback; the validation `details` array stays with `ArcApiError.details` /
+`fieldErrors`. Returns `Readonly<Record<string, unknown>> | undefined`, works on any error carrying a
+`json` body, never throws. Additive; no existing export changes.
+
+### Changed: peer floors lowered to what the code needs
+
+0.19 raised every peer floor to the version used in development, not to what the code needs. That
+blocked apps pinned to React 19.2 (Expo SDK 55 / React Native 0.83). New ranges, each proven by
+installing that exact version and running `typecheck`, `typecheck:tests`, the full test suite,
+`build` and `check:fixtures`:
+
+| Peer | 0.19 | Now | Why this version |
+|---|---|---|---|
+| `react` | `>=19.3.1` | `>=19.0.0` | No React API newer than 19.0 is used (tested with `react` / `react-dom` 19.0.0 and `@types/react` 19.0). |
+| `@tanstack/react-query` | `>=5.105.0` | `>=5.52.1` | First 5.x release whose own `react` peer range accepts React 19 (5.52.0 and earlier: `^18.0.0`). |
+| `@classytic/repo-core` | `>=0.36.0` | `>=0.29.0` | First release exporting `ARC_ERROR_CODES`, `ARC_REASON_CODES`, `ArcReasonCode` and `DUPLICATE_KEY_DETAIL_CODE` from `./errors` (0.28.0 fails `typecheck`). |
+| `jose` (optional) | `>=6.2.14` | `>=4.8.1` | First release whose types resolve under `moduleResolution: NodeNext` (4.8.0 fails `typecheck`). Uses `CompactEncrypt`, `compactDecrypt`, `importPKCS8`, `importSPKI` only. |
+
+Dev toolchain refreshed (repo-core 0.37, vitest 5.1, knip 6.44); the peers above are deliberately not raised with it.
+
+`react`, `@tanstack/react-query` and `@classytic/repo-core` stay required (`optional: false`);
+`jose` stays optional.
+
+- `createCacheUtils().setDetail` / `setScopedDetail` now pass `<T>` to `setQueryData` explicitly.
+  Without it, older react-query releases (seen on 5.62.0) infer the cache type from the arrow's
+  `void` return and fail to type-check. No runtime or declaration change.
+- New `npm run check:peer-floors` (`scripts/check-peer-floors.mjs`): copies the repo into a temp
+  dir, installs every peer at its exact floor (read from `peerDependencies`, so it cannot drift),
+  and runs the five steps above. It needs the npm registry, so it is not in `npm test` or
+  `prepublishOnly`; CI's `peer-minimums` job now runs it (the job previously hard-coded stale
+  minimums: react-query 5.62.0, repo-core 0.14.0, jose 5.0.0), and it is a documented release
+  step (README "Peer ranges").
+
+### Added: resumable, alarm-grade SSE (`./sse`, `./sse-fetch`)
+
+The client half of one realtime contract shared with arc's replay hub (`@classytic/arc/utils`).
+Every option is optional; with none set, `subscribeToEvents` and `useEventStream` behave exactly as
+in 0.19 (same listeners, same backoff curve, same `onConnectionChange` sequence).
+
+- `STREAM_FRAMES` (`{ READY: "ready", RESYNC: "resync", REVOKED: "revoked", RETRY: "retry" }`) and the
+  frame types `StreamFrameName`, `ResyncReason`, `ReadyFrame`, `ResyncFrame`, `RevokedFrame`,
+  `RetryFrame`. The literals match
+  arc's; they become re-exports of `@classytic/repo-core/sync` once the repo-core peer floor is raised
+  to a version that ships them (owner decision; no floor change here).
+- `SubscribeToEventsOptions`: `resumeFrom` (cursor for the first connect), `resumeQueryParam` (query
+  mode: send the cursor as `?<param>=`), `onActivity(at)` (open, every frame, every chunk including
+  heartbeat comments), `staleAfterMs` (silence → `stale`, close, reconnect with the cursor),
+  `backoff { initialMs, factor, maxMs, jitter, random }` (`min(maxMs, initialMs * factor^(n-1)) *
+  (1 - jitter * random())`; defaults reproduce the 0.19 curve; a non-positive or non-finite
+  `initialMs` / `maxMs` falls back to the default, `factor` clamps to >= 1 and `jitter` to 0..1),
+  `terminalEvents` / `terminalStatuses` / `onTerminal` (end the subscription, health `revoked`;
+  statuses are checked before auth recovery and, on the native `EventSource`, read from the failure
+  probe, which then runs on every failure rather than once), `onReady`, `onResync({ cursor,
+  reason: ResyncReason | "initial" })` and `onStatus(StreamStatus)`.
+- `terminalEvents` defaults to `[STREAM_FRAMES.REVOKED]` once the stream opts into resume (below),
+  `[]` otherwise (0.19). Pass `terminalEvents: []` to keep reconnecting after `revoked`. This is a
+  client-side stop: the server must still refuse a revoked client's reconnects.
+- Client rules: `ready` and `resync` never reach `onEvent` (unless the caller lists the name in
+  `eventTypes` itself). A `ready` with a `cursor` and `resumed: false`, on a connection that sent no
+  cursor, sets the cursor and calls `onResync({ reason: "initial" })`; a `resync` sets the cursor and
+  calls `onResync` with the server's reason: once per server signal, so an `initial` and a later
+  `resync` on one connection each call it. These listeners are attached once the stream opts into
+  resume (`resumeFrom`, `null` included, `resumeQueryParam`, `onReady` or `onResync`), so the
+  default listener set is unchanged. A frame without `id:` (which repeats the transport's previous
+  id, or reports `""` on a transport that was not seeded with the sent cursor) never overwrites the
+  cursor.
+- `retry` (arc's replay hub sends it when a periodic `revalidate` fails transiently, then closes):
+  on a live stream the client reconnects from its current cursor after a random 0-500 ms wait
+  (`backoff.random`), with no backoff step and no attempt counted; health is `connecting` until the
+  new connection is live, and the server's close after the frame is not treated as a failure (no
+  probe). A `retry` before the stream went live takes the normal backoff, so a server answering
+  every connect with `retry` cannot drive a tight loop. Attached with the other control frames once
+  the stream opts into resume; never reaches `onEvent` or `onTerminal`.
+- An id-only frame (`id: <cursor>`, no data; arc's replay hub sends one after entries a viewer is
+  not shown) moves the resume cursor without reaching any listener, as WHATWG specifies.
+  `status().lastEventId`, a `stale` reconnect, `reconnect()` / `restart()`, a terminal frame and
+  `close()` read it from the transport (`FetchEventSource.lastEventId`); the native `EventSource`
+  does not expose it.
+- `staleAfterMs` on the runtime's native `EventSource` (none injected) logs one warning per
+  subscription outside production: heartbeat comments are invisible there, so a quiet stream
+  cycles every `staleAfterMs`.
+- `SubscribeToEventsHandle` gains `status()` and `restart()` (reconnect after `revoked` or
+  `close()`). New types `StreamHealth` (`connecting | live | stale | offline | revoked | closed`),
+  `StreamStatus`, `StreamBackoff`, `StreamResyncInfo`, `StreamTerminalInfo`.
+- `useEventStream` passes the new options through and returns `status`. With `shareAcrossTabs`, the
+  leader relays its status and the `ready` / `resync` / terminal frames over `BroadcastChannel`, so
+  each follower runs its own `onReady` / `onResync` / `onTerminal` against its own cache, and a tab
+  that joins later receives the current status with the connection state. On a resumable stream an
+  effect re-run (leader handoff, `enabled` toggle, option change) resumes from the last cursor the
+  hook reached on that stream (relayed events carry the leader's cursor, so a tab taking over after
+  the leader died resumes too), not from the `resumeFrom` prop. When a revoked leader lets go,
+  followers keep `revoked` instead of `offline`.
+- `StreamStatus.lastStatus` holds failure statuses only (`0` or >= 400); a stream that ended with
+  200, or a probe answering 2xx, does not set it. Health becomes `offline` once
+  `maxReconnectAttempts` is exhausted, also after a `stale` timeout.
+- `createSseParser` handler `onActivity()`: once per non-empty `push()`, comment-only chunks
+  included (comments were dropped silently). `initialLastEventId` seeds the last event ID buffer
+  (WHATWG keeps it across reconnects); `FetchEventSource` passes the `Last-Event-ID` it sent.
+  `EventSourceInitLike.onActivity` (an init callback, so it cannot clash with a server event name):
+  `FetchEventSource` calls it per chunk after `open`; the native `EventSource` ignores it. A
+  throwing callback does not break the stream.
+
+### Added: CSP `frameSrc` and `createProxy` `requestHeaders` (`./csp`)
+
+- `CspInput.frameSrc?: "none" | readonly string[]`. `"none"` emits `frame-src 'none'`; combining it
+  with non-empty `embedOrigins` or `extra["frame-src"]` throws a config error. An array replaces the
+  built-in `'self'` / storage / API list (embed and `extra` origins still merge; an empty result is
+  emitted as `'none'`). Absent: output identical to 0.19.
+- `connect-src blob:` is documented and tested through `extra: { "connect-src": ["blob:"] }`; it
+  stays out of the default policy.
+- `CreateProxyOptions.requestHeaders?: ({ request, nonce, dev }) => Record<string, string | null> |
+  undefined`: extra headers on the forwarded request, applied
+  after the incoming headers are copied and before `x-nonce` and the CSP are set; `null` deletes a
+  header. `x-nonce` and `content-security-policy` (any case) are dropped from its result, so the
+  minted values cannot be replaced. The response is unchanged. Incoming headers pass through unless
+  set or deleted, so a browser-sent trust hint (surface, tenant) reaches server components: always
+  set or delete every hint the app reads.
+- `frameSrc` array entries must be single source expressions: an entry with whitespace, `;` or `,`,
+  an empty one, or `'none'` inside an array throws (it would inject a directive or contradict itself).
+
+### Added: opt-in hook for session-state 403s (`./client`, `./sdk/init`)
+
+A 403 can mean the session's state changed rather than "not allowed" (a second factor became
+required after a deploy). The SDK recovered 401s but had no hook for those, so a tab left open
+showed the error until reload.
+
+- `AuthConfig.onSessionChange?: SessionChangeHook` with `SessionChangeHook { match(error:
+  ArcApiError): boolean; handler: AuthErrorHandler }`. Only 403s whose parsed error passes `match`
+  (usually a check on `error.code`) reach `handler`, which has the `onAuthError` contract
+  (`"retry"` / `"skip"` / throw, `setToken`, 1-indexed `attempt`). Unset: behaviour identical to
+  0.19.
+- Concurrent matched 403s share one handler call. Recovery dedup is now per handler, so a 401
+  refresh and a step-up in flight at once never replay each other's decision (401 dedup across
+  fetch, upload, WebSocket and SSE is unchanged).
+- A matched 403 goes to `onSessionChange` even with `retryOn403: true`; unmatched 403s keep the
+  existing path. `maxAuthRetries` caps each family separately, so a 401 refresh followed by a
+  step-up on the same request both run.
+- Scope: the JSON client (`executeRequest`: CRUD hooks, `arcFetch`, `handleApiRequest`, actions,
+  routes). Uploads and streams keep 401 recovery only.
+- `SdkConfig.onSessionChange` (`./sdk/transport`), passed through by `initSDK`.
+- `SessionChangeHook` added to `api-surface.json` (addition only).
+
+### Added: live on the `ready` frame (`./sse`, G-E2E-PORTAL-1)
+
+A resumable stream reported `live` on the transport's `open` (the response headers), while arc's
+replay hub sends `ready` only after joining the log and reading the gap: on a slow database a screen
+showed Live for hundreds of milliseconds during which a drop cost it the replay.
+
+- `SubscribeToEventsOptions.liveOn?: "open" | "ready"`. `"ready"`: health turns `live` on the
+  connection's `ready` frame; until then it stays `connecting` (or `offline` / `stale` on a
+  reconnect) and `attempts` keeps counting. Default: `"ready"` once the stream opts into resume
+  (`resumeFrom`, `resumeQueryParam`, `onReady`, `onResync`), else `"open"` (0.19, unchanged for
+  plain streams). `liveOn: "ready"` opts into resume itself; pass `"open"` for a resumable server
+  that sends no `ready` frame. `onConnectionChange` / `isConnected()` keep following the transport.
+- `SubscribeToEventsOptions.maxResumeFailures?: number` (default 3, `0` off, ignored with
+  `liveOn: "open"`): connections in a row that sent the same cursor, opened and ended before
+  `ready` (error or `stale`) make the next connect send no cursor, so the server answers a fresh
+  `ready` and `onResync({ reason: "initial" })` reloads the snapshot (the arc-next half of
+  G-E2E-1: a cursor the server cannot serve no longer keeps the stream down).
+- `useEventStream` passes both through; with `shareAcrossTabs` followers mirror the leader's
+  ready-gated health. Once the cursor is dropped (own status or the leader's relay), the hook's
+  carried cursor goes with it: a leader handoff or an `enabled` toggle before the fresh `ready`
+  starts fresh instead of resuming from the dropped cursor or the `resumeFrom` prop.
+- `useEventStream({ enabled: false })` reports `health: "closed"`, also in a follower, which
+  otherwise kept the leader's last health (e.g. `live`). Tests: `tests/sse-cross-tab.test.ts`.
+
+### Fixed: `runAction` / `useResourceAction` infer types from the descriptor (`./sdk/*`, G-PORTAL-1)
+
+- The descriptor parameter now keeps the phantom `__input` / `__result` markers
+  (`Pick<ActionDescriptor<TInput, TResult>, "verb" | "__input" | "__result">`, plus `"messages"` for
+  `useResourceAction`), so `runAction(api, d, id, input)` resolves to `d`'s result instead of
+  `unknown`, and the payload is checked against `d`'s input (an argument such as
+  `deviceId ? { deviceId } : {}` for `{ deviceId?: string }` now compiles). Type-only: verb-only
+  objects still compile, and so do explicit type arguments, including ones that differ from a typed
+  descriptor's markers (`runAction<{ a: string }, Doc>(api, untypedDescriptor, id, { a })`): a
+  second overload keeps the 0.19 `Pick<…, "verb">` (`"verb" | "messages"`) signature for them.
+  Without type arguments only the inferring overload applies, so a payload that does not fit the
+  descriptor is still an error. Tests: `tests/sdk/actions-types.test.ts` (`typecheck:tests`) and
+  `fixtures/next-consumer/golden-server.ts`.
+
+### Added: per-call request options on the descriptor runners (`./sdk/actions`, `./sdk/hooks`, `.`)
+
+- `runAction(api, d, id, input, options?)`: `RunRequestOptions` (`idempotencyKey`, `signal`,
+  `headerOptions`) after the payload reach `dispatchAction`'s `options`, never the body. A
+  no-payload verb passes `undefined` in the payload's place
+  (`runAction(api, d, id, undefined, { idempotencyKey })`). New type `RunActionArgs<TInput>`;
+  `RouteApi.dispatchAction` args gain an optional `options`. Calls without options are unchanged
+  (no `options` key reaches `dispatchAction`).
+- `useResourceAction(hooks, d, { requestOptions })` and `useRouteAction(hooks, api, d,
+  { requestOptions })`: `requestOptions(variables)` is read for each `mutate` / `mutateAsync`, so a
+  key minted per sheet opening (closure) or carried in the variables is sent per call. Route verbs
+  pass it to `runRouteAction`'s `options` (the descriptor's `body` still decides what is sent).
+- `createCrudHooks().useAction` variables accept `options` (the `BaseApi` request options without
+  the auth fields) and pass them to `dispatchAction`; `ActionHooksLike` mutate variables gain the
+  same optional field.
+- Tests: `tests/sdk/actions.test.ts` (recorder and a real `BaseApi`: `Idempotency-Key` header, body
+  without the key), `tests/sdk/hooks.test.tsx`, `tests/sdk/actions-types.test.ts`.
+- FLOW OCC: `apps/portal/src/sdk/occurrences/api/occurrences.ts` drops its `dispatchAction` /
+  `invokeRoute` calls for the keyed writes and uses `runAction` / `runRouteAction` with options.
+
+### Added: `dataUpdatedAt` on list results (`./query`, `.`, G-W2REC-3)
+
+- `ListQueryResult.dataUpdatedAt` (TanStack's `dataUpdatedAt`: when this list's own data last
+  landed, `0` before the first answer), from `useListQuery`, `useSuspenseListQuery` and every
+  `createCrudHooks` list hook (`useList`, `useDeleted`, `useTree`, `useChildren`). A list screen can
+  print "Updated 14:02" from its own read instead of a sibling query. Declared optional so code
+  that builds a `ListQueryResult` itself (adapters, test doubles) still type-checks; the hooks always
+  set it. Test:
+  `tests/hooks.test.tsx` "dataUpdatedAt".
+
+### Added: `compareCursors`, each data frame once in cursor order (`./sse`, G-INT-1)
+
+- `SubscribeToEventsOptions.compareCursors?: (a, b) => number` (and `useEventStream`, read through
+  a ref, so an inline function does not reconnect): a data frame whose id compares at or below the
+  last delivered one is a repeat and never reaches `onEvent` (nor the cross-tab relay). The floor
+  starts at `resumeFrom`, follows each delivered frame, and is set by `resync` and by a fresh
+  `ready` cursor (`onResync({ reason: "initial" })`), also downwards. Frames with no id pass. Same
+  comparator as arc's `createReplayHub({ compareCursors })`. Default off: 0.19 delivery unchanged.
+- Caveat (documented): the transport repeats the previous id on a frame without `id:`, so with
+  `compareCursors` every data frame must carry its own id (arc's replay hub writes one per entry).
+- Tests: `tests/sse-resumable.test.ts` "compareCursors" (repeats on one connection, an
+  at-least-once replay after a reconnect, a resync lowering the floor, off by default).
+- FLOW OCC: `apps/portal/src/features/realtime/alert-stream.ts` drops its own applied-sequence
+  bookkeeping (`applied`, `sequenceOf`, the repeat checks).
+
+### ⚠ Fixed: `responseType` is read; per-request `idempotencyKey` on `BaseApi` options (`./client`, `./api`, `./sdk/actions`, G-EL-P1, G-EL-P2, G-OCC-P4)
+
+- `RequestOptions.responseType` was declared and never read: `invokeRoute({ options: { responseType:
+  "text" } })` still answered a `text/*` body as `{ data: text, response }`, and `"blob"` answered
+  `{ data: blob, response }` (a CSV, a PDF) although callers typed it `Blob`. `ApiRequestOptions`
+  gains `responseType` and the client honours it on a 2xx: `"text"` answers the body string,
+  `"blob"` the `Blob`, `"json"` the parsed body (`undefined` when empty), whatever the
+  `Content-Type`. An encrypted response is decrypted first, as before; errors are unaffected.
+  Omitted: the 0.19 content-type rules, unchanged.
+- Migration (⚠ only for callers that passed `responseType: "blob"` and read `.data`): drop the
+  `.data` (`D:/projects/it/somriddhi/apps/web/api/qr-api.ts` `pdf()` and its `downloadBlob(res.data)`
+  callers). Callers that typed the answer `Blob` now get one (`brihot/apps/web/api/transactions-api.ts`
+  `exportTransactionsCsv`, commerce-bd-sdk `getStatement` CSV).
+- `RequestOptions` (what `BaseApi` methods, `invokeRoute` and `dispatchAction` take in `options`)
+  declares `idempotencyKey`, sent as `Idempotency-Key` (`ApiRequestOptions` already had it; the
+  value flowed at runtime but did not type-check, so callers sent the header by hand in
+  `headerOptions`). `runRouteAction(api, d, input, options?)` forwards per-call `RunRequestOptions`
+  (`idempotencyKey`, `signal`, `headerOptions`); `RouteApi.invokeRoute` accepts `options`.
+  `runAction` / `useResourceAction` / `useRouteAction` take per-call options too (see "per-call
+  request options on the descriptor runners" above).
+- Tests: `tests/request-options-response-type.test.ts`.
+- FLOW OCC removals once this ships: `textOf` in `apps/portal/src/sdk/event-log/api/event-log.ts`
+  (`me.text` becomes `invokeRoute<string>({ ..., options: { responseType: "text" } })`);
+  `idempotencyHeader` (occurrences sdk) and `idempotencyOptions` (records sdk) become
+  `options: { idempotencyKey }`.
+
+### Changed: `useRealtimeSync({ source: "sse" })` loads `./sse` on first use (`.`, `./hooks`)
+
+- `createCrudHooks(...).useRealtimeSync` imports the SSE client dynamically (as `./sse` already does
+  with `./sse-fetch`), so `.` and `./hooks` no longer ship `sse.ts`: 45,310 B gz, down from the
+  56,996 B the resumable SSE had pushed them to. The subscription opens one module load after
+  mount; a failed load is rethrown during render, so it still reaches an error boundary. WebSocket
+  sync is unchanged.
+
+### Fixed
+
+- `subscribeToEvents`: a `close()` while the failure probe or `onAuthError` recovery was in flight
+  could still schedule a reconnect afterwards and reopen the stream; it no longer does. A manual
+  `reconnect()` cancels a pending scheduled reconnect instead of connecting twice. A probe or auth
+  recovery that outlives its connection (`reconnect()`, `restart()`, the stale watchdog) no longer
+  acts on the newer one (closing it, ending it as `revoked`, or reconnecting again), and an `error`
+  from a superseded transport is ignored.
+- Header mode (`FetchEventSource`): the parser started every connection with an empty last event
+  ID, so the first frame without `id:` after a reconnect (a heartbeat-only line, a `ready` frame)
+  erased the cursor and the next reconnect sent no `Last-Event-ID`, losing events the server could
+  have replayed. 0.19 had this too. The parser is now seeded with the sent cursor, and
+  `subscribeToEvents` ignores an empty id. Behaviour change: a server `id:` with an empty value no
+  longer clears the client cursor; a server that needs a reset sends a new id (or `resync`).
+
+### Notes
+
+- No migration needed for 0.19 callers: the new options are opt-in. Two fixes change behaviour for
+  everyone, both toward the documented contract: an empty `id:` no longer clears the resume cursor
+  (send a new id or `resync` to move it), and `lastStatus` no longer reports 2xx. Hosts with a
+  hand-rolled resumable SSE client (heartbeat watchdog, jittered backoff, resync / revoked
+  handling) can replace it with the options above; a host that wants to keep reconnecting after a
+  `revoked` frame on a resumable stream passes `terminalEvents: []`.
+- Bundle budgets: `.` and `./hooks` stay at 0.19's 53.5 kB gz (45,310 B with `./sse` loaded
+  lazily, see above). `./sse` raised 28 → 30.5 kB gz (29,963 B), then → 31 kB for `compareCursors` (30,644 B): the resumable stream code,
+  `liveOn` and the status / control-frame relay live in the `sse.ts` closure and cannot move out
+  of the subpath that exports them. `api-surface.json` regenerated (additions and
+  optional fields only).
+- App interims to delete once this release is installed:
+  - G-E2E-PORTAL-1: FLOW OCC `apps/portal/src/features/realtime/alert-stream.ts`: delete the
+    `gate` / `ready` / `shown` live gating and map arc-next's `status` directly (ticket
+    E2E-PORTAL-1). Its test "an open line is not live before its ready frame" keeps passing
+    against arc-next.
+  - G-PORTAL-1: FLOW OCC `apps/portal/src/sdk/alerts/api/alerts.ts`: delete the typed `dispatch()`
+    wrapper and call `runAction(crud, alertActions.<verb>, id, input)` directly (ticket PORTAL-1).
+  - G-INT-1: FLOW OCC `apps/portal/src/features/realtime/alert-stream.ts` (the hand-rolled
+    resumable client on `createSseParser`) can move onto `subscribeToEvents` / `useEventStream`
+    with the options above (ticket INT-1).
+- Adopting repo-core's `errorKind` in `isValidationError` and friends waits for the repo-core peer
+  floor to be raised to a release that ships it (owner decision).
+
 ## 0.19.0 — 2026-10-30
 
 ### Added — portal bootstrap and SDK core subpaths
@@ -16,7 +334,7 @@ host supplies every origin, name and schema.
 
 ### Changed — peer floors to the latest published
 
-`@classytic/repo-core >=0.36.0`, `@tanstack/react-query >=5.105.0`, `jose >=6.2.14`, `react >=19.3.1` (all optional peers). Dev toolchain: tsdown `^0.23.4`, Biome 2.6 (its new `noComponentHookFactories` rule is off: this package is a hook factory by design), knip 6.44. The declaration snapshot hashes were regenerated for tsdown 0.23.4's declaration formatting; no exported name was added, removed or renamed by it.
+`@classytic/repo-core >=0.36.0`, `@tanstack/react-query >=5.105.0`, `jose >=6.2.14`, `react >=19.3.1` (`react`, `@tanstack/react-query` and `@classytic/repo-core` required; `jose` optional). These floors were higher than the code needs; lowered in the next release (see [Unreleased]). Dev toolchain: tsdown `^0.23.4`, Biome 2.6 (its new `noComponentHookFactories` rule is off: this package is a hook factory by design), knip 6.44. The declaration snapshot hashes were regenerated for tsdown 0.23.4's declaration formatting; no exported name was added, removed or renamed by it.
 
 ## 0.18.0 — 2026-10-18
 

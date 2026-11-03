@@ -22,6 +22,8 @@
  * - **The `error` event carries the HTTP verdict**: `status` (`0` = no response,
  *   e.g. network or CORS failure) and the response `headers`, so a 401 or a
  *   429 + `Retry-After` is handled without a second probe request.
+ * - **Liveness**: `init.onActivity` runs for every received chunk after `open`,
+ *   heartbeat comments included, which the native `EventSource` never exposes.
  *
  * Runtime: any environment with streaming `fetch` (`Response.body` as a
  * `ReadableStream`), `TextDecoder` and `AbortController` — every modern
@@ -52,6 +54,16 @@ export interface SseParserHandlers {
   onEvent: (event: SseParsedEvent) => void;
   /** A valid `retry:` field (ASCII digits only), in milliseconds. */
   onRetry?: (ms: number) => void;
+  /**
+   * Fired once per non-empty `push()`, before any event that chunk completes, comment-only chunks
+   * (`": heartbeat\n\n"`) included: the liveness signal of a quiet but healthy stream.
+   */
+  onActivity?: () => void;
+  /**
+   * The last event ID buffer to start from: the `Last-Event-ID` this connection sent. WHATWG keeps
+   * the buffer across reconnects, so an event without `id:` reports it rather than `""`. Default `""`.
+   */
+  initialLastEventId?: string;
 }
 
 /** Incremental SSE parser. Feed decoded text in any chunking; call `reset()` per connection. */
@@ -78,7 +90,7 @@ export function createSseParser(handlers: SseParserHandlers): SseParser {
   let pendingCr = false;
   let dataBuffer = "";
   let eventType = "";
-  let lastEventIdBuffer = "";
+  let lastEventIdBuffer = handlers.initialLastEventId ?? "";
 
   const dispatch = (): void => {
     if (dataBuffer === "") {
@@ -135,6 +147,7 @@ export function createSseParser(handlers: SseParserHandlers): SseParser {
         firstChunk = false;
         if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       }
+      if (chunk.length > 0) handlers.onActivity?.();
       if (pendingCr && text.startsWith("\n")) text = text.slice(1);
       pendingCr = false;
       buffer += text;
@@ -380,6 +393,8 @@ export class FetchEventSource implements EventSourceLike {
 
     const origin = originOf(this.url);
     const parser = createSseParser({
+      // The id this connection resumed from persists until the server sends a new one.
+      initialLastEventId: this.lastEventId,
       onEvent: (e) => {
         this.lastEventId = e.lastEventId;
         if (this.readyState !== OPEN) return;
@@ -387,6 +402,17 @@ export class FetchEventSource implements EventSourceLike {
       },
       onRetry: (ms) => {
         this.reconnectionTime = ms;
+      },
+      onActivity: () => {
+        if (this.readyState !== OPEN || !init.onActivity) return;
+        try {
+          init.onActivity();
+        } catch (err) {
+          // A throwing callback must not break the stream (same rule as listeners).
+          queueMicrotask(() => {
+            throw err;
+          });
+        }
       },
     });
     const reader = res.body.getReader();

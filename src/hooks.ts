@@ -9,7 +9,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AggResult, AggRow, BaseApi } from "./api.js";
+import type { AggResult, AggRow, BaseApi, ScopedArgs } from "./api.js";
 import { isKeysetPagination, isOffsetPagination } from "./api.js";
 import { authGate } from "./auth-gate.js";
 import type { CacheUtils, QueryKeys } from "./cache.js";
@@ -54,8 +54,11 @@ import {
   useSuspenseDetailQuery,
   useSuspenseListQuery,
 } from "./query.js";
-import { type CrudOperation, subscribeToEvents } from "./sse.js";
+import type { CrudOperation } from "./sse.js";
 import { connectWs } from "./ws.js";
+
+/** Per-call request options of an action mutation (`ScopedArgs["options"]`: no auth fields). */
+type ActionRequestOptions = NonNullable<ScopedArgs["options"]>;
 
 // ============================================================================
 // Types
@@ -373,7 +376,16 @@ export interface CrudHooksReturn<T, TCreate, TUpdate> {
       error: Error | null,
       variables: { id: string; action: string; data?: TBody },
     ) => void;
-  }) => TransitionMutationReturn<TResult, { id: string; action?: string; data?: TBody }>;
+  }) => TransitionMutationReturn<
+    TResult,
+    {
+      id: string;
+      action?: string;
+      data?: TBody;
+      /** Per-call request options (`idempotencyKey`, `signal`, `headerOptions`); not in the body. */
+      options?: ActionRequestOptions;
+    }
+  >;
   /** Mutation against the search-preset POST `/search` route. */
   useSearchEngine: <
     TResult = T,
@@ -1785,7 +1797,10 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   }) {
     const queryClient = useQueryClient();
 
-    return useMutationWithTransition<TResult, { id: string; action?: string; data?: TBody }>({
+    return useMutationWithTransition<
+      TResult,
+      { id: string; action?: string; data?: TBody; options?: ActionRequestOptions }
+    >({
       mutationFn: (vars) => {
         if (!api.dispatchAction) {
           return Promise.reject(
@@ -1807,6 +1822,7 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
           id: vars.id,
           action,
           data: vars.data,
+          ...(vars.options ? { options: vars.options } : {}),
         });
       },
       // State transitions can change filtered lists, counts and aggregates.
@@ -2022,7 +2038,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
    * - `source: 'ws'` (default) → arc's `websocketPlugin` at `/ws`. Sends a
    *   `{ type: 'subscribe', resource }` handshake on connect.
    * - `source: 'sse'` → arc's `ssePlugin` at `/events/stream`. Auto-derives
-   *   patterns from the resource name.
+   *   patterns from the resource name. The SSE client (`./sse`) is loaded on
+   *   first use, so it connects a module load after mount.
    *
    * Both transports invalidate `KEYS.lists()` on `<resource>.created` and
    * `<resource>.deleted`, and `KEYS.detail(id)` (prefix-matches scoped /
@@ -2038,6 +2055,8 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
   }): { isConnected: boolean } {
     const queryClient = useQueryClient();
     const [isConnected, setIsConnected] = useState(false);
+    // Rethrows a failed lazy SSE start during render, so it reaches an error boundary as before.
+    const [, setStartError] = useState<undefined>();
 
     const source = options?.source ?? "ws";
     const resource = options?.resource ?? entityKey;
@@ -2099,18 +2118,34 @@ export function createCrudHooks<T, TCreate = Partial<T>, TUpdate = Partial<T>>({
       };
 
       if (source === "sse") {
-        const handle = subscribeToEvents({
-          resource,
-          path,
-          onConnectionChange: (c) => {
-            setIsConnected(c);
-            onConnRef.current?.(c);
-          },
-          onEvent: (event) => {
-            handleBroadcast(event.type, event.data);
-          },
-        });
-        return () => handle.close();
+        // Loaded on first use (like `./sse-fetch` in `./sse`): `.` does not ship the SSE client.
+        let handle: { close(): void } | null = null;
+        let active = true;
+        import("./sse.js")
+          .then(({ subscribeToEvents }) => {
+            if (!active) return;
+            handle = subscribeToEvents({
+              resource,
+              path,
+              onConnectionChange: (c) => {
+                setIsConnected(c);
+                onConnRef.current?.(c);
+              },
+              onEvent: (event) => {
+                handleBroadcast(event.type, event.data);
+              },
+            });
+          })
+          .catch((error: unknown) => {
+            if (active)
+              setStartError(() => {
+                throw error;
+              });
+          });
+        return () => {
+          active = false;
+          handle?.close();
+        };
       }
 
       // WebSocket: subscribe to the resource channel; arc broadcasts

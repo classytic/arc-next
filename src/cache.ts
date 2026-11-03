@@ -585,13 +585,13 @@ export function createCacheUtils<T>(KEYS: QueryKeys): CacheUtils<T> {
     invalidateAll: (client) => client.invalidateQueries({ queryKey: KEYS.all }),
     invalidateLists: (client) => client.invalidateQueries({ queryKey: KEYS.lists() }),
     invalidateDetail: (client, id) => client.invalidateQueries({ queryKey: KEYS.detail(id) }),
-    setDetail: (client, id, data) => client.setQueryData(KEYS.detail(id), data),
+    setDetail: (client, id, data) => client.setQueryData<T>(KEYS.detail(id), data),
     getDetail: (client, id) => client.getQueryData<T>(KEYS.detail(id)) ?? undefined,
     removeDetail: (client, id) => client.removeQueries({ queryKey: KEYS.detail(id) }),
     invalidateScopedDetail: (client, id, organizationId) =>
       client.invalidateQueries({ queryKey: KEYS.scopedDetail(id, organizationId) }),
     setScopedDetail: (client, id, organizationId, data) =>
-      client.setQueryData(KEYS.scopedDetail(id, organizationId), data),
+      client.setQueryData<T>(KEYS.scopedDetail(id, organizationId), data),
     getScopedDetail: (client, id, organizationId) =>
       client.getQueryData<T>(KEYS.scopedDetail(id, organizationId)) ?? undefined,
     removeScopedDetail: (client, id, organizationId) =>

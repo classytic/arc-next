@@ -4,7 +4,7 @@
 
 React + TanStack Query SDK for the Arc backend framework. Typed CRUD hooks, optimistic updates with rollback, multi-tenant cache scoping, pagination normalization, real-time SSE.
 
-**Peers:** React 19+, TanStack React Query 5+
+**Peers:** `react >=19.0.0`, `@tanstack/react-query >=5.52.1`, `@classytic/repo-core >=0.29.0`, optional `jose >=4.8.1` (only for `./encryption` / `./field-encryption`). See [Peer ranges](#peer-ranges).
 
 ```bash
 npm install @classytic/arc-next
@@ -303,6 +303,55 @@ const es = new FetchEventSource(url, { headers: arcAuthHeaders(), lastEventId })
 es.addEventListener("job.progress", (e) => render(JSON.parse(e.data!)));
 es.onerror = (e) => console.warn("stream failed", e.status); // then reconnect yourself
 ```
+
+Pass `onActivity` in its init to hear every received chunk, heartbeat comments included
+(`createSseParser` has the same `onActivity` handler).
+
+### Resumable, alarm-grade streams
+
+For a stream served by arc's replay hub (`@classytic/arc/utils`), where every data frame's `id:`
+is a change-log cursor. The control frame names are shared with arc: `STREAM_FRAMES` =
+`{ READY: "ready", RESYNC: "resync", REVOKED: "revoked", RETRY: "retry" }`. On `retry` (the server
+closing so the client is authorized afresh), a live stream reconnects from its cursor after a random
+0-500 ms wait, with no backoff step or attempt counted, and health `connecting` meanwhile; a `retry`
+before the stream went live takes the normal backoff.
+
+```ts
+import { subscribeToEvents } from "@classytic/arc-next/sse";
+
+const sub = subscribeToEvents({
+  url: `${API_URL}/alerts/stream`,
+  eventTypes: ["alert"],
+  resumeFrom: store.cursor,                        // a persisted cursor, or null: first connect only
+  onEvent: (e) => store.apply(e),
+  onResync: ({ cursor, reason }) => store.reload(cursor), // reason: 'initial' or the server's
+  staleAfterMs: 45_000,                            // > the server heartbeat interval
+  backoff: { jitter: 0.5 },                        // min(maxMs, initialMs * factor^(n-1)) * (1 - jitter * random())
+  terminalStatuses: [403],                         // `revoked` is terminal by default here
+  onTerminal: (info) => session.end(info),
+  onStatus: (s) => badge.set(s.health),            // connecting | live | stale | offline | revoked | closed
+});
+sub.status();  // { health, since, lastActivityAt, lastEventId, attempts, lastStatus? }
+sub.restart(); // reconnect after `revoked`, resuming from the last cursor
+```
+
+| Option | Behaviour |
+|---|---|
+| `resumeFrom` | Cursor for the first connect. Later connects send the last id received, or the cursor a `ready` / `resync` frame set. |
+| `resumeQueryParam` | Query mode (native `EventSource`) only: send the cursor as `?<param>=` (arc's default param is `lastEventId`). Header mode always sends `Last-Event-ID`. |
+| `onReady`, `onResync` | `ready` and `resync` never reach `onEvent`. A `ready` with a `cursor` and `resumed: false`, on a connection that sent no cursor, calls `onResync({ cursor, reason: "initial" })`; a `resync` calls `onResync({ cursor, reason })`. Once per server signal, so an `initial` and a later `resync` on one connection each call it. These frames are handled once the stream opts into resume (`resumeFrom`, `resumeQueryParam`, `onReady` or `onResync`). A frame without `id:` never clears the cursor. |
+| `onActivity`, `staleAfterMs` | Liveness: open, every frame, every chunk. Silence past `staleAfterMs` marks the stream `stale`, closes it and reconnects with the cursor. Heartbeat comments count only on `FetchEventSource` (`streamAuth: "header"`); on the native `EventSource` a quiet stream cycles every `staleAfterMs` (a dev warning says so). |
+| `backoff` | `{ initialMs, factor, maxMs, jitter, random }`; defaults `reconnectDelay`, 1.5, 30000, 0 (the earlier curve). Invalid values fall back or clamp (`factor` >= 1, `jitter` 0..1). `Retry-After` still wins. |
+| `terminalEvents`, `terminalStatuses`, `onTerminal` | End the subscription: no reconnect, health `revoked`. `terminalEvents` defaults to `[STREAM_FRAMES.REVOKED]` once the stream opts into resume, else `[]`; pass `[]` to opt out. Statuses default to `[]` and are checked before auth recovery; on the native `EventSource` every failure is probed while any are set. Client-side only: the server must still refuse a revoked client. |
+| `liveOn`, `maxResumeFailures` | When a connection counts as `live`: `"ready"` (default once the stream opts into resume) waits for the connection's `ready` frame, so the health stays `connecting` (or `offline` / `stale` on a reconnect) while the server joins the log and replays the gap; `"open"` (default otherwise, 0.19) goes live on the response headers. `liveOn: "ready"` opts into resume itself; pass `"open"` for a resumable server that sends no `ready`. After `maxResumeFailures` (default 3, `0` off) connections in a row that sent one cursor and ended before `ready`, the next connect sends no cursor, so the fresh `ready` calls `onResync({ reason: "initial" })`. `onConnectionChange` keeps following the transport. |
+| `compareCursors` | `(a, b) => number`, arc's replay-hub comparator. A data frame whose id compares at or below the last delivered one is a repeat and never reaches `onEvent` (exactly-once over at-least-once delivery). The floor starts at `resumeFrom` and is set by `resync` and a fresh `ready`. Every data frame must carry its own id. Default off. |
+| `onStatus` | Health and reconnect-attempt changes; `status()` reads the snapshot any time. Out of attempts reads `offline`. `lastStatus` is a failure status only (`0` or >= 400). `onConnectionChange` is unchanged. |
+
+`useEventStream` takes the same options and returns `status`. With `shareAcrossTabs`, the leader
+relays status and the `ready` / `resync` / terminal frames, so each follower runs its own
+`onResync` against its own cache. An effect re-run (leader handoff, `enabled` toggle, option change)
+resumes from the last cursor the hook reached on that stream, relayed ones included, not from the
+`resumeFrom` prop; a revoked stream stays `revoked` for followers when the leader lets go.
 
 ## WebSocket — Real-Time + Bidirectional
 
@@ -776,6 +825,26 @@ The handler receives the full `ArcApiError`, the failing request descriptor, the
 
 All four transports share **one** dedup'd refresh promise — concurrent failures across mixed transports (5 in-flight uploads + 3 WebSocket reconnects + 10 fetch calls, all 401 at once) collapse to a single `onAuthError` call.
 
+**Session-state 403s (opt-in).** Some 403s mean the session's state changed, not "you may not do this": a second factor became required after a deploy, a password must be rotated. Without a hook, a tab left open shows that 403 as an error until reload. `onSessionChange` routes the 403s your predicate matches to a handler with the same contract as `onAuthError`:
+
+```ts
+configureAuth({
+  getToken,
+  onAuthError,
+  onSessionChange: {
+    match: (error) => error.code === "auth.second_factor_required", // only 403s are offered
+    handler: async ({ setToken }) => {
+      const token = await openStepUpDialog(); // null when the user cancels
+      if (!token) return "skip";               // the 403 surfaces
+      setToken(token);
+      return "retry";
+    },
+  },
+});
+```
+
+Concurrent matched 403s share one handler call (one dialog, not N), kept apart from the 401 refresh. A matched 403 goes here even with `retryOn403: true`; unmatched 403s keep the existing path. `maxAuthRetries` caps it per request, counted apart from 401s, so a refresh followed by a step-up on the same request both run. It covers the JSON client (CRUD hooks, `arcFetch`, `handleApiRequest`, actions); uploads and streams keep 401 recovery only. `initSDK({ onSessionChange })` (`./sdk/init`) passes it through.
+
 ## Cache & Keys
 
 ```ts
@@ -841,8 +910,9 @@ Generic building blocks for a Next.js app on an arc API. The host supplies every
 | Subpath | What |
 |---|---|
 | `/runtime` | `definePublicEnv({ globalName, read })`: runtime settings. The server reads `process.env` through your typed `read`; the root layout writes `publicEnvScript()` (nonce'd, `<` escaped); the browser reads `window[globalName]`. Also `trimSlash`, `csv`, `serializeForScript`. |
-| `/csp` | `contentSecurityPolicy({ nonce, apiOrigin, storageOrigin, mapOrigins, embedOrigins, extra, dev })` (nonce + `strict-dynamic`, Trusted Types in production), `TRUSTED_TYPES_DEFAULT_POLICY`, `originOf` / `originsOf` / `hostOrigins`, and `createProxy({ NextResponse, policy })` for Next's `proxy.ts`. No `next` import: you pass `NextResponse`. |
+| `/csp` | `contentSecurityPolicy({ nonce, apiOrigin, storageOrigin, mapOrigins, embedOrigins, frameSrc, extra, dev })` (nonce + `strict-dynamic`, Trusted Types in production; `frameSrc: "none"` for an app that frames nothing, or an array replacing the built-in frame list; `connect-src blob:` via `extra`), `TRUSTED_TYPES_DEFAULT_POLICY`, `originOf` / `originsOf` / `hostOrigins`, and `createProxy({ NextResponse, policy, requestHeaders })` for Next's `proxy.ts` (`requestHeaders` sets forwarded request headers, `null` deletes one; it cannot override `x-nonce` or the CSP; incoming headers pass through, so set or delete every trust hint you read). No `next` import: you pass `NextResponse`. |
 | `/auth-proxy` | `createAuthProxy({ upstream, internalUpstream })` returns `GET/POST/PUT/PATCH/DELETE` route handlers that reverse-proxy an auth service same-origin: hop-by-hop headers filtered, every `set-cookie` kept, `redirect: "manual"`, a 502 JSON body when the upstream is down. |
+| `/service-worker` | `useServiceWorker({ url, scope, checkEveryMs, enabled })` registers a worker (`updateViaCache: "none"`) and returns `{ updateReady, applyUpdate }`: a new worker installs and WAITS, the page offers the reload, and `applyUpdate()` posts `SKIP_WAITING_MESSAGE` (`{ type: "SKIP_WAITING" }`; your worker answers with `self.skipWaiting()`) and reloads once it controls the page. Checks for a newer worker when the page becomes visible again and every `checkEveryMs`. Framework-free: `watchServiceWorker`, `applyServiceWorkerUpdate`. What the worker caches is yours. `"use client"`. |
 | `/sdk/transport` | `SdkConfig`, `createIsolatedClient`, `resolveTransport`, `bareCollectionPath` (no trailing slash on a collection route). |
 | `/sdk/init` | `initSDK(config)`: one boot call for client, auth, toast (message keys resolved at display time), navigation, messages. `"use client"`. |
 | `/sdk/messages` | Message KEYS instead of English: `registerCrudMessages`, `configureMessages(resolver, { keyPrefix })`, `listMessageKeys`, `resolveToastText`, `localizeToastHandler`. The resolver context carries the server `code` and `details` of a refused request. |
@@ -850,7 +920,7 @@ Generic building blocks for a Next.js app on an arc API. The host supplies every
 | `/sdk/hooks` | `useResourceAction`, `useRouteAction`, `useQuietRouteAction`, `useRouteQuery`, `useRouteList` (`enabled`, `placeholderData`), `toastCrudSuccess`. Composes `createCrudHooks` bundles. `"use client"`. |
 | `/sdk/resource` | `defineSdkResource`, `keyRoot`, `invalidateRoots`: route, cache key root, names and permission in one definition. |
 | `/sdk/download` | `createDownloader` / `streamDownload` / `saveDownload`: streamed file download, token in a header, filename from `content-disposition`, `truncated` from a configurable header. |
-| `/sdk/errors`, `/sdk/error-capture`, `/sdk/route`, `/sdk/localized` | `errorCode` / `errorStatus` / `mapError` / `SdkRequestError`; the refused-response ring behind the message context; `enc` / `compact` / `fetchAllPages`; `localized` / `localizedName`. |
+| `/sdk/errors`, `/sdk/error-capture`, `/sdk/route`, `/sdk/localized` | `errorCode` / `errorStatus` / `errorDetails` / `mapError` / `SdkRequestError`; the refused-response ring behind the message context; `enc` / `compact` / `fetchAllPages`; `localized` / `localizedName`. |
 
 ```ts
 // proxy.ts
@@ -872,6 +942,24 @@ export const { DELETE, GET, PATCH, POST, PUT } = createAuthProxy({
   internalUpstream: () => process.env.API_INTERNAL_URL,
 });
 ```
+
+## Peer ranges
+
+Each peer floor is the lowest version the code needs, not the version used in development:
+
+| Peer | Floor | Why this version |
+|---|---|---|
+| `react` | `19.0.0` | No React API newer than 19.0 is used. Works with React 19.2 (Expo SDK 55 / React Native 0.83). |
+| `@tanstack/react-query` | `5.52.1` | First 5.x release whose own peer range accepts React 19. |
+| `@classytic/repo-core` | `0.29.0` | First release exporting `ARC_ERROR_CODES`, `ARC_REASON_CODES` and `DUPLICATE_KEY_DETAIL_CODE` from `./errors`. |
+| `jose` (optional) | `4.8.1` | First release whose types resolve under `moduleResolution: NodeNext`. |
+
+The floors are tested, not asserted. `npm run check:peer-floors` copies the repo into a temp dir,
+installs every peer at its exact floor (plus `react-dom` and `@types/react*` matching the react
+floor), and runs `typecheck`, `typecheck:tests`, `test`, `build` and `check:fixtures` there. It needs
+the npm registry (or a warm npm cache), so it is not part of `npm test` or `prepublishOnly`. CI runs
+it on every push (`peer-minimums` job); run it locally as a release step before `npm run release`.
+A floor moves up only when this check fails at the old floor, with the reason in the CHANGELOG.
 
 ## License
 

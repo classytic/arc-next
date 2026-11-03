@@ -11,6 +11,7 @@ import {
   type AuthErrorHandler,
   type ClientConfig,
   createClient,
+  type SessionChangeHook,
   type ToastHandler,
   type UseRouterHook,
 } from "../client.js";
@@ -28,6 +29,12 @@ export interface SdkConfig {
   getToken: () => string | null;
   /** Fired once per 401 burst: refresh or sign out, then `'retry'` or `'skip'`. Global client only. */
   onAuthError?: AuthErrorHandler;
+  /**
+   * Opt-in: 403s whose `code` means the session's state changed (a second factor became required)
+   * go to this hook instead of surfacing as an error. See arc-next `AuthConfig.onSessionChange`.
+   * Global client only.
+   */
+  onSessionChange?: SessionChangeHook;
   /** Mutation toasts (sonner). Message keys are resolved to text through `messages` before they reach it. */
   toast?: ToastHandler;
   /** Router hook for the navigation helpers arc-next hooks use (Next `useRouter`). */

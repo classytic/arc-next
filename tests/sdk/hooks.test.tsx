@@ -206,6 +206,38 @@ describe("useResourceAction", () => {
     expect(call).toMatchObject({ id: "9", action: "archive" });
     expect(call.data).toBeUndefined();
   });
+
+  it("requestOptions: per-call options (idempotencyKey) from the variables reach dispatchAction, not the body", async () => {
+    boot();
+    const { api, hooks, wrapper } = setup();
+    const close = defineCommitAction<{ note: string }, Item>("close", {
+      key: "hooks.close",
+      silent: true,
+    });
+    let press = "press-1";
+    const { result } = renderHook(
+      () =>
+        useResourceAction(hooks, close, {
+          requestOptions: (vars) => ({ idempotencyKey: `${press}:${vars.id}` }),
+        }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.mutateAsync({ id: "7", note: "n" });
+    });
+    press = "press-2";
+    await act(async () => {
+      await result.current.mutateAsync({ id: "8", note: "m" });
+    });
+    const calls = (api.dispatchAction as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls[0]).toMatchObject({
+      id: "7",
+      action: "close",
+      data: { note: "n" },
+      options: { idempotencyKey: "press-1:7" },
+    });
+    expect(calls[1]).toMatchObject({ id: "8", options: { idempotencyKey: "press-2:8" } });
+  });
 });
 
 describe("useRouteAction / useQuietRouteAction", () => {
@@ -239,6 +271,35 @@ describe("useRouteAction / useQuietRouteAction", () => {
     });
     expect(toast.success).toHaveBeenCalledWith("Swept");
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: hooks.KEYS.all }));
+  });
+
+  it("requestOptions: per-call options derived from the input reach invokeRoute", async () => {
+    boot();
+    const { hooks, wrapper } = setup();
+    const invoke = vi.fn(async () => ({ ok: true }));
+    const declare = defineRouteAction<{ title: string; key: string }, { ok: boolean }>({
+      key: "hooks.declare",
+      method: "POST",
+      path: () => "/",
+      body: ({ title }) => ({ title }),
+      silent: true,
+    });
+    const { result } = renderHook(
+      () =>
+        useRouteAction(hooks, routeApi(invoke as never), declare, {
+          requestOptions: (input) => ({ idempotencyKey: input.key }),
+        }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.mutateAsync({ title: "t", key: "k-9" });
+    });
+    expect(invoke).toHaveBeenCalledWith({
+      method: "POST",
+      path: "/",
+      data: { title: "t" },
+      options: { idempotencyKey: "k-9" },
+    });
   });
 
   it("the quiet variant never toasts, success or error, and invalidates only what it is told", async () => {

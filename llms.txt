@@ -1,7 +1,7 @@
 # @classytic/arc-next
 
 > React + TanStack Query SDK for arc APIs, plus Next.js portal bootstrap and SDK core.
-> Peers: React 19+, TanStack Query 5+. Every file is its own subpath. Full guide: skills/arc-next/SKILL.md
+> Peers: React 19+, TanStack Query 5.52.1+. Every file is its own subpath. Full guide: skills/arc-next/SKILL.md
 
 Hand-rolled fetch/axios against an arc API is a bug. Need -> use (subpath):
 
@@ -17,10 +17,11 @@ Hand-rolled fetch/axios against an arc API is a bug. Need -> use (subpath):
 - 401 refresh and retry -> createAuthRefreshHandler + onAuthError (/client)
 - Server error handling -> isArcApiError, isAbortError, isQuotaExceeded, isPreconditionFailed (/client); mapError (/sdk/errors)
 - Backend presets -> withSoftDelete, withBulk, withTree, withSlugLookup, withSearchPreset, withHistory (/presets/*)
-- Realtime -> useEventStream (/sse), useWebSocket (/ws), useUploadWithProgress (/upload)
+- Realtime -> useEventStream (/sse), useWebSocket (/ws), useUploadWithProgress (/upload); replay: resumeFrom, onResync
 - Runtime public settings (one image, many envs) -> definePublicEnv (/runtime)
 - CSP with nonce + Trusted Types -> contentSecurityPolicy, createProxy (/csp)
 - Same-origin auth reverse proxy -> createAuthProxy (/auth-proxy)
+- Installable app, update on request -> useServiceWorker (/service-worker)
 - Localized toasts (message keys) -> configureMessages, listMessageKeys (/sdk/messages)
 - Streamed file download -> createDownloader, streamDownload, saveDownload (/sdk/download)
 - Resource definition (path, key root, names) -> defineSdkResource, invalidateRoots (/sdk/resource)

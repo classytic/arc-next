@@ -47,6 +47,29 @@ export function isNetworkFailure(error: unknown): boolean {
   return error instanceof TypeError;
 }
 
+const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+
+/**
+ * The structured context of a refusal (`{ missing: [...] }`, `{ field }`, `{ retryAfterSeconds }`...), or
+ * `undefined` when there is none. arc serializes a thrown error's `details` object as the wire envelope's
+ * `meta` (the canonical `ErrorContract` record), so `meta` is read first; an object `details` (older or
+ * non-arc backends) is the fallback. The canonical `details` ARRAY is per-field validation, read through
+ * `ArcApiError.details` / `fieldErrors`, never here. Values are `unknown`: narrow each one. Never throws.
+ */
+export function errorDetails(error: unknown): Readonly<Record<string, unknown>> | undefined {
+  try {
+    if (typeof error !== "object" || error === null) return undefined;
+    const json = recordOf((error as { json?: unknown }).json);
+    if (!json) return undefined;
+    return recordOf(json.meta) ?? recordOf(json.details);
+  } catch {
+    return undefined;
+  }
+}
+
 export interface MappedError {
   code: string | undefined;
   status: number | undefined;

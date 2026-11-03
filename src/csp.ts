@@ -31,6 +31,15 @@ export interface CspInput {
   /** Hosts external content may be framed from (video embeds): frame-src only. */
   embedOrigins?: readonly string[];
   /**
+   * `frame-src` base list. Absent: `'self'`, the storage origin and the API origin (0.19 output).
+   * `'none'`: emit `frame-src 'none'` for an app that frames nothing; combining it with non-empty
+   * `embedOrigins` or `extra["frame-src"]` throws, since the two ask for opposite things. An array
+   * replaces the built-in base list; `embedOrigins` and `extra["frame-src"]` still merge after it,
+   * and a list that ends up empty is emitted as `'none'`. Array entries are single source
+   * expressions: one containing whitespace, `;` or `,`, or `'none'` inside an array, throws.
+   */
+  frameSrc?: "none" | readonly string[];
+  /**
    * Extra origins per directive, merged after the built-in ones, e.g.
    * `{ "connect-src": ["https://analytics.example.com"], "font-src": ["https://fonts.gstatic.com"] }`.
    * A directive the builder does not emit (e.g. `child-src`) is appended as `<name> <origins>`.
@@ -89,6 +98,31 @@ export function contentSecurityPolicy(input: CspInput): string {
   const trustedTypes = input.trustedTypes ?? !dev;
   const upgrade = input.upgradeInsecureRequests ?? (!dev && apiOrigin.startsWith("https://"));
   const more = (name: string): string[] => [...(extra[name] ?? [])];
+  const frameSrc = input.frameSrc;
+  if (frameSrc === "none" && (embedOrigins.length > 0 || more("frame-src").length > 0)) {
+    throw new Error(
+      "[arc-next/csp] frameSrc: 'none' cannot be combined with embedOrigins or extra['frame-src']: " +
+        "drop frameSrc to allow those origins, or drop the origins to frame nothing.",
+    );
+  }
+  if (Array.isArray(frameSrc)) {
+    for (const entry of frameSrc as readonly string[]) {
+      if (typeof entry !== "string" || entry === "" || /[\s;,]/.test(entry) || entry === "'none'") {
+        throw new Error(
+          `[arc-next/csp] frameSrc entry ${JSON.stringify(entry)} is not a single source expression: ` +
+            "use frameSrc: 'none' to frame nothing, and one origin or keyword per entry.",
+        );
+      }
+    }
+  }
+  const frames =
+    frameSrc === "none"
+      ? "'none'"
+      : list(
+          ...(frameSrc ?? ["'self'", storageOrigin, apiOrigin]),
+          ...embedOrigins,
+          ...more("frame-src"),
+        ) || "'none'";
 
   const directives: Array<[string, string]> = [
     ["default-src", "'self'"],
@@ -120,7 +154,7 @@ export function contentSecurityPolicy(input: CspInput): string {
       ),
     ],
     ["worker-src", list("'self'", "blob:", ...more("worker-src"))],
-    ["frame-src", list("'self'", storageOrigin, apiOrigin, ...embedOrigins, ...more("frame-src"))],
+    ["frame-src", frames],
     ["media-src", list("'self'", "blob:", storageOrigin, apiOrigin, ...more("media-src"))],
     ["manifest-src", list("'self'", ...more("manifest-src"))],
     ["object-src", "'none'"],
@@ -180,6 +214,23 @@ export interface CreateProxyOptions<
   dev?: boolean;
   /** Nonce source (tests). Default {@link createNonce}. */
   nonce?: () => string;
+  /**
+   * Extra headers to set on the FORWARDED request (what the app's server components and route
+   * handlers read), e.g. a surface or tenant hint derived from the request. Applied after the
+   * incoming headers are copied and before `x-nonce` and the CSP are set: `x-nonce` and
+   * `content-security-policy` (any case) are dropped from the result, so the host cannot replace
+   * the minted values. A `null` value deletes that header from the forwarded request. The response
+   * headers are not touched. Return `undefined` to add nothing.
+   *
+   * Incoming headers pass through unless set or deleted here, so a header the browser can send
+   * (a surface or tenant hint) reaches server components as sent: always set or delete (`null`)
+   * every trust hint the app reads, never set it only conditionally.
+   */
+  requestHeaders?: (context: {
+    request: TRequest;
+    nonce: string;
+    dev: boolean;
+  }) => Record<string, string | null> | undefined;
 }
 
 /**
@@ -209,6 +260,15 @@ export function createProxy<
         ?.NODE_ENV === "development";
     const csp = policy({ nonce, dev, request });
     const headers = new Headers(request.headers);
+    const extraHeaders = options.requestHeaders?.({ request, nonce, dev });
+    if (extraHeaders) {
+      for (const [name, value] of Object.entries(extraHeaders)) {
+        const lower = name.toLowerCase();
+        if (lower === NONCE_HEADER || lower === CSP_HEADER) continue;
+        if (value === null) headers.delete(name);
+        else if (typeof value === "string") headers.set(name, value);
+      }
+    }
     headers.set(NONCE_HEADER, nonce);
     headers.set(CSP_HEADER, csp);
     const response = NextResponse.next({ request: { headers } });

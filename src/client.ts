@@ -631,6 +631,13 @@ export interface ClientConfig {
 export interface EventSourceInitLike {
   withCredentials?: boolean;
   headers?: Record<string, string>;
+  /**
+   * Called for every chunk the stream receives after `open`, heartbeat comments included, so a
+   * caller can tell a quiet line from a dead one. Honoured by `FetchEventSource`
+   * (`@classytic/arc-next/sse-fetch`); the native `EventSource` ignores it (it never exposes
+   * comments). An init callback rather than an event, so it cannot clash with a server event name.
+   */
+  onActivity?: () => void;
 }
 
 /** The fields the SDK reads from an SSE event (`MessageEvent` and react-native-sse events both fit). */
@@ -935,11 +942,47 @@ export interface AuthConfig {
    */
   retryOn403?: boolean;
   /**
+   * Opt-in hook for 403s that mean the session's STATE changed rather than
+   * "you may not do this": a second factor became required after a deploy,
+   * a password must be rotated, the org membership was swapped. Without it a
+   * tab left open shows that 403 as a plain error until reload.
+   *
+   * Only 403s whose parsed error passes `match` reach `handler` (same
+   * contract as {@link onAuthError}: `'retry'` after the user completes the
+   * step, `'skip'` to surface the 403, e.g. after routing to a verify page).
+   * Concurrent matches share one handler call. A matched 403 goes here even
+   * when {@link retryOn403} is on; unmatched 403s keep the existing path.
+   * Retries are capped by {@link maxAuthRetries}, counted apart from 401s,
+   * so a refresh followed by a step-up on the same request both run.
+   * Applies to the JSON client (queries, mutations, actions, routes), not to
+   * uploads or streams.
+   *
+   * @example
+   * ```ts
+   * configureAuth({
+   *   getToken,
+   *   onSessionChange: {
+   *     match: (e) => e.code === "auth.second_factor_required",
+   *     handler: async () => (await openStepUpDialog()) ? "retry" : "skip",
+   *   },
+   * });
+   * ```
+   */
+  onSessionChange?: SessionChangeHook;
+  /**
    * Cap on auth-recovery retries per individual request. Default: `1`.
    * Bumping above 1 risks pathological loops if the refresh itself
    * triggers 401s — only do it if you have hard guarantees on `getToken()`.
    */
   maxAuthRetries?: number;
+}
+
+/** {@link AuthConfig.onSessionChange}: which 403s mean the session changed, and what to do. */
+export interface SessionChangeHook {
+  /** True when this 403 means the session changed. Usually a check on `error.code`. Keep it pure. */
+  match: (error: ArcApiError) => boolean;
+  /** Runs once per burst of matched 403s. `ctx.error.status` is 403. */
+  handler: AuthErrorHandler;
 }
 
 /**
@@ -1065,15 +1108,15 @@ interface AuthRecoveryResult {
 }
 
 /**
- * Shared in-flight refresh. Multiple concurrent 401s collapse onto one
- * `onAuthError` invocation — the dedup happens here. Cleared in `.finally`
- * so the NEXT 401 (after settlement) triggers a fresh recovery cycle.
+ * Shared in-flight recovery per handler: concurrent 401s collapse onto one
+ * `onAuthError` call, matched 403s onto one `onSessionChange` call. Cleared
+ * in `.finally` so the NEXT failure (after settlement) starts a fresh cycle.
  */
-let pendingAuthRecovery: Promise<AuthRecoveryResult> | null = null;
+const pendingAuthRecovery = new Map<AuthErrorHandler, Promise<AuthRecoveryResult>>();
 
 /** @internal — exposed for tests; clears the dedup so they don't bleed. */
 export function _resetAuthRecovery(): void {
-  pendingAuthRecovery = null;
+  pendingAuthRecovery.clear();
 }
 
 /**
@@ -1147,7 +1190,8 @@ function runAuthRecovery(
   handler: AuthErrorHandler,
   ctx: Omit<AuthErrorContext, "setToken">,
 ): Promise<AuthRecoveryResult> {
-  if (pendingAuthRecovery) return pendingAuthRecovery;
+  const pending = pendingAuthRecovery.get(handler);
+  if (pending) return pending;
 
   const promise = (async (): Promise<AuthRecoveryResult> => {
     let overrideToken: string | null | undefined;
@@ -1158,14 +1202,14 @@ function runAuthRecovery(
     return { decision, overrideToken };
   })();
 
-  pendingAuthRecovery = promise.finally(() => {
+  const shared = promise.finally(() => {
     // Clear AFTER settlement so concurrent awaiters all see the same value,
     // while a later 401 (e.g. after a successful refresh expires again) starts
     // a fresh recovery cycle instead of replaying a stale decision.
-    pendingAuthRecovery = null;
+    pendingAuthRecovery.delete(handler);
   });
-
-  return pendingAuthRecovery;
+  pendingAuthRecovery.set(handler, shared);
+  return shared;
 }
 
 /**
@@ -1344,6 +1388,13 @@ export interface ApiRequestOptions {
   timeoutMs?: number;
   /** Explicit idempotency key for this request. Sent as `Idempotency-Key` header. */
   idempotencyKey?: string;
+  /**
+   * How to read a 2xx body. Omitted: by `Content-Type` (JSON parsed; `text/*`, PDF, images and
+   * other binaries as `{ data, response }`). `'text'` answers the body string, `'blob'` the
+   * `Blob`, `'json'` the parsed body (`undefined` when empty), whatever the content type.
+   * An encrypted response is decrypted first, as before. Errors are unaffected.
+   */
+  responseType?: "json" | "text" | "blob";
   /**
    * Send `x-arc-scope: platform` for this request only — overrides `ClientConfig.elevated`.
    * Pass `false` to suppress when client-level elevation is on.
@@ -1713,28 +1764,37 @@ async function executeRequest<T = unknown>(
   }
 
   const handler = authConfig?.onAuthError;
-  // Fast path — most apps haven't wired onAuthError; skip the wrapper entirely.
-  if (!handler) return executeWithBackoff<T>(config, method, endpoint, options);
+  const session = authConfig?.onSessionChange;
+  // Fast path — most apps haven't wired either hook; skip the wrapper entirely.
+  if (!handler && !session) return executeWithBackoff<T>(config, method, endpoint, options);
 
   const retryOn403 = authConfig?.retryOn403 ?? false;
   const maxAuthRetries = Math.max(0, authConfig?.maxAuthRetries ?? 1);
+  // Separate budgets: a 401 refresh, then a 403 step-up on the retry, both get to run.
+  let authTries = 0;
+  let sessionTries = 0;
 
   let currentOptions = options;
-  for (let authAttempt = 0; authAttempt <= maxAuthRetries; authAttempt++) {
+  for (;;) {
     try {
       return await executeWithBackoff<T>(config, method, endpoint, currentOptions);
     } catch (error) {
-      // Out of auth retries OR the error isn't auth-recoverable → bubble as-is.
-      if (authAttempt >= maxAuthRetries || !isAuthRecoverable(error, retryOn403)) {
-        throw error;
-      }
-      // Respect cancellation — don't fire a refresh for a request the caller abandoned.
-      if (currentOptions.signal?.aborted) throw error;
+      // A 403 the session hook matches goes there (more specific than retryOn403).
+      const isSession =
+        !!session && isArcApiError(error) && error.status === 403 && session.match(error);
+      const recover = isSession
+        ? session.handler
+        : isAuthRecoverable(error, retryOn403)
+          ? handler
+          : undefined;
+      const attempt = isSession ? ++sessionTries : ++authTries;
+      // Not recoverable, out of retries, or abandoned by the caller → bubble as-is.
+      if (!recover || attempt > maxAuthRetries || currentOptions.signal?.aborted) throw error;
 
-      const { decision, overrideToken } = await runAuthRecovery(handler, {
+      const { decision, overrideToken } = await runAuthRecovery(recover, {
         error: error as ArcApiError,
         request: { method, endpoint },
-        attempt: authAttempt + 1,
+        attempt,
       });
 
       if (decision !== "retry") throw error;
@@ -1747,8 +1807,6 @@ async function executeRequest<T = unknown>(
       currentOptions = { ...currentOptions, token: nextToken };
     }
   }
-  // Unreachable — the loop either returns or throws. TypeScript needs the line.
-  throw new Error("arc-next: auth retry loop terminated without resolution");
 }
 
 /** Parse `Retry-After` (delta-seconds or HTTP-date) to ms; null when absent/invalid. */
@@ -2048,6 +2106,13 @@ async function executeAttempt<T = unknown>(
       const cipher = await response.text();
       const plaintext = cipher.length > 0 ? await encryption.decrypt(cipher) : "";
       data = plaintext.length > 0 ? JSON.parse(plaintext) : undefined;
+    } else if (options.responseType === "text") {
+      data = await response.text();
+    } else if (options.responseType === "blob") {
+      data = await response.blob();
+    } else if (options.responseType === "json") {
+      const text = await response.text();
+      data = text.length > 0 ? JSON.parse(text) : undefined;
     } else if (contentType?.includes("application/json")) {
       data = await response.json();
     } else if (contentType?.includes("application/pdf") || contentType?.includes("image/")) {

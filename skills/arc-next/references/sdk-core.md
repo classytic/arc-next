@@ -40,7 +40,9 @@ const publish = defineCommitAction<{ expectedVersion: number }, Item>("publish",
   key: "catalog.item.publish", fallback: { success: "Published" },   // silent: true = no toast
 });
 const mutation = useResourceAction(hooks, publish);                  // mutate({ id, expectedVersion })
-await runAction(api, publish, id, { expectedVersion: 3 });
+await runAction(api, publish, id, { expectedVersion: 3 });           // payload and result typed by `publish`
+await runAction(api, publish, id, { expectedVersion: 3 }, { idempotencyKey }); // per-call options (no-payload verb: `undefined` first)
+useResourceAction(hooks, publish, { requestOptions: (vars) => ({ idempotencyKey: keyFor(vars.id) }) }); // per mutate
 
 const revoke = defineRouteAction<{ id: string; reason: string }, Item, { data: Item }>({
   key: "catalog.item.revoke", method: "POST",
@@ -48,8 +50,11 @@ const revoke = defineRouteAction<{ id: string; reason: string }, Item, { data: I
   params: () => undefined, select: (raw) => raw.data,
 });
 useRouteAction(hooks, api, revoke);          // invalidates hooks.KEYS.all unless invalidateQueries
+useRouteAction(hooks, api, revoke, { requestOptions: (input) => ({ idempotencyKey: input.key }) });
 useQuietRouteAction(api, revoke);            // no toast at all
-await runRouteAction(api, revoke, input);
+await runRouteAction(api, revoke, input, { idempotencyKey });   // per-call options
+await api.dispatchAction({ id, action: "close", options: { idempotencyKey } });
+await api.invokeRoute<string>({ path: "/me", options: { responseType: "text" } }); // "text" | "blob" | "json"
 ```
 
 `createCommitActionDefiner({ reservedVerbs, reservedBy })` makes a `defineCommitAction` that refuses verbs another constructor owns; `defineAction(verb, kind, options)` adds your own `kind`. `RouteApi` is the structural slice (`invokeRoute`, `dispatchAction`) so tests pass stubs.
@@ -88,4 +93,4 @@ Token goes in a header, never the URL. A path already starting with the mount po
 
 ## Errors and small helpers
 
-`errorCode`, `errorStatus`, `isNetworkFailure`, `mapError` (`{ code, status, network, fields }`) work on `ArcApiError` and `SdkRequestError`. `compact` drops empty params, `enc` is `encodeURIComponent`, `getRoute`, `fetchAllPages(read, { maxPages })` throws `PageLimitError` rather than return a truncated list. `localizedName(entity, "ar")` prefers `titleAr`/`nameAr`/`labelAr`, then English. `bareCollectionPath` strips the trailing slash arc-next adds to a collection route.
+`errorCode`, `errorStatus`, `isNetworkFailure`, `mapError` (`{ code, status, network, fields }`) work on `ArcApiError` and `SdkRequestError`. `errorDetails(error)` returns a refusal's structured context as `Readonly<Record<string, unknown>> | undefined` (arc's wire `meta`, else an object `details`; never the validation `details` array, never throws): `const missing = errorDetails(err)?.missing`. `compact` drops empty params, `enc` is `encodeURIComponent`, `getRoute`, `fetchAllPages(read, { maxPages })` throws `PageLimitError` rather than return a truncated list. `localizedName(entity, "ar")` prefers `titleAr`/`nameAr`/`labelAr`, then English. `bareCollectionPath` strips the trailing slash arc-next adds to a collection route.

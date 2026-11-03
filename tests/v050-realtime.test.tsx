@@ -760,4 +760,47 @@ describe("useResourceSync (SSE source)", () => {
     expect(keys).toContainEqual(KEYS.lists());
     expect(keys).toContainEqual(KEYS.detail("t1"));
   });
+
+  it("the lazily loaded SSE client never connects for a hook unmounted before it loaded", async () => {
+    const api = createCrudApi<{ _id: string }>("todo", { basePath: "" });
+    const { useResourceSync } = createCrudHooks({ api, entityKey: "todo", singular: "todo" });
+    const { unmount } = renderHook(() => useResourceSync({ source: "sse" }), {
+      wrapper: createWrapper(queryClient),
+    });
+    unmount();
+    await import("../src/sse.js");
+    await flushMicrotasks();
+    expect(MockEventSource.instances).toHaveLength(0);
+  });
+
+  it("a failed SSE start still reaches the error boundary", async () => {
+    delete (globalThis as Record<string, unknown>).EventSource;
+    const api = createCrudApi<{ _id: string }>("todo", { basePath: "" });
+    const { useResourceSync } = createCrudHooks({ api, entityKey: "todo", singular: "todo" });
+    const caught: unknown[] = [];
+    class Boundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
+      override state = { failed: false };
+      static getDerivedStateFromError() {
+        return { failed: true };
+      }
+      override componentDidCatch(error: unknown) {
+        caught.push(error);
+      }
+      override render() {
+        return this.state.failed ? null : this.props.children;
+      }
+    }
+    const Inner = createWrapper(queryClient);
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    renderHook(() => useResourceSync({ source: "sse" }), {
+      wrapper: ({ children }) => (
+        <Inner>
+          <Boundary>{children}</Boundary>
+        </Inner>
+      ),
+    });
+    await waitFor(() => expect(caught).toHaveLength(1));
+    expect(String(caught[0])).toContain("No EventSource");
+    quiet.mockRestore();
+  });
 });

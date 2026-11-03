@@ -149,6 +149,13 @@ export interface ListQueryResult<T> {
   isError: boolean;
   isSuccess: boolean;
   isStale: boolean;
+  /**
+   * When this list's own data last landed (ms epoch, TanStack `dataUpdatedAt`); `0` before the
+   * first answer. For an "Updated 14:02" / "stale for 2 min" stamp read from the list itself.
+   * Always set by this package's hooks; optional so result objects built by hand (adapters, test
+   * doubles) still type-check.
+   */
+  dataUpdatedAt?: number;
   error: Error | null;
   refetch: () => Promise<unknown>;
 }
@@ -240,6 +247,7 @@ export function useListQuery<T>({
     isError: query.isError,
     isSuccess: query.isSuccess,
     isStale: query.isStale,
+    dataUpdatedAt: query.dataUpdatedAt,
     error: query.error,
     refetch: query.refetch,
   };
@@ -390,6 +398,7 @@ export function useSuspenseListQuery<T>({
     isError: query.isError,
     isSuccess: query.isSuccess,
     isStale: query.isStale,
+    dataUpdatedAt: query.dataUpdatedAt,
     error: query.error,
     refetch: query.refetch,
   };

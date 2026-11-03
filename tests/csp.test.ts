@@ -132,6 +132,96 @@ describe("contentSecurityPolicy", () => {
   });
 });
 
+describe("contentSecurityPolicy — frameSrc (Unreleased)", () => {
+  it("absent: frame-src output is identical to 0.19", () => {
+    const csp = contentSecurityPolicy({
+      nonce: "n",
+      apiOrigin: API,
+      storageOrigin: STORAGE,
+      embedOrigins: ["https://player.example.test"],
+      dev: false,
+    });
+    expect(directive(csp, "frame-src")).toBe(
+      `frame-src 'self' ${STORAGE} ${API} https://player.example.test`,
+    );
+  });
+
+  it("'none' emits frame-src 'none' and nothing else", () => {
+    const csp = contentSecurityPolicy({
+      nonce: "n",
+      apiOrigin: API,
+      storageOrigin: STORAGE,
+      dev: false,
+      frameSrc: "none",
+    });
+    expect(directive(csp, "frame-src")).toBe("frame-src 'none'");
+    // Other directives keep the storage and api origins.
+    expect(directive(csp, "media-src")).toBe(`media-src 'self' blob: ${STORAGE} ${API}`);
+  });
+
+  it("'none' with embedOrigins or extra frame-src is a config error", () => {
+    const base = { nonce: "n", apiOrigin: API, dev: false, frameSrc: "none" as const };
+    expect(() =>
+      contentSecurityPolicy({ ...base, embedOrigins: ["https://player.example.test"] }),
+    ).toThrow(/frameSrc: 'none'/);
+    expect(() =>
+      contentSecurityPolicy({ ...base, extra: { "frame-src": ["https://x.example.test"] } }),
+    ).toThrow(/frameSrc: 'none'/);
+    // Empty lists are not a conflict.
+    expect(() =>
+      contentSecurityPolicy({ ...base, embedOrigins: [], extra: { "frame-src": [] } }),
+    ).not.toThrow();
+  });
+
+  it("an array replaces the built-in self / storage / api list; embed and extra still merge", () => {
+    const csp = contentSecurityPolicy({
+      nonce: "n",
+      apiOrigin: API,
+      storageOrigin: STORAGE,
+      embedOrigins: ["https://player.example.test"],
+      extra: { "frame-src": ["https://pay.example.test"] },
+      dev: false,
+      frameSrc: ["'self'"],
+    });
+    expect(directive(csp, "frame-src")).toBe(
+      "frame-src 'self' https://player.example.test https://pay.example.test",
+    );
+  });
+
+  it("an empty array with nothing else to frame falls back to 'none'", () => {
+    const csp = contentSecurityPolicy({ nonce: "n", apiOrigin: API, dev: false, frameSrc: [] });
+    expect(directive(csp, "frame-src")).toBe("frame-src 'none'");
+  });
+
+  it("array entries must be single source expressions; 'none' inside an array throws", () => {
+    const base = { nonce: "n", apiOrigin: API, dev: false };
+    for (const bad of [
+      "https://a.test; script-src *",
+      "https://a.test,https://b.test",
+      "a b",
+      "",
+      "'none'",
+    ]) {
+      expect(() => contentSecurityPolicy({ ...base, frameSrc: [bad] })).toThrow(/frameSrc entry/);
+    }
+    expect(() => contentSecurityPolicy({ ...base, frameSrc: ["'self'", "'none'"] })).toThrow(
+      /frameSrc entry/,
+    );
+  });
+
+  it("connect-src blob: is added through extra and is not in the default", () => {
+    const plain = contentSecurityPolicy({ nonce: "n", apiOrigin: API, dev: false });
+    expect(directive(plain, "connect-src")).not.toContain("blob:");
+    const csp = contentSecurityPolicy({
+      nonce: "n",
+      apiOrigin: API,
+      dev: false,
+      extra: { "connect-src": ["blob:"] },
+    });
+    expect(directive(csp, "connect-src")).toBe(`connect-src 'self' ${API} blob:`);
+  });
+});
+
 describe("origin helpers", () => {
   it("originOf drops relative, empty and unparsable urls and tolerates {templates}", () => {
     expect(originOf("https://cdn.example.test/tiles/{z}/{x}/{y}.pbf")).toBe(
@@ -218,6 +308,79 @@ describe("createProxy", () => {
     expect(forwarded[0]?.get("content-security-policy")).toBe(csp);
     expect(forwarded[0]?.get("x-keep")).toBe("1");
     expect(seen).toEqual([{ nonce: "fixed-nonce", dev: false }]);
+  });
+
+  it("requestHeaders are forwarded on the request; the response CSP is unchanged", () => {
+    const { NextResponse, forwarded } = setup();
+    const ctxs: Array<{ nonce: string; dev: boolean; path: string | null }> = [];
+    const proxy = createProxy({
+      NextResponse,
+      nonce: () => "fixed-nonce",
+      dev: false,
+      policy: ({ nonce }) => `script-src 'nonce-${nonce}'`,
+      requestHeaders: ({ request, nonce, dev }) => {
+        ctxs.push({ nonce, dev, path: request.headers.get("x-path") });
+        return { "x-app-surface": "console", "x-keep": "override" };
+      },
+    });
+    const response = proxy({ headers: new Headers({ "x-keep": "1", "x-path": "/a" }) });
+    expect(ctxs).toEqual([{ nonce: "fixed-nonce", dev: false, path: "/a" }]);
+    expect(forwarded[0]?.get("x-app-surface")).toBe("console");
+    expect(forwarded[0]?.get("x-keep")).toBe("override");
+    expect(response.headers.get("content-security-policy")).toBe("script-src 'nonce-fixed-nonce'");
+    expect(response.headers.get("x-app-surface")).toBeNull();
+  });
+
+  it("requestHeaders cannot override the minted nonce or the CSP (any case)", () => {
+    const { NextResponse, forwarded } = setup();
+    const proxy = createProxy({
+      NextResponse,
+      nonce: () => "minted",
+      dev: false,
+      policy: ({ nonce }) => `script-src 'nonce-${nonce}'`,
+      requestHeaders: () => ({
+        "X-Nonce": "attacker",
+        "Content-Security-Policy": "script-src *",
+        "x-ok": "1",
+      }),
+    });
+    const response = proxy({ headers: new Headers() });
+    expect(forwarded[0]?.get(NONCE_HEADER)).toBe("minted");
+    expect(forwarded[0]?.get("content-security-policy")).toBe("script-src 'nonce-minted'");
+    expect(forwarded[0]?.get("x-ok")).toBe("1");
+    expect(response.headers.get("content-security-policy")).toBe("script-src 'nonce-minted'");
+  });
+
+  it("requestHeaders returning undefined forwards the request headers unchanged", () => {
+    const { NextResponse, forwarded } = setup();
+    const proxy = createProxy({
+      NextResponse,
+      nonce: () => "n",
+      dev: false,
+      policy: () => "x",
+      requestHeaders: () => undefined,
+    });
+    proxy({ headers: new Headers({ "x-keep": "1" }) });
+    expect([...forwarded[0]!.keys()].sort()).toEqual(
+      ["content-security-policy", "x-keep", NONCE_HEADER].sort(),
+    );
+  });
+
+  it("requestHeaders: null deletes a client-sent header; other incoming headers pass through", () => {
+    const { NextResponse, forwarded } = setup();
+    const proxy = createProxy({
+      NextResponse,
+      nonce: () => "n",
+      dev: false,
+      policy: () => "x",
+      requestHeaders: () => ({ "X-App-Surface": null, "x-tenant": "t1" }),
+    });
+    proxy({
+      headers: new Headers({ "x-app-surface": "admin", "x-tenant": "spoof", "x-keep": "1" }),
+    });
+    expect(forwarded[0]!.has("x-app-surface")).toBe(false);
+    expect(forwarded[0]!.get("x-tenant")).toBe("t1");
+    expect(forwarded[0]!.get("x-keep")).toBe("1");
   });
 
   it("a fresh base64 nonce per request", () => {

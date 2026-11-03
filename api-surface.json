@@ -20,7 +20,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "12e3f54c99d9aee2"
+    "typesHash": "d55086e0e7b90069"
   },
   "./client": {
     "runtime": [
@@ -96,6 +96,7 @@
       "QuotaDetails",
       "RetryConfig",
       "ServerClientConfig",
+      "SessionChangeHook",
       "StreamUrlProtocol",
       "TextResponse",
       "TierRequirement",
@@ -141,7 +142,7 @@
       "isTierRequiredError",
       "isValidationError"
     ],
-    "typesHash": "8003521d9dd97fb0"
+    "typesHash": "955c655c28f55161"
   },
   "./encryption": {
     "runtime": [
@@ -206,7 +207,7 @@
       "isKeysetPagination",
       "isOffsetPagination"
     ],
-    "typesHash": "04223feb480d452b"
+    "typesHash": "5fc0cba3a614db52"
   },
   "./cache": {
     "runtime": [
@@ -301,7 +302,7 @@
       "useSuspenseDetailQuery",
       "useSuspenseListQuery"
     ],
-    "typesHash": "d1dc3b7b003f3c60"
+    "typesHash": "033e65ea5406c8f2"
   },
   "./mutation": {
     "runtime": [
@@ -347,7 +348,7 @@
       "configureNavigation",
       "createCrudHooks"
     ],
-    "typesHash": "12e3f54c99d9aee2"
+    "typesHash": "d55086e0e7b90069"
   },
   "./query-client": {
     "runtime": [
@@ -419,6 +420,7 @@
   },
   "./sse": {
     "runtime": [
+      "STREAM_FRAMES",
       "buildSseUrl",
       "subscribeToEvents",
       "useEventStream"
@@ -429,13 +431,25 @@
       "CrudOperation",
       "EventStreamOptions",
       "EventStreamResult",
+      "ReadyFrame",
+      "ResyncFrame",
+      "ResyncReason",
+      "RetryFrame",
+      "RevokedFrame",
+      "STREAM_FRAMES",
+      "StreamBackoff",
+      "StreamFrameName",
+      "StreamHealth",
+      "StreamResyncInfo",
+      "StreamStatus",
+      "StreamTerminalInfo",
       "SubscribeToEventsHandle",
       "SubscribeToEventsOptions",
       "buildSseUrl",
       "subscribeToEvents",
       "useEventStream"
     ],
-    "typesHash": "7695985c5288262e"
+    "typesHash": "b14f35513817d369"
   },
   "./sse-fetch": {
     "runtime": [
@@ -451,7 +465,7 @@
       "SseParserHandlers",
       "createSseParser"
     ],
-    "typesHash": "9554a050e99cbe9e"
+    "typesHash": "2416e0c702f6f4cc"
   },
   "./auth-token": {
     "runtime": [
@@ -474,6 +488,23 @@
       "useTabLeader"
     ],
     "typesHash": "13fde95b5cee457e"
+  },
+  "./service-worker": {
+    "runtime": [
+      "SKIP_WAITING_MESSAGE",
+      "applyServiceWorkerUpdate",
+      "useServiceWorker",
+      "watchServiceWorker"
+    ],
+    "types": [
+      "SKIP_WAITING_MESSAGE",
+      "ServiceWorkerOptions",
+      "ServiceWorkerUpdate",
+      "applyServiceWorkerUpdate",
+      "useServiceWorker",
+      "watchServiceWorker"
+    ],
+    "typesHash": "15cd825152036289"
   },
   "./ws": {
     "runtime": [
@@ -619,7 +650,7 @@
       "originOf",
       "originsOf"
     ],
-    "typesHash": "8508cc2146002321"
+    "typesHash": "5e217ce220c169a8"
   },
   "./auth-proxy": {
     "runtime": [
@@ -698,6 +729,7 @@
     "runtime": [
       "SdkRequestError",
       "errorCode",
+      "errorDetails",
       "errorStatus",
       "isNetworkFailure",
       "mapError"
@@ -706,11 +738,12 @@
       "MappedError",
       "SdkRequestError",
       "errorCode",
+      "errorDetails",
       "errorStatus",
       "isNetworkFailure",
       "mapError"
     ],
-    "typesHash": "9a028c10a104ff41"
+    "typesHash": "49b566703105acdd"
   },
   "./sdk/transport": {
     "runtime": [
@@ -736,7 +769,7 @@
       "setGlobalTransport",
       "withBareCollectionPaths"
     ],
-    "typesHash": "02b0914674626977"
+    "typesHash": "d0d78dcd45e637e1"
   },
   "./sdk/download": {
     "runtime": [
@@ -782,6 +815,8 @@
       "RouteActionDescriptor",
       "RouteApi",
       "RouteMethod",
+      "RunActionArgs",
+      "RunRequestOptions",
       "createCommitActionDefiner",
       "defineAction",
       "defineCommitAction",
@@ -790,7 +825,7 @@
       "runAction",
       "runRouteAction"
     ],
-    "typesHash": "b6cbc9d5bfb54b30"
+    "typesHash": "03062ca511390224"
   },
   "./sdk/route": {
     "runtime": [
@@ -865,7 +900,7 @@
       "useRouteList",
       "useRouteQuery"
     ],
-    "typesHash": "0f025cd603c11985"
+    "typesHash": "e312b1bac4963dc5"
   },
   "./sdk/init": {
     "runtime": [

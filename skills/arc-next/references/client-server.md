@@ -36,6 +36,10 @@ configureAuth({
 
 Handler returns `"retry"` or `"skip"`, or throws. Concurrent 401s share one refresh across fetch, XHR upload, WebSocket and SSE. Custom handler gets `{ error, request, attempt, setToken }`.
 
+403s that mean the session changed (second factor now required) are opt-in, JSON client only:
+`onSessionChange: { match: (e) => e.code === "auth.second_factor_required", handler }`. Same handler
+contract, own dedup and retry budget; matched 403s skip `retryOn403`.
+
 ## Outside hooks
 
 ```ts

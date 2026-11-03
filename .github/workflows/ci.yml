@@ -41,18 +41,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      # Install the EXACT minimum of every declared peer range — the claim
-      # "works with >=X" is tested, not asserted. Bump these alongside
-      # peerDependencies; drift fails the job.
-      - run: >
-          npm install --no-save
-          react@19.0.0
-          react-dom@19.0.0
-          @tanstack/react-query@5.62.0
-          @classytic/repo-core@0.14.0
-          jose@5.0.0
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - run: npm run check:fixtures
+      # Installs the EXACT floor of every declared peer range (read from
+      # package.json, so it cannot drift) into a temp copy and runs
+      # typecheck, typecheck:tests, test, build and check:fixtures there.
+      - run: npm run check:peer-floors

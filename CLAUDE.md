@@ -66,6 +66,7 @@ src/
   runtime.ts      definePublicEnv: runtime public settings (server env -> nonce'd script -> browser), server-safe
   csp.ts          contentSecurityPolicy, Trusted Types default policy, createProxy (host passes NextResponse; no next import), server-safe
   auth-proxy.ts   createAuthProxy: same-origin reverse-proxy route handlers, server-safe
+  service-worker.ts useServiceWorker / watchServiceWorker / applyServiceWorkerUpdate: register + waiting update, "use client"
   sdk/            host SDK core, one subpath per file (messages, actions, hooks, init, resource, download, transport, errors, error-capture, route, localized); hooks.ts + init.ts are "use client"
 tests/            Co-located vitest (1:1 with src files; tests/presets/ mirrors src/presets/)
 ```
@@ -91,7 +92,7 @@ Release-gate notes (0.12+, ported from arc):
 - `api-surface.json` snapshots every subpath's runtime+type exports + declaration hashes. Any removal or signature change FAILS until you regenerate the snapshot in the same change and note it in CHANGELOG.md.
 - `scripts/check-bundle-size.mjs` holds gzip budgets per subpath — raising a budget is a reviewed edit, not automatic.
 - `fixtures/` holds Next App Router + Vite consumer fixtures type-checked against the BUILT dist via package self-reference — run `npm run build` first.
-- CI (`.github/workflows/ci.yml`) runs the matrix plus a peer-minimums job installing the exact declared minimums. Bump that job when you bump `peerDependencies`.
+- Peer floors: `npm run check:peer-floors` (`scripts/check-peer-floors.mjs`) installs every `peerDependencies` floor exactly into a temp copy and runs typecheck×2 + test + build + check:fixtures. CI's peer-minimums job runs it; run it locally before a release (needs network, so not in `prepublishOnly`). Never raise a floor to the dev version: raise it only when this check fails at the old floor, and name the API that forced it in CHANGELOG.md.
 
 ## Adding a feature — checklist
 

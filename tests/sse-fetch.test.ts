@@ -143,6 +143,31 @@ describe("createSseParser — framing rules", () => {
   });
 });
 
+describe("createSseParser — onActivity (Unreleased)", () => {
+  it("fires once per non-empty push, a heartbeat comment alone included, before its events", () => {
+    const log: string[] = [];
+    const p = createSseParser({
+      onEvent: (e) => log.push(`event:${e.data}`),
+      onActivity: () => log.push("activity"),
+    });
+    p.push(": heartbeat\n\n");
+    p.push("");
+    p.push("data: a\n\n");
+    p.push("data: b\n");
+    p.push("\n");
+    expect(log).toEqual(["activity", "activity", "event:a", "activity", "activity", "event:b"]);
+  });
+
+  it("initialLastEventId seeds the buffer: an event without id: reports it, a new id replaces it", () => {
+    const events: SseParsedEvent[] = [];
+    const p = createSseParser({ onEvent: (e) => events.push(e), initialLastEventId: "c1" });
+    expect(p.lastEventId).toBe("c1");
+    p.push('event: ready\ndata: {"resumed":true}\n\n');
+    p.push("id: c2\ndata: x\n\n");
+    expect(events.map((e) => e.lastEventId)).toEqual(["c1", "c2"]);
+  });
+});
+
 // ----------------------------------------------------------------------------
 // Transport
 // ----------------------------------------------------------------------------
@@ -280,6 +305,65 @@ describe("FetchEventSource", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(fn).not.toHaveBeenCalled();
     es.close();
+  });
+
+  it("init.onActivity fires per chunk after open, comment chunks included, never before open", async () => {
+    let resolve!: (r: Response) => void;
+    let stream!: Stream;
+    mockFetch(
+      (call) =>
+        new Promise<Response>((r) => {
+          stream = sseResponse(call.init.signal);
+          resolve = r;
+        }),
+    );
+    const onActivity = vi.fn();
+    const es = new FetchEventSource("http://api.test/stream", { onActivity });
+    const messages = vi.fn();
+    es.addEventListener("message", messages);
+    await vi.waitFor(() => expect(stream).toBeDefined());
+    // Bytes queued before the response resolves are delivered after open.
+    expect(onActivity).not.toHaveBeenCalled();
+    resolve(stream.response);
+    await vi.waitFor(() => expect(es.readyState).toBe(1));
+    expect(onActivity).not.toHaveBeenCalled();
+    stream.push(": heartbeat\n\n");
+    await vi.waitFor(() => expect(onActivity).toHaveBeenCalledTimes(1));
+    stream.push("data: x\n\n");
+    await vi.waitFor(() => expect(messages).toHaveBeenCalledTimes(1));
+    expect(onActivity).toHaveBeenCalledTimes(2);
+    es.close();
+  });
+
+  it("a throwing onActivity does not break the stream", async () => {
+    const { streams } = liveStreams();
+    const onActivity = vi.fn(() => {
+      throw new Error("boom");
+    });
+    const errors: unknown[] = [];
+    // The callback's error is rethrown on a microtask (like a throwing listener): capture it.
+    const realQueue = globalThis.queueMicrotask;
+    const qm = vi.spyOn(globalThis, "queueMicrotask").mockImplementation((fn) =>
+      realQueue(() => {
+        try {
+          fn();
+        } catch (err) {
+          errors.push(err);
+        }
+      }),
+    );
+    const es = new FetchEventSource("http://api.test/stream", { onActivity });
+    const messages = vi.fn();
+    es.addEventListener("message", messages);
+    await vi.waitFor(() => expect(es.readyState).toBe(1));
+    streams[0]!.push("data: x\n\n");
+    await vi.waitFor(() => expect(messages).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(onActivity).toHaveBeenCalled();
+    expect(errors[0]).toMatchObject({ message: "boom" });
+    expect(es.readyState).toBe(1);
+    es.close();
+    qm.mockRestore();
   });
 
   it("records retry: as reconnectionTime", async () => {
@@ -434,6 +518,105 @@ describe("subscribeToEvents — default FetchEventSource for streamAuth 'header'
     expect(calls[1]!.headers["last-event-id"]).toBe("78");
     expect(calls[1]!.headers.authorization).toBe("Bearer tok_secret");
     expect(calls.every((c) => (c.init.method ?? "GET") === "GET")).toBe(true);
+    handle.close();
+  });
+
+  it("a resumed connection that ends before any id keeps its cursor (Last-Event-ID resent)", async () => {
+    const { calls, streams } = liveStreams();
+    const onResync = vi.fn();
+    const handle = subscribeToEvents({
+      resource: "incident",
+      resumeFrom: "c1",
+      onResync,
+      reconnectDelay: 5,
+    });
+    await vi.waitFor(() => expect(streams).toHaveLength(1));
+    expect(calls[0]!.headers["last-event-id"]).toBe("c1");
+    // Empty replay: only the id-less ready frame and a heartbeat, then the line drops.
+    streams[0]!.push('event: ready\ndata: {"cursor":"c1","resumed":true}\n\n: hb\n\n');
+    await vi.waitFor(() => expect(handle.status().lastActivityAt).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(handle.status().lastEventId).toBe("c1");
+    streams[0]!.end();
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]!.headers["last-event-id"]).toBe("c1");
+    expect(onResync).not.toHaveBeenCalled();
+
+    // A frame with an id moves it; a later id-less frame does not undo it.
+    await vi.waitFor(() => expect(streams).toHaveLength(2));
+    streams[1]!.push('event: incident.updated\nid: c2\ndata: {"x":1}\n\n');
+    streams[1]!.push('event: ready\ndata: {"cursor":"c2","resumed":true}\n\n');
+    await vi.waitFor(() => expect(handle.status().lastEventId).toBe("c2"));
+    await new Promise((r) => setTimeout(r, 0));
+    streams[1]!.end();
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls[2]!.headers["last-event-id"]).toBe("c2");
+    handle.close();
+  });
+
+  it("over the wire: headers and a heartbeat are not live; ready is; a drop before ready resends the cursor", async () => {
+    const { calls, streams } = liveStreams();
+    const healths: string[] = [];
+    const handle = subscribeToEvents({
+      resource: "incident",
+      resumeFrom: "c1",
+      onStatus: (s) => healths.push(s.health),
+      reconnectDelay: 5,
+    });
+    await vi.waitFor(() => expect(handle.isConnected()).toBe(true));
+    streams[0]!.push("retry: 3000\n\n: hb\n\n");
+    await vi.waitFor(() => expect(handle.status().lastActivityAt).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(handle.status().health).toBe("connecting");
+    // The server dies after the headers, before its ready (arc's replay burst).
+    streams[0]!.end();
+    await vi.waitFor(() => expect(streams).toHaveLength(2));
+    expect(calls[1]!.headers["last-event-id"]).toBe("c1");
+    await vi.waitFor(() => expect(handle.isConnected()).toBe(true));
+    expect(handle.status().health).toBe("offline");
+    streams[1]!.push('event: ready\ndata: {"cursor":"c1","resumed":true}\n\n');
+    await vi.waitFor(() => expect(handle.status().health).toBe("live"));
+    // Offline twice: at the failure, then with the scheduled attempt; never live before ready.
+    expect(healths).toEqual(["connecting", "offline", "offline", "live"]);
+    handle.close();
+  });
+
+  it("an id-only checkpoint frame moves the cursor: status(), a stale reconnect and close()", async () => {
+    const { calls, streams } = liveStreams();
+    const onEvent = vi.fn();
+    const handle = subscribeToEvents({
+      resource: "incident",
+      resumeFrom: "c1",
+      onResync: vi.fn(),
+      onEvent,
+      staleAfterMs: 80,
+      reconnectDelay: 5,
+    });
+    await vi.waitFor(() => expect(streams).toHaveLength(1));
+    // arc's replay hub: ready, then `id:` alone after entries this viewer may not see.
+    streams[0]!.push('event: ready\ndata: {"cursor":"c1","resumed":true}\n\nid: c9\n\n');
+    await vi.waitFor(() => expect(handle.status().lastEventId).toBe("c9"));
+    expect(onEvent).not.toHaveBeenCalled();
+
+    // Silence → stale → the reconnect resumes after the checkpoint.
+    await vi.waitFor(() => expect(calls).toHaveLength(2), { timeout: 2000 });
+    expect(calls[1]!.headers["last-event-id"]).toBe("c9");
+
+    await vi.waitFor(() => expect(streams).toHaveLength(2));
+    streams[1]!.push("id: c12\n\n");
+    await new Promise((r) => setTimeout(r, 10));
+    handle.close();
+    expect(handle.status().lastEventId).toBe("c12");
+  });
+
+  it("a stream that ended normally is not reported as a failure status", async () => {
+    const { calls, streams } = liveStreams();
+    const handle = subscribeToEvents({ resource: "incident", reconnectDelay: 60_000 });
+    await vi.waitFor(() => expect(handle.isConnected()).toBe(true));
+    streams[0]!.end();
+    await vi.waitFor(() => expect(handle.status().health).toBe("offline"));
+    expect(handle.status().lastStatus).toBeUndefined();
+    expect(calls).toHaveLength(1);
     handle.close();
   });
 

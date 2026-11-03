@@ -117,6 +117,17 @@ describe("createCrudHooks", () => {
       expect(result.current.pagination?.total).toBe(2);
     });
 
+    it("dataUpdatedAt: 0 before the first answer, then the time the list's own read landed", async () => {
+      const wrapper = createWrapper(queryClient);
+      const before = Date.now();
+      const { result } = renderHook(() => hooks.useList(null, {}, { public: true }), { wrapper });
+      expect(result.current.dataUpdatedAt).toBe(0);
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.dataUpdatedAt).toBeGreaterThanOrEqual(before);
+      const [listQuery] = queryClient.getQueryCache().findAll({ queryKey: hooks.KEYS.all });
+      expect(result.current.dataUpdatedAt).toBe(listQuery?.state.dataUpdatedAt);
+    });
+
     it("calls api.getAll with correct params", async () => {
       const wrapper = createWrapper(queryClient);
 

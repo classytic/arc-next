@@ -73,6 +73,54 @@ describe("runAction", () => {
     await runAction(api, defineCommitAction<void>("archive", { key: "a.archive2" }), "a1");
     expect(calls).toEqual([{ action: { id: "a1", action: "archive" } }]);
   });
+
+  it("forwards per-call request options (idempotencyKey) after the payload, never in the body", async () => {
+    const { api, calls } = recorder();
+    const publish = defineCommitAction<{ expectedVersion: number }>("publish", {
+      key: "a.publish3",
+    });
+    await runAction(api, publish, "a1", { expectedVersion: 3 }, { idempotencyKey: "k-1" });
+    const archive = defineCommitAction<void>("archive", { key: "a.archive3" });
+    await runAction(api, archive, "a2", undefined, { idempotencyKey: "k-2" });
+    expect(calls).toEqual([
+      {
+        action: {
+          id: "a1",
+          action: "publish",
+          data: { expectedVersion: 3 },
+          options: { idempotencyKey: "k-1" },
+        },
+      },
+      { action: { id: "a2", action: "archive", options: { idempotencyKey: "k-2" } } },
+    ]);
+  });
+
+  it("sends Idempotency-Key through a real BaseApi", async () => {
+    const seen: Array<{ url: string; headers: Headers; body: unknown }> = [];
+    const client = createClient({
+      baseUrl: "http://api.test",
+      fetch: (async (url: string, init: RequestInit) => {
+        seen.push({
+          url: String(url),
+          headers: new Headers(init.headers),
+          body: JSON.parse(String(init.body)),
+        });
+        return new Response(JSON.stringify({ _id: "a1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    });
+    const api = new BaseApi("docs", { client });
+    const close = defineCommitAction<{ note: string }, { _id: string }>("close", {
+      key: "a.close3",
+    });
+    await expect(
+      runAction(api, close, "a1", { note: "n" }, { idempotencyKey: "press-1" }),
+    ).resolves.toEqual({ _id: "a1" });
+    expect(seen[0]?.headers.get("idempotency-key")).toBe("press-1");
+    expect(seen[0]?.body).toEqual({ action: "close", note: "n" });
+  });
 });
 
 describe("runRouteAction: method, path, body, params", () => {

@@ -9,7 +9,7 @@ import { createRequestClient } from '@classytic/arc-next/server';
 import { createCrudApi } from '@classytic/arc-next/api';
 import { contentSecurityPolicy, createProxy, TRUSTED_TYPES_DEFAULT_POLICY } from '@classytic/arc-next/csp';
 import { csv, definePublicEnv, trimSlash } from '@classytic/arc-next/runtime';
-import { defineCommitAction, defineRouteAction, runRouteAction } from '@classytic/arc-next/sdk/actions';
+import { defineCommitAction, defineRouteAction, runAction, runRouteAction } from '@classytic/arc-next/sdk/actions';
 import { createDownloader, streamDownload } from '@classytic/arc-next/sdk/download';
 import { configureMessages, listMessageKeys } from '@classytic/arc-next/sdk/messages';
 import { defineSdkResource, invalidateRoots } from '@classytic/arc-next/sdk/resource';
@@ -75,6 +75,9 @@ export async function serverGoldenPath(headers: Headers) {
   const page = await createCrudApi<Item>('orders', { client }).getAll();
   const isolated = createIsolatedClient({ baseUrl: publicEnv.apiUrl, getToken: () => null });
   await runRouteAction(items.bind(isolated.client, isolated.transport.basePath), sweep, { id: '1' });
+  // The payload and the result come from the descriptor (no type arguments).
+  const published = await runAction(items.bind(isolated.client, isolated.transport.basePath), publish, '1', { expectedVersion: 2 });
+  void published.name;
   const file = await createDownloader(isolated.transport)({ path: 'reports/summary/export' });
   await streamDownload({ path: 'reports/summary/export', params: { format: 'csv' } });
   return { page, truncated: file.truncated };
