@@ -11,6 +11,7 @@
  * explicit, with fake timers from the start.
  */
 
+import { type ResyncReason, STREAM_FRAMES } from "@classytic/repo-core/sync";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetAuthRecovery,
@@ -20,12 +21,7 @@ import {
   type EventSourceEventLike,
   type EventSourceInitLike,
 } from "../src/client.js";
-import {
-  type ResyncReason,
-  STREAM_FRAMES,
-  type StreamStatus,
-  subscribeToEvents,
-} from "../src/sse.js";
+import { type StreamStatus, subscribeToEvents } from "../src/sse.js";
 
 type Listener = (event: EventSourceEventLike) => void;
 

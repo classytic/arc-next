@@ -310,7 +310,7 @@ Pass `onActivity` in its init to hear every received chunk, heartbeat comments i
 ### Resumable, alarm-grade streams
 
 For a stream served by arc's replay hub (`@classytic/arc/utils`), where every data frame's `id:`
-is a change-log cursor. The control frame names are shared with arc: `STREAM_FRAMES` =
+is a change-log cursor. The control frame names are owned by `@classytic/repo-core/sync` (import `STREAM_FRAMES` and the frame types from there): `STREAM_FRAMES` =
 `{ READY: "ready", RESYNC: "resync", REVOKED: "revoked", RETRY: "retry" }`. On `retry` (the server
 closing so the client is authorized afresh), a live stream reconnects from its cursor after a random
 0-500 ms wait, with no backoff step or attempt counted, and health `connecting` meanwhile; a `retry`

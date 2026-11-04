@@ -29,7 +29,7 @@ es.addEventListener("job.progress", (e) => render(JSON.parse(e.data!)));
 
 ### Resumable alarm-grade streams
 
-For a stream served by arc's replay hub (`@classytic/arc/utils`). Frame names are shared: `STREAM_FRAMES` = `ready`, `resync`, `revoked`, `retry`. `retry` on a live stream: reconnect from the cursor after a 0-500 ms jitter (no backoff, health `connecting`); before live it backs off.
+For a stream served by arc's replay hub (`@classytic/arc/utils`). Frame names come from `@classytic/repo-core/sync` (`STREAM_FRAMES`, not re-exported here) = `ready`, `resync`, `revoked`, `retry`. `retry` on a live stream: reconnect from the cursor after a 0-500 ms jitter (no backoff, health `connecting`); before live it backs off.
 
 ```ts
 const sub = subscribeToEvents({

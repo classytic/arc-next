@@ -420,7 +420,6 @@
   },
   "./sse": {
     "runtime": [
-      "STREAM_FRAMES",
       "buildSseUrl",
       "subscribeToEvents",
       "useEventStream"
@@ -431,14 +430,7 @@
       "CrudOperation",
       "EventStreamOptions",
       "EventStreamResult",
-      "ReadyFrame",
-      "ResyncFrame",
-      "ResyncReason",
-      "RetryFrame",
-      "RevokedFrame",
-      "STREAM_FRAMES",
       "StreamBackoff",
-      "StreamFrameName",
       "StreamHealth",
       "StreamResyncInfo",
       "StreamStatus",
@@ -449,7 +441,7 @@
       "subscribeToEvents",
       "useEventStream"
     ],
-    "typesHash": "b14f35513817d369"
+    "typesHash": "c1ceb689a45109ba"
   },
   "./sse-fetch": {
     "runtime": [

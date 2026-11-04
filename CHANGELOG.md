@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0 — 2026-11-03
+
+### ⚠ Changed: the stream frame vocabulary is imported from repo-core, not from `@classytic/arc-next/sse`
+
+Migration: `import { STREAM_FRAMES, type ReadyFrame, type ResyncFrame, type ResyncReason, type RetryFrame, type RevokedFrame, type StreamFrameName } from "@classytic/repo-core/sync"`. Same names, literals and shapes.
+
+- `@classytic/repo-core` 0.38.0 owns the control-frame contract of a resumable stream, so arc's replay hub and this client read one definition (their `retry` docs had already drifted). `./sse` no longer exports `STREAM_FRAMES` or the seven frame types; `subscribeToEvents` and `useEventStream` behave exactly as in 0.20.
+- Peer floor `@classytic/repo-core` `>=0.29.0` → `>=0.38.0`: `./sse` now imports `STREAM_FRAMES` from `@classytic/repo-core/sync` at runtime. The other peer floors from 0.20 are unchanged (`react >=19.0.0`, `@tanstack/react-query >=5.52.1`, `jose >=4.8.1`).
+
 ## 0.20.0 — 2026-11-03
 
 ### Added: `./service-worker` (register a worker, offer a waiting update)

@@ -1,5 +1,6 @@
 "use client";
 
+import { type ReadyFrame, type ResyncReason, STREAM_FRAMES } from "@classytic/repo-core/sync";
 import { type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -212,47 +213,12 @@ export interface SubscribeToEventsOptions<TData = unknown> {
 }
 
 // ============================================================================
-// Stream contract (shared with arc's replay hub: identical names and shapes)
+// Stream contract (owned by repo-core, shared with arc's replay hub)
 // ============================================================================
 
-/**
- * Control frame names of the realtime contract. arc exports the same literals from
- * `@classytic/arc/utils`. Control frames carry no `id:` and never reach `onEvent`.
- */
-export const STREAM_FRAMES = {
-  READY: "ready",
-  RESYNC: "resync",
-  REVOKED: "revoked",
-  RETRY: "retry",
-} as const;
-export type StreamFrameName = (typeof STREAM_FRAMES)[keyof typeof STREAM_FRAMES];
-export type ResyncReason = "cursor_expired" | "gap_too_large" | "cursor_invalid";
-
-/**
- * `event: ready` (no `id:`). The first frame on every connection. `cursor` is present only on a
- * replayable stream. realtimePlugin keeps its `resources` and `operations` fields next to these.
- */
-export interface ReadyFrame {
-  cursor?: string;
-  resumed: boolean;
-}
-/** `event: resync` (no `id:`). The server could not replay the gap: reload, then continue from `cursor`. */
-export interface ResyncFrame {
-  cursor: string;
-  reason: ResyncReason;
-}
-/** `event: revoked` (no `id:`). Access ended; the server closes the stream right after it. */
-export interface RevokedFrame {
-  reason: string;
-}
-/**
- * `event: retry` (no `id:`). Not final: the server closes right after it (e.g. its periodic
- * re-authorization failed transiently) and the client reconnects at once, resuming from its
- * cursor, after a random 0-500 ms wait (`backoff.random`) instead of the backoff curve.
- */
-export interface RetryFrame {
-  reason: string;
-}
+// The control-frame names and payload types (`STREAM_FRAMES`, `ReadyFrame`, `ResyncReason`, ...) are
+// owned by `@classytic/repo-core/sync`; import them from there. Control frames carry no `id:` and
+// never reach `onEvent`.
 /** Upper bound (ms) of the random wait before reconnecting on a `retry` frame. */
 const RETRY_FRAME_JITTER_MS = 500;
 
