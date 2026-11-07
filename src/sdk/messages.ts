@@ -17,7 +17,7 @@
  * Server-safe (no "use client"): definitions run in server modules too.
  */
 
-import type { ToastHandler } from "../client.js";
+import type { ToastHandler } from "../client/client.js";
 import { matchServerError, type ServerErrorDetail } from "./error-capture.js";
 
 export type MessageOutcome = "success" | "error";

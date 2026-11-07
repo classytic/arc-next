@@ -1,10 +1,18 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": true, "rootDir": "." },
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": [
+      "vitest/globals",
+      "node"
+    ],
+    "noUncheckedIndexedAccess": false,
+    "allowJs": true
+  },
   "include": [
     "src/**/*",
-    "tests/presets/compose.test.ts",
-    "tests/next-fetch-options.test.ts",
-    "tests/sdk/actions-types.test.ts"
+    "tests/**/*",
+    "scripts/check-rn-boundary.mjs"
   ]
 }

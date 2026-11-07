@@ -1,0 +1,13 @@
+{
+  "name": "@classytic/arc-next-lint-query",
+  "private": true,
+  "description": "TanStack Query lint lane for arc-next. Its own install because arc-next builds with TypeScript 7 (no JS API), while typescript-eslint parses with the TypeScript 5 JS API.",
+  "type": "module",
+  "devDependencies": {
+    "@tanstack/eslint-plugin-query": "^5.107.1",
+    "@typescript-eslint/parser": "^8.46.0",
+    "eslint": "^9.39.0",
+    "typescript": "~5.9.3",
+    "eslint-plugin-react-hooks": "^7.0.1"
+  }
+}

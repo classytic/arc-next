@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getBasePath, getBaseUrl } from "../../src/client.js";
-import { type CrudApi, createCrudHooks } from "../../src/hooks.js";
-import { configureToast } from "../../src/mutation.js";
+import { getBasePath, getBaseUrl } from "../../src/client/client.js";
+import { type CrudApi, createCrudHooks } from "../../src/query/hooks.js";
+import { configureToast } from "../../src/query/mutation.js";
 import { defineCommitAction, defineRouteAction, type RouteApi } from "../../src/sdk/actions.js";
 import { clearServerErrors } from "../../src/sdk/error-capture.js";
 import {
@@ -46,6 +46,7 @@ function setup(apiOverrides: Partial<CrudApi<Item, { name: string }, { name: str
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
+    count: vi.fn().mockResolvedValue(0),
     dispatchAction: vi.fn().mockResolvedValue({ _id: "1", name: "done" }),
     ...apiOverrides,
   } as CrudApi<Item, { name: string }, { name: string }>;
@@ -87,7 +88,7 @@ describe("initSDK", () => {
     });
     const messages = resource.hooksConfig.defaults?.messages as Record<string, string>;
     // The handler installed by initSDK resolves keys at display time.
-    const { getToastHandler } = await import("../../src/mutation.js");
+    const { getToastHandler } = await import("../../src/query/mutation.js");
     getToastHandler().success(messages.createSuccess ?? "");
     expect(toast.success).toHaveBeenCalledWith("loc:app.crud.init-things.create.success");
   });
@@ -311,14 +312,9 @@ describe("useRouteAction / useQuietRouteAction", () => {
       method: "POST",
       path: () => "/ping",
     });
-    const ok = renderHook(
-      () =>
-        useQuietRouteAction(
-          routeApi(async () => ({})),
-          ping,
-        ),
-      { wrapper },
-    );
+    const ok = renderHook(() => useQuietRouteAction(routeApi((async () => ({})) as never), ping), {
+      wrapper,
+    });
     await act(async () => {
       await ok.result.current.mutateAsync();
     });
@@ -361,9 +357,7 @@ describe("useRouteQuery / useRouteList", () => {
     const fn = vi.fn(async () => 1);
     const held = renderHook(
       () => useRouteQuery(hooks, ["a"], fn, { enabled: false, public: true }),
-      {
-        wrapper,
-      },
+      { wrapper },
     );
     const signedOut = renderHook(() => useRouteQuery(hooks, ["b"], fn, { user: true }), {
       wrapper,

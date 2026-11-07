@@ -16,9 +16,9 @@
  */
 
 import type { QueryClient } from "@tanstack/react-query";
-import { BaseApi, createCrudApi } from "../api.js";
-import type { ArcClient } from "../client.js";
-import type { CrudHooksConfig } from "../hooks.js";
+import { BaseApi, createCrudApi } from "../client/api.js";
+import type { ArcClient } from "../client/client.js";
+import type { CrudHooksConfig } from "../query/hooks.js";
 import { registerCrudMessages } from "./messages.js";
 
 export type KeyRoot = readonly [string];

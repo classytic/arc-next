@@ -1,19 +1,23 @@
 # @classytic/arc-next
 
 > React + TanStack Query SDK for arc APIs, plus Next.js portal bootstrap and SDK core.
-> Peers: React 19+, TanStack Query 5.52.1+. Every file is its own subpath. Full guide: skills/arc-next/SKILL.md
+> Peers: React 19+, TanStack Query 5.102+. One entry module per subpath. Full guide: skills/arc-next/SKILL.md
 
 Hand-rolled fetch/axios against an arc API is a bug. Need -> use (subpath):
 
 - CRUD + list/detail/mutations -> createCrudApi (/api), createCrudHooks (/hooks)
+- Keys + queryFn for useQuery, SSR, mutations -> createEntityQueries (/query-options), hooks.queries
+- Public read the CDN can share -> readAuth: "omit" or auth: "omit" (/api)
 - Boot config, once, browser only -> configureClient, configureAuth (/client), configureToast (/mutation), configureNavigation (/hooks), or initSDK (/sdk/init)
 - Count / exists without rows -> api.count(), useCount
 - State transition (POST /:id/action) -> useAction, api.dispatchAction; typed: defineCommitAction (/sdk/actions)
-- Custom route read or write -> api.invokeRoute; typed: defineRouteAction, useRouteAction, useRouteQuery, useRouteList (/sdk/hooks)
+- Custom route read or write -> queries.route; typed: defineRouteAction, useRouteAction, useRouteQuery, useRouteList (/sdk/hooks)
 - Autosave / ping with no toast -> useQuietRouteAction (/sdk/hooks)
 - Hand-written useQuery auth gate -> queryAuthEnabled (/auth-gate)
 - Outside hooks (handlers, actions) -> arc.get/post, arcFetch (/client)
-- Server Components / route handlers -> createRequestClient (/server), createServerClient (/client), createCrudPrefetcher (/prefetch)
+- Server Components / route handlers -> createRequestClient (/server), streamQueries (/prefetch)
+- Edge-cache public pages, purge on edit -> edgePageHeaders, createEdgePurger (/edge-cache)
+- React Native focus + network -> setupReactNative (/react-native)
 - 401 refresh and retry -> createAuthRefreshHandler + onAuthError (/client)
 - Server error handling -> isArcApiError, isAbortError, isQuotaExceeded, isPreconditionFailed (/client); mapError (/sdk/errors)
 - Backend presets -> withSoftDelete, withBulk, withTree, withSlugLookup, withSearchPreset, withHistory (/presets/*)

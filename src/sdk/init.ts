@@ -10,9 +10,9 @@
  * `./transport` touches no global state.
  */
 
-import { configureAuth, configureClient } from "../client.js";
-import { configureNavigation } from "../hooks.js";
-import { configureToast } from "../mutation.js";
+import { configureAuth, configureClient } from "../client/client.js";
+import { configureNavigation } from "../query/hooks.js";
+import { configureToast } from "../query/mutation.js";
 import { captureServerErrors } from "./error-capture.js";
 import { configureMessages, localizeToastHandler } from "./messages.js";
 import {

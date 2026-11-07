@@ -55,9 +55,9 @@ export function checkSkills(root) {
   for (const key of Object.keys(surface)) for (const name of namesOf(key)) known.add(name);
 
   // Members of the createCrudHooks bundle: the final `return { ... };` of the factory.
-  const hooksSrc = read("src/hooks.ts");
+  const hooksSrc = read("src/query/hooks.ts");
   const bundle = /\n {2}return \{\n {4}KEYS,([\s\S]*?)\n {2}\};/.exec(hooksSrc);
-  if (!bundle) fail("src/hooks.ts", "cannot find the createCrudHooks return block");
+  if (!bundle) fail("src/query/hooks.ts", "cannot find the createCrudHooks return block");
   for (const match of (bundle?.[1] ?? "").matchAll(/^ {4}(\w+),?$/gm)) known.add(match[1]);
 
   const skillDir = "skills/arc-next";

@@ -1,6 +1,8 @@
 import type { KnipConfig } from "knip";
 
 const config: KnipConfig = {
+  // The query lint lane has its own install (TypeScript 5 for typescript-eslint).
+  ignore: ["tools/**"],
   project: ["src/**/*.ts"],
 
   tsdown: {
@@ -9,7 +11,7 @@ const config: KnipConfig = {
 
   vitest: {
     config: ["vitest.config.ts"],
-    entry: ["tests/**/*.test.ts", "tests/**/*.spec.ts", "tests/_setup/*.ts"],
+    entry: ["tests/**/*.test.{ts,tsx}", "tests/**/*.test-d.ts", "tests/setup/*.ts", "tests/harness/*.ts"],
   },
 };
 

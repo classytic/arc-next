@@ -14,7 +14,7 @@ import {
   type SessionChangeHook,
   type ToastHandler,
   type UseRouterHook,
-} from "../client.js";
+} from "../client/client.js";
 import type { MessageResolver } from "./messages.js";
 
 /** arc-next's own default mount point; pass `basePath` when the API is mounted elsewhere (`/api`). */

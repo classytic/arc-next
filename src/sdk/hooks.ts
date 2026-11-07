@@ -20,14 +20,15 @@
 
 import {
   type QueryKey,
+  queryOptions,
   type UseQueryOptions,
   type UseQueryResult,
   useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { queryAuthEnabled } from "../auth-gate.js";
-import { getToastHandler } from "../mutation.js";
+import { queryAuthEnabled } from "../auth/auth-gate.js";
+import { getToastHandler } from "../query/mutation.js";
 import {
   type ActionBody,
   type ActionDescriptor,
@@ -138,10 +139,7 @@ export function useResourceAction<TInput extends ActionBody | void, TResult>(
 
 /** The slice of a `createCrudHooks` bundle the route helpers need (structural). */
 export interface RouteHooksLike {
-  KEYS: {
-    all: string[];
-    custom: (key: string, ...args: unknown[]) => QueryKey;
-  };
+  KEYS: { all: readonly string[]; custom: (key: string, ...args: unknown[]) => QueryKey };
   useCustomMutation: <TData, TVariables>(config: {
     mutationFn: (variables: TVariables) => Promise<TData>;
     invalidateQueries?: QueryKey[];
@@ -217,8 +215,10 @@ export function useRouteQuery<TData>(
   const [name, ...args] = key;
   const { enabled, public: isPublic, user, refetchInterval, ...rest } = options;
   return useQuery<TData, Error>({
-    queryKey: hooks.KEYS.custom(name, ...args),
-    queryFn: ({ signal }) => fn({ signal }),
+    ...queryOptions({
+      queryKey: hooks.KEYS.custom(name, ...args),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fn({ signal }),
+    }),
     enabled: queryAuthEnabled({
       ...(enabled !== undefined ? { enabled } : {}),
       ...(isPublic !== undefined ? { public: isPublic } : {}),

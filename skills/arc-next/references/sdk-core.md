@@ -57,7 +57,7 @@ await api.dispatchAction({ id, action: "close", options: { idempotencyKey } });
 await api.invokeRoute<string>({ path: "/me", options: { responseType: "text" } }); // "text" | "blob" | "json"
 ```
 
-`createCommitActionDefiner({ reservedVerbs, reservedBy })` makes a `defineCommitAction` that refuses verbs another constructor owns; `defineAction(verb, kind, options)` adds your own `kind`. `RouteApi` is the structural slice (`invokeRoute`, `dispatchAction`) so tests pass stubs.
+`defineRouteAction` paths are relative to the resource; collection routes go out without a trailing slash. `createCommitActionDefiner({ reservedVerbs, reservedBy })` makes a `defineCommitAction` that refuses verbs another constructor owns; `defineAction(verb, kind, options)` adds your own `kind`. `RouteApi` is the structural slice (`invokeRoute`, `dispatchAction`) so tests pass stubs.
 
 ## Reads
 
@@ -70,7 +70,7 @@ Key is `hooks.KEYS.custom(...)`; list key is `custom("list", query)`. Gate is `q
 
 ## Message keys
 
-Toasts carry keys until display (`resolveToastText`). Key shape: `<prefix>.crud.<resource>.<create|update|delete>.<success|error>` and `<prefix>.action.<key>.<success|error>`; default prefix `sdk`, set with `configureMessages(resolver, { keyPrefix })` or `initSDK({ messageKeyPrefix })`.
+Toasts carry keys until display (`resolveToastText`): resolve them with `configureMessages`, or wrap a custom handler with `localizeToastHandler`. Key shape: `<prefix>.crud.<resource>.<create|update|delete>.<success|error>` and `<prefix>.action.<key>.<success|error>`; default prefix `sdk`, set with `configureMessages(resolver, { keyPrefix })` or `initSDK({ messageKeyPrefix })`.
 
 ```ts
 messages: (ctx) => {            // MessageContext: kind "crud" | "action"

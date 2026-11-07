@@ -21,6 +21,8 @@ configureNavigation(useRouter);        // before createCrudHooks()
 
 `createTokenStore(storage, key)` and `bearerFetchOptions(tokens)` (`/auth-token`) hold a bearer session without a library.
 
+Social sign-in (`/auth-social`, server-safe): `startSocialSignIn(authClient, { provider, next, appOrigin })` on the button, `completeSocialSignIn(authClient, tokens)` once on the callback page (it reads `#handoff`, never a token in the URL), `readSocialError(searchParams)` on the sign-in page (intent `cancelled` shows nothing), `fetchSocialProviders(authUrl)` in a Server Component. Never hand-build redirect URLs: `next` must pass `safeNextPath`. One Tap: `useGoogleOneTap` (`/google-one-tap`, client only).
+
 ## 401 recovery
 
 ```ts
@@ -75,20 +77,26 @@ const orders = await createCrudApi<Order>("orders", { client }).getAll({
 
 `createRequestClient` forwards `cookie`, `authorization`, `x-organization-id`, locale and trace headers (`FORWARDED_REQUEST_HEADERS`; `x-forwarded-for` only if you add it). `createServerClient({ baseUrl, token, organizationId })` is the explicit-token form. `createAuthAwareClient()` bridges the global auth singleton for a consumer SDK. `createClient` makes an independent client (own baseUrl, auth, headers).
 
-## SSR prefetch
+## SSR and streaming
 
 ```tsx
-const prefetcher = createCrudPrefetcher(api, "products");
-const qc = getQueryClient();
-await prefetcher.prefetchList(qc, { limit: 20 }, { headers: forwardRequestHeaders(await headers()) });
-return <HydrationBoundary state={dehydrate(qc)}><ProductsList /></HydrationBoundary>;
+// Server Component: a NEW per-request client, queries started, state dehydrated, nothing awaited
+const state = streamQueries([hooks.queries.list({ limit: 20 }, { auth: "omit" })]);
+return <HydrationBoundary state={state}><Suspense fallback={<Shelf />}><List /></Suspense></HydrationBoundary>;
+// List ("use client"): useSuspenseList({ limit: 20 }, { auth: "omit" }) suspends on the streamed promise
 ```
 
-Methods: `prefetchList`, `prefetchDetail`, `prefetchBySlug`, `prefetchDeleted`, `prefetchTree`, `prefetchInfiniteList` (seeds the `{ pages, pageParams }` shape). Seed instead of prefetch with `useList(params, { initialData, initialDataUpdatedAt })` for the same params.
+Public page that must not ship React Query on first load: `createQueryIsland(() => import("./list"))` (`/query-island`, in your own `"use client"` file) and `<ListIsland state={await prefetchQueries([...])} when="visible" />`. The server renders the real HTML; React Query loads when the island activates (`"idle"` default, `"visible"`, `"interaction"`). Pays off only when nothing else on the page imports React Query.
 
-## Server caches
+`prefetchQueries([...])` awaits instead (complete HTML). Forward identity with `{ headers: forwardRequestHeaders(await headers()) }` in the factory ctx. Same keys as the hooks by construction (`createEntityQueries` / `hooks.queries`). Seed instead with `useList(params, { initialData, initialDataUpdatedAt })` for the same params.
 
-Tag Next fetch reads with `arcTag(entity, id?, scope?)` and invalidate in one `onArcChange` listener (registered in a client provider) that calls a server action with the same tags. A delete event carries `previous`, so the parent tag is reachable. Behind a load balancer, back Next's `cacheHandler` with a shared store.
+## Anonymous reads
+
+`auth: "omit"` (per call, hook option or ctx) or `createCrudApi(name, { readAuth: "omit" })` sends no token, org, keys or cookies, so arc's http-cache can keep the response at the CDN. Only for endpoints that answer the same for everyone.
+
+## Server caches and the edge
+
+One tag rule with arc's http-cache: `resourceTags(resource, id)` is `<resource>`, `<resource>:<id>`; `arcTag` adds `arc:` for Next tags. Tag reads with `next: { tags: [arcTag(entity, id)] }`; invalidate in one `onArcChange` listener: `revalidateArc(changeTags(event))`. Public pages at the CDN: `edgePageHeaders({ routes, policy, reserved: await reservedSegments(appDir) })` in `next.config` `headers()`, `createEdgePurger({ provider: cloudflareEdgeFromEnv() })` after edits, `purgeEdgeHost` after deploys (`/edge-cache`, `/edge-cache/cloudflare`); from CI: `npx arc-next-edge purge --host example.com --env-file .env.production` (env wins over files, token never printed, exit 0/1).
 
 ## Auth gate for hand-written queries
 

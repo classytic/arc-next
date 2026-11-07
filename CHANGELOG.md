@@ -1,5 +1,91 @@
 # Changelog
 
+## 0.22.0 (2026-11-07)
+
+TanStack Query 5.107 modernization, one option factory per resource, streaming SSR, anonymous
+CDN-cacheable reads, `./edge-cache`, React Native setup, and no legacy: one way to do each thing.
+
+### ⚠ Peers
+
+- `@tanstack/react-query` `>=5.52.1` → `>=5.102.0` (dev `^5.107.1`). Forced by `queryClient.query()` / `infiniteQuery()` (`./prefetch`, 5.102) and `environmentManager` (5.91). `@tanstack/react-query-devtools >=5.102.0` is a new OPTIONAL peer (`./devtools` only).
+- `engines.node` `>=20` → `^22.22.2 || ^24.15.0 || >=26.0.0`, what the locked vitest 5 / tsdown 0.23 / jsdom 30 need under `engine-strict` and what CI tests (Node 22 and the latest LTS). `react >=19.0.0` holds: SSR tests render with `prerenderToNodeStream` (Node `prerender` is 19.2+).
+
+### Added
+
+- Internal CRUD hook refactor: `hooks.ts` composes dedicated read, write, preset, context and realtime modules. Public imports, hook signatures and behavior are unchanged.
+
+- **Option factories are the one source.** `createEntityQueries<TDoc, TCreate, TUpdate>(api, entityKey)` builds `list`, `infiniteList`, `detail`, `bySlug`, `count`, `deleted`, `tree`, `children`, `aggregation` (`queryOptions` / `infiniteQueryOptions`, data typed through the key) and `create` / `update` / `remove` (`mutationOptions`, shared `keys.write()` mutation key, `meta.arc`). Every `createCrudHooks` read hook and CRUD write is a thin wrapper over them; `hooks.queries` exposes the same instance.
+- **Custom routes in the factory**: `queries.route<TData>(path, { params, staleTime, token, organizationId, auth })` (GET via `invokeRoute`, abort signal, keyed `keys.route()` under `keys.routes()`) and `queries.routeMutation<TData, TBody>("/:id/approve", { method, auth, invalidates })` (`pathParams` fill the template; `invalidates` returns a `{ op, id }` change for the scoped rule or exact keys).
+- **One `token` / `organizationId` rule end to end**: omitted = configured default, `null` = deliberately none, string = exactly that, from BaseApi methods, presets, hooks and factory `ctx` to the wire. `invokeRoute({ path: "/me", organizationId: null })` sends the token and no org header.
+- **Paging**: `hooks.useCursorPager(params)` (and `useCursorPager(query, resetKey)` in `./query`) shows one keyset page at a time with Previous / Next over the held pages, restarting at page 1 on new params. `keepPrevious` on `useList` (default on) and `useInfiniteList` (opt-in), with `isPlaceholderData` on both results.
+- **Streaming SSR in one call** (`./prefetch`): `streamQueries([...options])` starts the queries on a fresh per-request client and dehydrates at once (pending queries carry their promise, the client's `useSuspense*` hook resolves them during SSR); `prefetchQueries([...])` awaits them. `makeQueryClient()` (`./query-client`) is the per-request client; dehydration keeps pending queries and leaves error redaction to the framework. `./query-island`: `createQueryIsland(() => import("./x"))` server-renders a React Query section from that state and keeps React Query out of first-load JS until it activates (`when: "idle" | "visible" | "interaction"`).
+- **Anonymous reads**: `auth: "omit"` per call (`RequestOptions`, hook options, factory `ctx`) and `readAuth: "omit"` per resource (`BaseApiConfig`, GETs only). Sends no Authorization, org, API/internal key or cookie, `credentials: "omit"`, never auth-refreshes, and is cached apart from signed-in reads, so arc's http-cache can share it at the CDN. An `organizationId` filter param is still sent. An explicit `auth: "inherit"` (hook, factory or call) overrides `readAuth` on the wire and in the key.
+- **Identity partition in every key**: `{ auth, organizationId, scope }` (fixed shape) on list, infinite, detail, slug, count, presets, aggregation and route keys. Factories resolve it before building the key (`BaseApi.identity()`: client `getOrgId`, `configureAuth`, a forwarded `x-organization-id`, `readAuth`) and send that tenant; `queries.partition(ctx)` and `KEYS.lists(P)` name it for hand-written cache writes. Detail-to-list sync, list placeholders, optimistic writes, reconciliation and cache seeds stay in one partition (a private read never lands in an anonymous or other-tenant cache); invalidation reaches all.
+- **Scoped invalidation**: `invalidateForChange(qc, keys, { op, id })` (and `cache.invalidateForChange`) refreshes lists, counts and aggregations plus only the written record's detail and slug variants; a delete drops the record's detail. CRUD writes and `useResourceSync` both use it. `usePendingWrites()` reads in-flight CRUD writes from `useMutationState`.
+- **One tag rule**: `resourceTags(resource, id?)` is arc's http-cache rule (`<resource>`, `<resource>:<id>`); `arcTag` is `arc:` + it; `changeTags(event)` lists what a write invalidates.
+- **`./edge-cache`** + **`./edge-cache/cloudflare`**: `edgePageHeaders({ routes, policy, reserved })` for `next.config` `headers()` (only listed routes; a dynamic first segment in any path-to-regexp form, `?` `*` `+` `(regex)` `{}` or mixed text, must exclude `reservedSegments(appDir)` or it throws; a literal alternation like `/:section(courses|practice)` is static; a route it cannot prove safe, or one left matching nothing, throws), `edgeRouteMatcher` for host tests (matches as Next does: path-to-regexp 6, case-insensitive), `createEdgePurger({ provider, coalesceMs })` (coalesced, never rejects, `after()`-friendly), `cloudflareEdge` / `cloudflareEdgeFromEnv` / `purgeEdgeHost` (deploy purge). `arc-next-edge purge --host <host> [--env-file <path>]` bin for CI: env wins over files, secrets redacted, exit 0/1; not an export.
+- **React Native**: `./react-native` `setupReactNative({ appState, netInfo })` wires `focusManager` and `onlineManager` (modules injected, no hard dependency). `signInWithIdToken(authClient, tokens, { provider, idToken, nonce })` in `./auth-social`; its verifier and last-method storage are injectable (`storage`, `methodStorage`, `loadLastAuthMethod`). `check:rn-boundary` fails if an RN-facing subpath reaches a web, Next or Node-only module.
+- `./devtools`: `QueryDevtools` lazy-loads TanStack devtools only when `enabled`.
+- Typed `filters: FilterTerm[]` in list params, encoded with repo-core `formatQuery`; `PaginationMethod` derived from repo-core's wire types; `QueryClientOverrides.networkMode` (default `"offlineFirst"`); `QueryClientOverrides.retry` follows TanStack (`true` no limit, `false`, a count, a function; `true` used to mean one retry), quota 429s still never retry.
+
+### ⚠ Removed (no legacy)
+
+- `createCrudPrefetcher` and its option types (use the factories with `streamQueries` / `prefetchQueries`); `EntityReadApi` (now `EntityApi`).
+- Token-first hook overloads `useList(token, params, options)`, `useDetail(id, token, options)`, `useInfiniteList(token, ...)`.
+- `KEYS.scopedList`, `KEYS.scopedDetail`, `CacheUtils.*ScopedDetail`; the automatic `_scope: "tenant" | "super-admin"` key segment.
+- Flattened `revalidate` / `tags` request options (use `next: { revalidate, tags }`); the `cursor` alias of `after`; `ListQueryOptions.prefillDetailCache`; `_scope` (now `scope`).
+- `useMutationWithOptimistic` (use `useOptimisticMutation` or a factory's `mutationOptions`); the `/query` re-exports of `./cache` names; `ExtractData`; upload `isPending` alias (`isUploading`); `withOrgParams` (`./cache`).
+- Envelope fallbacks arc no longer sends: list keys `items` / `results` / any-array, mongoose-paginate fields (`docs`, `totalDocs`, `totalPages`, `hasNextPage`, `currentPage`), `{ data: { count } }` verb envelopes, `fieldErrors` record/AJV shapes, `json.error` upload messages, object `details` in `errorDetails`. A paginated list needs `method`.
+
+### Changed
+
+- Source is organized by domain (`src/client`, `src/query`, `src/auth`, `src/realtime`, `src/platform`, `src/security`, `src/server`, `src/edge-cache`, `src/sdk`); every public subpath is unchanged.
+- **Request headers merge case-insensitively** in three layers: client defaults (`defaultHeaders`, configured `getToken` / `getOrgId`, injected only when no header names them) < per-call headers < explicit options (`organizationId`, `token`, `idempotencyKey`, `elevated`). A `X-Organization-Id` header no longer reaches arc twice ("a, a"), and an explicit `organizationId` now beats a header one. Queued same-record writes keep the identity they were submitted with; the queue is per tenant. `useResourceSync` loads `./ws` on first use, like `./sse`.
+- Update and `useAction` invalidate the written record's detail, not every detail. Query lint lane: `@tanstack/eslint-plugin-query` recommended-strict (`npm run lint:query`).
+- **Tenant vs filter never alias**: the tenant comes from the configured org or the read's `organizationId` option / `ctx` and is keyed in the partition; an `organizationId` in params is a query-string filter (it was taken as the tenant, and dropped from anonymous reads). BaseApi and presets forward an explicit `null` (it was treated as "use the default").
+- SSE: a failed lazy load of the header-auth transport is retried on the next connect instead of cached; connection state stays per subscription. Realtime tests pass in any order (`--sequence.shuffle`).
+- Tests live in `tests/<domain>/` with Vitest projects (`jsdom`, `node`, `ssr`, `native`, `types`), a shared `tests/harness/` (test client, fake arc server on repo-core envelopes, storage, timers) and istanbul coverage thresholds. `npm run gate` is the one release gate: `prepublishOnly` and CI run it.
+
+### Migration
+
+| 0.21 | 0.22 |
+|---|---|
+| `createCrudPrefetcher(api, e).prefetchList(qc, params, opts)` | `streamQueries([hooks.queries.list(params, ctx)])` or `prefetchQueries([...])` |
+| `prefetchDetail(qc, id, { token })` | `hooks.queries.detail(id, { token })` in the same call |
+| `useList(null, params, { public: true })` | `useList(params, { public: true })`, or `{ auth: "omit" }` for an anonymous CDN-cacheable read |
+| `useDetail(id, token, opts)` | `useDetail(id, opts)` (token from `configureAuth`) |
+| `KEYS.scopedList(scope, params)` | `KEYS.list(params, { organizationId, scope })` |
+| `KEYS.scopedDetail(id, org)` / `cache.setScopedDetail(qc, id, org, doc)` | `KEYS.detail(id, { organizationId: org })` / `cache.setDetail(qc, id, doc, { organizationId: org })` |
+| `KEYS.detail(id)` read or written as the plain entry | `KEYS.detail(id, hooks.queries.partition())`; `KEYS.detail(id)` is only the prefix of every variant |
+| `useNavigation` seeding the tenant-less detail too | it seeds only the reader's partition |
+| a `headerOptions` `x-organization-id` overriding an explicit `organizationId` | pass the tenant as `organizationId`; it now wins over any header |
+| `KEYS.custom("count" \| "deleted" \| "tree" \| "slug", ...)` | `KEYS.count()`, `KEYS.deleted()`, `KEYS.tree()`, `KEYS.slug()` |
+| `KEYS.aggregation(name)` as a prefix | `KEYS.aggregations(name)` |
+| `{ revalidate, tags }` request options | `{ next: { revalidate, tags } }` |
+| `params.cursor` | `params.after` |
+| `options._scope` | `options.scope` |
+| `useMutationWithOptimistic(...)` | `useMutation(hooks.queries.update())` or `useOptimisticMutation(...)` |
+| `import { createQueryKeys } from "@classytic/arc-next/query"` | `from "@classytic/arc-next/cache"` |
+| `upload.isPending` | `upload.isUploading` |
+| `res.docs` / `{ items }` mocks and custom routes | arc's `{ method, data, ... }` or a bare array |
+| hand-rolled anonymous `fetch` for public reads | `createCrudApi(name, { readAuth: "omit" })` or `{ auth: "omit" }` |
+| `useList({ organizationId: org, ... })` meaning the tenant | `useList(params, { organizationId: org })` (factory: `ctx.organizationId`); a param is now a filter |
+| `api.x({ organizationId: null })` meaning "use the default" | omit it; `null` now sends no org header (same for `token`) |
+| `KEYS.list(params)` read back as `{ organizationId, ... }` | `[entity, "list", { auth, organizationId, scope }, params]`: `KEYS.list(params, { organizationId })` |
+| `withOrgParams(org, params)` | `KEYS.list(params, { organizationId: org })` |
+| `useQuery({ queryKey: KEYS.custom("me"), queryFn: () => api.invokeRoute(...) })` | `useQuery(hooks.queries.route("/me"))`; writes: `routeMutation` |
+| a host `use-cursor-pager` over `useInfiniteQuery` | `hooks.useCursorPager(params)` or `useCursorPager(query, resetKey)` |
+
+### Added: social sign-in for bearer-token apps (`./auth-social`, `./google-one-tap`)
+
+Client half of arc's `socialAuth()` plugin on Better Auth. Headless; additive.
+
+- `startSocialSignIn(authClient, { provider, next, appOrigin })` sends absolute callback, error and new-user URLs (`next` checked by `safeNextPath`, open redirects fall back to `/`) and a one-time handoff challenge (base64url SHA-256 of a verifier kept 10 min in `sessionStorage`).
+- `completeSocialSignIn(authClient | { baseURL }, tokens)` strips `#handoff` from the address bar, consumes the verifier once, exchanges it at `/social/handoff` and stores the token.
+- `readSocialError(searchParams)` and `socialErrorIntent` / `socialErrorMessage` map Better Auth and provider codes to UI intents (`cancelled`, `link-required`, `expired-retry`, `signup-disabled`, `blocked`, ...).
+- `getLastAuthMethod` / `setLastAuthMethod` (localStorage, SSR-safe) and `fetchSocialProviders(baseURL)` for Server Components (`[]` on failure).
+- `useGoogleOneTap({ clientId, enabled, authClient, tokens })` (`"use client"`): loads Google's script when idle, prompts with FedCM and a nonce, posts to `/one-tap/callback`, stores the token. Loads through the `GOOGLE_ONE_TAP_POLICY` Trusted Types policy when one is enforced.
+
 ## 0.21.0 — 2026-11-03
 
 ### ⚠ Changed: the stream frame vocabulary is imported from repo-core, not from `@classytic/arc-next/sse`

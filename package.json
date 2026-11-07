@@ -1,6 +1,6 @@
 {
   "name": "@classytic/arc-next",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "React + TanStack Query SDK for Arc resources",
   "type": "module",
   "sideEffects": false,
@@ -25,130 +25,162 @@
     "sse",
     "real-time",
     "soft-delete",
-    "bulk-operations"
+    "bulk-operations",
+    "react-native",
+    "ssr",
+    "streaming",
+    "cdn"
   ],
-  "main": "./dist/hooks.js",
-  "types": "./dist/hooks.d.ts",
+  "main": "./dist/query/hooks.js",
+  "types": "./dist/query/hooks.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/hooks.d.ts",
-      "default": "./dist/hooks.js"
+      "types": "./dist/query/hooks.d.ts",
+      "default": "./dist/query/hooks.js"
     },
     "./client": {
-      "types": "./dist/client.d.ts",
-      "default": "./dist/client.js"
+      "types": "./dist/client/client.d.ts",
+      "default": "./dist/client/client.js"
     },
     "./encryption": {
-      "types": "./dist/encryption.d.ts",
-      "default": "./dist/encryption.js"
+      "types": "./dist/security/encryption.d.ts",
+      "default": "./dist/security/encryption.js"
     },
     "./field-encryption": {
-      "types": "./dist/field-encryption.d.ts",
-      "default": "./dist/field-encryption.js"
+      "types": "./dist/security/field-encryption.d.ts",
+      "default": "./dist/security/field-encryption.js"
     },
     "./api": {
-      "types": "./dist/api.d.ts",
-      "default": "./dist/api.js"
+      "types": "./dist/client/api.d.ts",
+      "default": "./dist/client/api.js"
     },
     "./cache": {
-      "types": "./dist/cache.d.ts",
-      "default": "./dist/cache.js"
+      "types": "./dist/query/cache.d.ts",
+      "default": "./dist/query/cache.js"
     },
     "./query": {
-      "types": "./dist/query.d.ts",
-      "default": "./dist/query.js"
+      "types": "./dist/query/query.d.ts",
+      "default": "./dist/query/query.js"
     },
     "./mutation": {
-      "types": "./dist/mutation.d.ts",
-      "default": "./dist/mutation.js"
+      "types": "./dist/query/mutation.d.ts",
+      "default": "./dist/query/mutation.js"
     },
     "./hooks": {
-      "types": "./dist/hooks.d.ts",
-      "default": "./dist/hooks.js"
+      "types": "./dist/query/hooks.d.ts",
+      "default": "./dist/query/hooks.js"
     },
     "./query-client": {
-      "types": "./dist/query-client.d.ts",
-      "default": "./dist/query-client.js"
+      "types": "./dist/query/query-client.d.ts",
+      "default": "./dist/query/query-client.js"
     },
     "./prefetch": {
-      "types": "./dist/prefetch.d.ts",
-      "default": "./dist/prefetch.js"
+      "types": "./dist/query/prefetch.d.ts",
+      "default": "./dist/query/prefetch.js"
+    },
+    "./edge-cache": {
+      "types": "./dist/edge-cache/index.d.ts",
+      "default": "./dist/edge-cache/index.js"
+    },
+    "./edge-cache/cloudflare": {
+      "types": "./dist/edge-cache/cloudflare.d.ts",
+      "default": "./dist/edge-cache/cloudflare.js"
+    },
+    "./react-native": {
+      "types": "./dist/platform/react-native.d.ts",
+      "default": "./dist/platform/react-native.js"
+    },
+    "./query-island": {
+      "types": "./dist/query/query-island.d.ts",
+      "default": "./dist/query/query-island.js"
+    },
+    "./devtools": {
+      "types": "./dist/query/devtools.d.ts",
+      "default": "./dist/query/devtools.js"
     },
     "./server": {
-      "types": "./dist/server.d.ts",
-      "default": "./dist/server.js"
+      "types": "./dist/server/server.d.ts",
+      "default": "./dist/server/server.js"
     },
     "./auth-gate": {
-      "types": "./dist/auth-gate.d.ts",
-      "default": "./dist/auth-gate.js"
+      "types": "./dist/auth/auth-gate.d.ts",
+      "default": "./dist/auth/auth-gate.js"
     },
     "./events": {
-      "types": "./dist/events.d.ts",
-      "default": "./dist/events.js"
+      "types": "./dist/query/events.d.ts",
+      "default": "./dist/query/events.js"
     },
     "./sse": {
-      "types": "./dist/sse.d.ts",
-      "default": "./dist/sse.js"
+      "types": "./dist/realtime/sse.d.ts",
+      "default": "./dist/realtime/sse.js"
     },
     "./sse-fetch": {
-      "types": "./dist/sse-fetch.d.ts",
-      "default": "./dist/sse-fetch.js"
+      "types": "./dist/realtime/sse-fetch.d.ts",
+      "default": "./dist/realtime/sse-fetch.js"
     },
     "./auth-token": {
-      "types": "./dist/auth-token.d.ts",
-      "default": "./dist/auth-token.js"
+      "types": "./dist/auth/auth-token.d.ts",
+      "default": "./dist/auth/auth-token.js"
+    },
+    "./auth-social": {
+      "types": "./dist/auth/auth-social.d.ts",
+      "default": "./dist/auth/auth-social.js"
+    },
+    "./google-one-tap": {
+      "types": "./dist/auth/google-one-tap.d.ts",
+      "default": "./dist/auth/google-one-tap.js"
     },
     "./tab-leader": {
-      "types": "./dist/tab-leader.d.ts",
-      "default": "./dist/tab-leader.js"
+      "types": "./dist/realtime/tab-leader.d.ts",
+      "default": "./dist/realtime/tab-leader.js"
     },
     "./service-worker": {
-      "types": "./dist/service-worker.d.ts",
-      "default": "./dist/service-worker.js"
+      "types": "./dist/platform/service-worker.d.ts",
+      "default": "./dist/platform/service-worker.js"
     },
     "./ws": {
-      "types": "./dist/ws.d.ts",
-      "default": "./dist/ws.js"
+      "types": "./dist/realtime/ws.d.ts",
+      "default": "./dist/realtime/ws.js"
     },
     "./upload": {
-      "types": "./dist/upload.d.ts",
-      "default": "./dist/upload.js"
+      "types": "./dist/client/upload.d.ts",
+      "default": "./dist/client/upload.js"
     },
     "./presets/soft-delete": {
-      "types": "./dist/presets/soft-delete.d.ts",
-      "default": "./dist/presets/soft-delete.js"
+      "types": "./dist/client/presets/soft-delete.d.ts",
+      "default": "./dist/client/presets/soft-delete.js"
     },
     "./presets/history": {
-      "types": "./dist/presets/history.d.ts",
-      "default": "./dist/presets/history.js"
+      "types": "./dist/client/presets/history.d.ts",
+      "default": "./dist/client/presets/history.js"
     },
     "./presets/bulk": {
-      "types": "./dist/presets/bulk.d.ts",
-      "default": "./dist/presets/bulk.js"
+      "types": "./dist/client/presets/bulk.d.ts",
+      "default": "./dist/client/presets/bulk.js"
     },
     "./presets/slug": {
-      "types": "./dist/presets/slug.d.ts",
-      "default": "./dist/presets/slug.js"
+      "types": "./dist/client/presets/slug.d.ts",
+      "default": "./dist/client/presets/slug.js"
     },
     "./presets/tree": {
-      "types": "./dist/presets/tree.d.ts",
-      "default": "./dist/presets/tree.js"
+      "types": "./dist/client/presets/tree.d.ts",
+      "default": "./dist/client/presets/tree.js"
     },
     "./presets/search": {
-      "types": "./dist/presets/search.d.ts",
-      "default": "./dist/presets/search.js"
+      "types": "./dist/client/presets/search.d.ts",
+      "default": "./dist/client/presets/search.js"
     },
     "./runtime": {
-      "types": "./dist/runtime.d.ts",
-      "default": "./dist/runtime.js"
+      "types": "./dist/client/runtime.d.ts",
+      "default": "./dist/client/runtime.js"
     },
     "./csp": {
-      "types": "./dist/csp.d.ts",
-      "default": "./dist/csp.js"
+      "types": "./dist/platform/csp.d.ts",
+      "default": "./dist/platform/csp.js"
     },
     "./auth-proxy": {
-      "types": "./dist/auth-proxy.d.ts",
-      "default": "./dist/auth-proxy.js"
+      "types": "./dist/auth/auth-proxy.d.ts",
+      "default": "./dist/auth/auth-proxy.js"
     },
     "./sdk/messages": {
       "types": "./dist/sdk/messages.d.ts",
@@ -196,9 +228,12 @@
     },
     "./package.json": "./package.json",
     "./query-options": {
-      "types": "./dist/query-options.d.ts",
-      "default": "./dist/query-options.js"
+      "types": "./dist/query/query-options.d.ts",
+      "default": "./dist/query/query-options.js"
     }
+  },
+  "bin": {
+    "arc-next-edge": "dist/edge-cache/cli.js"
   },
   "files": [
     "dist",
@@ -209,18 +244,19 @@
     "registry": "https://registry.npmjs.org/"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "test": "vitest run",
+    "test": "vitest run --project jsdom --project node --project ssr --project native",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "push": "classytic-push",
     "release:tag": "node -e \"require('child_process').execSync('npm run push -- v'+require('./package.json').version,{stdio:'inherit'})\"",
     "release": "npm run push -- main && npm run release:tag && npm publish",
-    "prepublishOnly": "npm run typecheck && npm run typecheck:tests && npm run lint && npm run check:dead-code && npm test && npm run build && npm run check:package && npm run check:api-surface && npm run check:server-import && npm run check:bundle && npm run check:fixtures && npm run check:skills",
+    "prepublishOnly": "npm run gate",
+    "gate": "npm run typecheck && npm run typecheck:tests && npm run lint && npm run check:dead-code && npm test && npm run test:types && npm run build && npm run check:package && npm run check:api-surface && npm run check:server-import && npm run check:rn-boundary && npm run check:bundle && npm run check:fixtures && npm run check:skills",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test.json",
     "check:package": "publint --strict && attw --pack . --profile esm-only",
     "check:api-surface": "node scripts/check-api-surface.mjs",
@@ -230,12 +266,19 @@
     "check:fixtures": "tsc -p fixtures/tsconfig.json",
     "check:skills": "node scripts/check-skills.mjs",
     "check:peer-floors": "node scripts/check-peer-floors.mjs",
-    "lint": "biome check src/ tests/ scripts/ fixtures/",
-    "check:dead-code": "knip"
+    "lint": "npm run lint:biome && npm run lint:query",
+    "check:dead-code": "knip",
+    "check:rn-boundary": "node scripts/check-rn-boundary.mjs",
+    "lint:query": "node tools/lint-query/node_modules/eslint/bin/eslint.js -c tools/lint-query/eslint.config.js --max-warnings 0 src",
+    "lint:query:install": "npm --prefix tools/lint-query ci",
+    "lint:biome": "biome check src/ tests/ scripts/ fixtures/ tools/lint-query/eslint.config.js",
+    "test:types": "vitest run --project types",
+    "test:coverage": "vitest run --coverage"
   },
   "peerDependencies": {
     "@classytic/repo-core": ">=0.38.0",
-    "@tanstack/react-query": ">=5.52.1",
+    "@tanstack/react-query": ">=5.102.0",
+    "@tanstack/react-query-devtools": ">=5.102.0",
     "jose": ">=4.8.1",
     "react": ">=19.0.0"
   },
@@ -251,6 +294,9 @@
     },
     "jose": {
       "optional": true
+    },
+    "@tanstack/react-query-devtools": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -258,10 +304,13 @@
     "@biomejs/biome": "^2.6.4",
     "@classytic/dev-tools": "^0.2.1",
     "@classytic/repo-core": "^0.38.0",
-    "@tanstack/react-query": "^5.105.3",
+    "@tanstack/react-query": "^5.107.1",
+    "@tanstack/react-query-devtools": "^5.107.1",
     "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@vitest/coverage-istanbul": "^5.1.0",
     "jose": "^6.2.15",
     "jsdom": "^30.1.3",
     "knip": "^6.44.1",

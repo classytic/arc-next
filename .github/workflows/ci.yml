@@ -6,31 +6,30 @@ on:
   pull_request:
 
 jobs:
-  test:
-    name: Node ${{ matrix.node }}
+  gate:
+    name: Release gate (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        # The locked toolchain (vitest 5, tsdown 0.23, jsdom 30) needs Node ^22.22.2 || ^24.15.0
+        # || >=26 (package.json `engines`; `.npmrc` engine-strict refuses anything older).
+        node: ["22", "lts/*"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          check-latest: true
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tools/lint-query/package-lock.json
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm run typecheck:tests
-      - run: npm run lint
-      - run: npm run check:dead-code
-      - run: npm test
-      - run: npm run build
-      - run: npm run check:package
-      - run: npm run check:api-surface
-      - run: npm run check:server-import
-      - run: npm run check:bundle
-      - run: npm run check:fixtures
+      # The query lint lane has its own lockfile install (TypeScript 5 for typescript-eslint).
+      - run: npm ci --prefix tools/lint-query
+      # Exactly the local prepublish gate (`prepublishOnly` runs this same script).
+      - run: npm run gate
 
   peer-minimums:
     name: Declared peer minimums
@@ -39,7 +38,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "22"
+          check-latest: true
           cache: npm
       # Installs the EXACT floor of every declared peer range (read from
       # package.json, so it cannot drift) into a temp copy and runs

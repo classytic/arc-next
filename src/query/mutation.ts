@@ -1,0 +1,423 @@
+"use client";
+
+import {
+  type MutationFunction,
+  type QueryClient,
+  type QueryKey,
+  type UseMutateAsyncFunction,
+  type UseMutateFunction,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useRef, useTransition } from "react";
+import type { ToastHandler } from "../client/client.js";
+import { _uuid, getQuotaDetails, isArcApiError, isAutoIdempotency } from "../client/client.js";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+/**
+ * Toast copy for a mutation. Generic over the mutation's result/variables so
+ * `success: (result) => ...` sees the TYPED FLAT action result (arc 2.13+
+ * returns results with no `{ data }` envelope) — the stale-envelope
+ * `(data as { data: T }).data` cast class is a compile error now. Defaults
+ * keep pre-0.11.1 unparameterized usage compiling unchanged.
+ */
+export interface MutationMessages<TData = unknown, TVariables = unknown> {
+  success?: string | ((data: TData, variables: TVariables) => string);
+  error?: string | ((error: Error, variables: TVariables) => string);
+}
+
+export interface MutationCallbacks<TData, TVariables, TContext = unknown> {
+  onMutate?: (variables: TVariables) => TContext | Promise<TContext>;
+  onSuccess?: (data: TData, variables: TVariables, context: TContext) => void | Promise<void>;
+  onError?: (error: Error, variables: TVariables, context: TContext) => void | Promise<void>;
+  onSettled?: (
+    data: TData | undefined,
+    error: Error | null,
+    variables: TVariables,
+    context: TContext,
+  ) => void | Promise<void>;
+}
+
+export interface TransitionMutationReturn<TData, TVariables> {
+  mutate: UseMutateFunction<TData, Error, TVariables>;
+  mutateAsync: UseMutateAsyncFunction<TData, Error, TVariables>;
+  isPending: boolean;
+  isSuccess: boolean;
+  isError: boolean;
+  error: Error | null;
+  data: TData | undefined;
+  reset: () => void;
+}
+
+// ============================================================================
+// Toast Configuration
+// ============================================================================
+
+// Default is a silent no-op: a LIBRARY must not write to the consumer's
+// console on every successful mutation. Apps opt into feedback explicitly
+// via `configureToast` (sonner, react-hot-toast, custom). Errors still
+// reach the caller through the rejected promise / onError callbacks —
+// nothing is swallowed, only the unsolicited logging is gone.
+let toastHandler: ToastHandler = {
+  success: () => {},
+  error: () => {},
+};
+
+/**
+ * Configure toast handler. Call once at app init.
+ *
+ * **SSR safety:** This sets module-level state. Call only in client-side code.
+ *
+ * @example
+ * import { toast } from "sonner";
+ * configureToast({ success: toast.success, error: toast.error });
+ */
+export function configureToast(handler: ToastHandler): void {
+  toastHandler = handler;
+}
+
+/**
+ * Get the configured toast handler. Returns the console-based default when
+ * no handler has been configured yet.
+ *
+ * Use this when domain code outside the react-query lifecycle needs to fire
+ * ad-hoc success/error toasts using the same handler the SDK uses internally
+ * — avoids the need for consumer SDKs to keep a parallel cache of the handler.
+ *
+ * @example
+ * // In a domain helper outside any mutation lifecycle:
+ * import { getToastHandler } from '@classytic/arc-next/mutation';
+ *
+ * function notifySaved(label: string) {
+ *   getToastHandler().success(`${label} saved`);
+ * }
+ */
+export function getToastHandler(): ToastHandler {
+  return toastHandler;
+}
+
+function showToast<TData, TVariables>(
+  type: "success" | "error",
+  messages: MutationMessages<TData, TVariables> | undefined,
+  // null on the error path (no result exists); the success branch always
+  // receives the real TData.
+  data: TData | null,
+  variables: TVariables,
+  error?: Error,
+  handler?: ToastHandler,
+) {
+  const activeHandler = handler ?? toastHandler;
+
+  if (type === "success") {
+    const msg = messages?.success;
+    if (!msg) return;
+
+    const text = typeof msg === "function" ? msg(data as TData, variables) : msg;
+    activeHandler.success(text);
+  } else {
+    const msg = messages?.error;
+    // The part of the error a user can ACT on: the quota meter for a 429, or
+    // the per-field detail of a validation failure. Kept separate from the
+    // fallback so a fixed caller message can carry it rather than replace it.
+    let detail: string | undefined;
+    // Quota 429s (arc 2.22) carry a renderable meter — show it instead of
+    // the raw message ("Quota exceeded for 'ai.tokens': 12400 of 10000...").
+    const quota = getQuotaDetails(error);
+    if (quota) {
+      detail = `${quota.used.toLocaleString()} of ${quota.limit.toLocaleString()} ${quota.kind} used this period — resets ${new Date(quota.resetsAt).toLocaleDateString()}`;
+    } else if (
+      isArcApiError(error) &&
+      error.fieldErrors &&
+      Object.keys(error.fieldErrors).length > 0
+    ) {
+      detail = Object.entries(error.fieldErrors)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ");
+    } else if (isArcApiError(error) && error.status >= 400 && error.status < 500 && error.message) {
+      // A refusal (4xx) carries the server's own reason — "A relationship ends after it starts." — which
+      // is what the operator acts on. A 5xx keeps the caller's headline alone: its message is not theirs.
+      detail = error.message;
+    }
+    const defaultMsg = detail ?? (error?.message || "An error occurred");
+    // A fixed string is the caller's HEADLINE, not a replacement for the
+    // detail: "Failed to record settlement" alone sent an operator hunting
+    // through a form the server had already told them how to fix.
+    const text =
+      typeof msg === "function"
+        ? msg(error as Error, variables)
+        : msg
+          ? detail
+            ? `${msg}: ${detail}`
+            : msg
+          : defaultMsg;
+
+    activeHandler.error(text);
+  }
+}
+
+// ============================================================================
+// Mutation with React 19 Transitions
+// ============================================================================
+
+export interface TransitionMutationConfig<TData, TVariables> {
+  mutationFn: (variables: TVariables) => Promise<TData>;
+  invalidateQueries?: QueryKey[];
+  /**
+   * Result-aware invalidation gate. When provided, `invalidateQueries` only
+   * fire if this returns true for the mutation result — lets bulk operations
+   * skip refetching everything when the server reports nothing changed
+   * (`modifiedCount: 0`, `deletedCount: 0`).
+   */
+  shouldInvalidate?: (data: TData) => boolean;
+  onSuccess?: (data: TData, variables: TVariables) => void;
+  onError?: (error: Error, variables: TVariables) => void;
+  onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
+  messages?: MutationMessages<TData, TVariables>;
+  useTransition?: boolean;
+  showToast?: boolean;
+  /** Per-call toast guard — return false to suppress toast for this invocation */
+  shouldToast?: () => boolean;
+  toastHandler?: ToastHandler;
+}
+
+export function useMutationWithTransition<TData, TVariables>(
+  config: TransitionMutationConfig<TData, TVariables>,
+) {
+  const {
+    mutationFn,
+    invalidateQueries = [],
+    onSuccess,
+    onError,
+    onSettled,
+    messages,
+    useTransition: withTransition = true,
+    showToast: toast = true,
+    toastHandler: instanceToast,
+  } = config;
+
+  const queryClient = useQueryClient();
+  const [isTransitioning, startTransition] = useTransition();
+
+  // Stable idempotency key per mutate() call — survives TanStack Query retries.
+  // Generated once in onMutate, reused if mutationFn is retried.
+  const idempotencyKeyRef = useRef<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: (variables: TVariables) => {
+      // If autoIdempotency is on and we have a key from onMutate, inject it
+      if (idempotencyKeyRef.current && typeof variables === "object" && variables !== null) {
+        const vars = variables as Record<string, unknown>;
+        if (vars.options && typeof vars.options === "object") {
+          (vars.options as Record<string, unknown>).idempotencyKey ??= idempotencyKeyRef.current;
+        }
+      }
+      return mutationFn(variables);
+    },
+
+    onMutate: () => {
+      // Generate one key per mutate() call — retries reuse this same key
+      idempotencyKeyRef.current = isAutoIdempotency() ? _uuid() : null;
+    },
+
+    onSuccess: (data, variables) => {
+      const invalidate = () => {
+        invalidateQueries.forEach((key) => {
+          queryClient.invalidateQueries({ queryKey: key });
+        });
+      };
+
+      const wantsInvalidation =
+        invalidateQueries.length > 0 && (config.shouldInvalidate?.(data) ?? true);
+      if (wantsInvalidation) {
+        if (withTransition) {
+          startTransition(invalidate);
+        } else {
+          invalidate();
+        }
+      }
+
+      const doToast = toast && (config.shouldToast?.() ?? true);
+      if (doToast) showToast("success", messages, data, variables, undefined, instanceToast);
+      onSuccess?.(data, variables);
+    },
+
+    onError: (error, variables) => {
+      const doToast = toast && (config.shouldToast?.() ?? true);
+      if (doToast) showToast("error", messages, null, variables, error as Error, instanceToast);
+      onError?.(error as Error, variables);
+    },
+
+    onSettled: (data, error, variables) => {
+      onSettled?.(data, error as Error | null, variables);
+    },
+  });
+
+  return {
+    mutate: mutation.mutate,
+    mutateAsync: mutation.mutateAsync,
+    isPending: mutation.isPending || isTransitioning,
+    isSuccess: mutation.isSuccess,
+    isError: mutation.isError,
+    error: mutation.error as Error | null,
+    data: mutation.data,
+    reset: mutation.reset,
+  };
+}
+
+// ============================================================================
+// Optimistic Mutation for CRUD Factory (handles multiple matching queries)
+// ============================================================================
+
+export interface CreateOptimisticMutationConfig<TData, TVariables> {
+  /** TanStack's mutation function (`(variables, context)`); a one-argument function fits too. */
+  mutationFn: MutationFunction<TData, TVariables>;
+  queryClient: QueryClient;
+  /**
+   * The caches the write snapshots, updates optimistically and rolls back. A function receives the
+   * write's variables, so a write reaches only the caches of the identity it is made as (arc's CRUD
+   * writes pass the lists and details of the writer's partition, never an anonymous one).
+   */
+  queryKeys: QueryKey[] | ((variables: TVariables) => QueryKey[]);
+  /**
+   * Per-cache-entry optimistic updater. Receives the concrete query key of
+   * the entry being updated so a single updater can treat list, detail, and
+   * aggregation caches differently (merge the doc into `[e,'detail',id]`,
+   * map items inside `[e,'list',…]`, leave `[e,'aggregation',…]` untouched).
+   * Return the input unchanged to skip the write for that entry.
+   */
+  optimisticUpdate?: (oldData: unknown, variables: TVariables, queryKey: QueryKey) => unknown;
+  /**
+   * Shared identity for this resource's write mutations. When set, settled
+   * invalidation only fires from the LAST pending mutation carrying the same
+   * key (`isMutating === 1`) — rapid sequential writes produce one refetch
+   * at the end instead of N racing refetches, and a refetch triggered by
+   * write #1 can never clobber write #2's optimistic state.
+   */
+  mutationKey?: readonly unknown[];
+  /** Mutation `meta` (arc's CRUD writes carry `{ arc: { entity, op } }` for `useMutationState`). */
+  meta?: Record<string, unknown>;
+  /**
+   * What to invalidate once the write settles. Default: every key in `queryKeys` (the snapshot
+   * set). A CRUD write passes the change rule (`invalidateForChange`) so an update refreshes its
+   * own record, not every record of the resource.
+   */
+  invalidate?: (variables: TVariables) => void;
+  /**
+   * Post-success cache reconciliation, run BEFORE any invalidation while the
+   * optimistic state is still in place. Use to swap temp IDs for server
+   * documents or seed detail caches from the response.
+   */
+  reconcile?: (data: TData, variables: TVariables) => void;
+  onSuccess?: (data: TData, variables: TVariables) => void;
+  onError?: (error: Error, variables: TVariables) => void;
+  onSettled?: (data: TData | undefined, error: Error | null, variables: TVariables) => void;
+  messages?: MutationMessages<TData, TVariables>;
+  /** Per-call toast guard — return false to suppress toast for this invocation */
+  shouldToast?: () => boolean;
+  toastHandler?: ToastHandler;
+}
+
+export function useOptimisticMutation<TData, TVariables>(
+  config: CreateOptimisticMutationConfig<TData, TVariables>,
+) {
+  const {
+    mutationFn,
+    queryClient,
+    queryKeys,
+    optimisticUpdate,
+    mutationKey,
+    meta,
+    invalidate,
+    reconcile,
+    onSuccess,
+    onError,
+    onSettled,
+    messages,
+    toastHandler: instanceToast,
+  } = config;
+
+  const keysFor = (variables: TVariables) =>
+    typeof queryKeys === "function" ? queryKeys(variables) : queryKeys;
+
+  const invalidateAll = (variables: TVariables) => {
+    if (invalidate) {
+      invalidate(variables);
+      return;
+    }
+    keysFor(variables).forEach((key) => {
+      queryClient.invalidateQueries({ queryKey: key });
+    });
+  };
+
+  return useMutation({
+    mutationFn,
+    ...(mutationKey ? { mutationKey: mutationKey as unknown[] } : {}),
+    ...(meta ? { meta } : {}),
+
+    onMutate: async (variables) => {
+      const keys = keysFor(variables);
+      // Cancel BEFORE snapshotting so an in-flight response can't land
+      // between the snapshot and the optimistic write (it would then be
+      // captured as "previous" and re-applied on rollback).
+      await Promise.all(
+        keys.map((key) => queryClient.cancelQueries({ queryKey: key, exact: false })),
+      );
+
+      const previous = keys.map((key) => ({
+        key,
+        data: queryClient.getQueriesData({ queryKey: key }),
+      }));
+
+      if (optimisticUpdate) {
+        keys.forEach((key) => {
+          queryClient.getQueriesData({ queryKey: key }).forEach(([qKey, qData]) => {
+            const next = optimisticUpdate(qData, variables, qKey);
+            if (next !== qData) queryClient.setQueryData(qKey, next);
+          });
+        });
+      }
+
+      return { previous };
+    },
+
+    onSuccess: (data, variables) => {
+      const doToast = config.shouldToast?.() ?? true;
+      if (doToast && messages?.success)
+        showToast("success", messages, data, variables, undefined, instanceToast);
+      reconcile?.(data, variables);
+      // Without a mutationKey, invalidate on success. With one, invalidation moves to
+      // onSettled behind the last-standing guard.
+      if (!mutationKey) invalidateAll(variables);
+      onSuccess?.(data, variables);
+    },
+
+    onError: (error, variables, context) => {
+      const ctx = context as {
+        previous?: Array<{ key: QueryKey; data: Array<[QueryKey, unknown]> }>;
+      };
+      ctx?.previous?.forEach(({ data }) => {
+        data.forEach(([qKey, qData]) => {
+          queryClient.setQueryData(qKey, qData);
+        });
+      });
+
+      const doToast = config.shouldToast?.() ?? true;
+      if (doToast) showToast("error", messages, null, variables, error as Error, instanceToast);
+      onError?.(error as Error, variables);
+    },
+
+    onSettled: (data, error, variables) => {
+      // Last-standing invalidation: while other writes for the same resource
+      // are still pending, skip — the final one refetches once, with every
+      // optimistic layer already applied. (`isMutating` still counts THIS
+      // mutation during its own onSettled, hence === 1, not === 0.)
+      if (mutationKey && queryClient.isMutating({ mutationKey: mutationKey as unknown[] }) === 1) {
+        invalidateAll(variables);
+      }
+      onSettled?.(data, error as Error | null, variables);
+    },
+  });
+}

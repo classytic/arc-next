@@ -4,7 +4,7 @@
 
 React + TanStack Query SDK for the Arc backend framework. Typed CRUD hooks, optimistic updates with rollback, multi-tenant cache scoping, pagination normalization, real-time SSE.
 
-**Peers:** `react >=19.0.0`, `@tanstack/react-query >=5.52.1`, `@classytic/repo-core >=0.29.0`, optional `jose >=4.8.1` (only for `./encryption` / `./field-encryption`). See [Peer ranges](#peer-ranges).
+**Peers:** `react >=19.0.0`, `@tanstack/react-query >=5.102.0`, `@classytic/repo-core >=0.38.0`, optional `@tanstack/react-query-devtools >=5.102.0` (`./devtools`) and `jose >=4.8.1` (`./encryption` / `./field-encryption`). See [Peer ranges](#peer-ranges).
 
 ```bash
 npm install @classytic/arc-next
@@ -41,43 +41,72 @@ configureNavigation(useRouter);
 
 Without `configureToast`, mutation feedback is a silent no-op (0.12+) — the SDK never writes to your console; errors still reach `onError` / the rejected promise.
 
-> **Targets:** React 19 browser apps + Next.js App Router, and React Native for the core surface — see [React Native](#react-native).
+> **Targets:** React 19 browser apps, Next.js App Router (Server Components, streaming SSR, edge cache), and React Native / Expo for the core surface: see [Expo / React Native](#expo--react-native).
 
 `getToken` **must be synchronous** — cache async tokens out-of-band. Promise returns are dropped + warned in dev.
 
 ## Quick Start
 
+The whole minimal path: define the resource once, read it with hooks or with plain TanStack, and
+prefetch it on the server. Everything else below is optional.
+
+**1. Define the resource**: a server-safe module (api + option factories) and a hooks module
+that only client components import:
+
 ```ts
+// products.ts (server-safe)
 import { createCrudApi } from "@classytic/arc-next/api";
+import { createEntityQueries } from "@classytic/arc-next/query-options";
+
+export interface Product { _id: string; name: string; price: number; }
+export const productsApi = createCrudApi<Product>("products", { basePath: "/api" });
+export const productQueries = createEntityQueries<Product>(productsApi, "products");
+
+// products.hooks.ts (client components only)
 import { createCrudHooks } from "@classytic/arc-next/hooks";
-import { withSoftDelete } from "@classytic/arc-next/presets/soft-delete";
-import { withBulk } from "@classytic/arc-next/presets/bulk";
-
-interface Product { _id: string; name: string; price: number; }
-
-// Compose only the presets your backend actually mounts.
-// Vanilla `createCrudApi` ships CRUD + action + invokeRoute + upload only;
-// add presets via factory wrappers (matches arc's server-side `presets: [...]`).
-const productsApi = withBulk(withSoftDelete(
-  createCrudApi<Product>("products", { basePath: "/api" }),
-));
-
-export const {
-  KEYS, cache,
-  useList, useDetail, useActions, useNavigation,
-  useInfiniteList, useUpload, useCustomMutation,
-  useDeleted, useBulkActions, useDetailBySlug, useTree, useChildren,
-} = createCrudHooks<Product>({ api: productsApi, entityKey: "products", singular: "Product" });
+export const products = createCrudHooks<Product>({
+  api: productsApi, entityKey: "products", singular: "Product",
+}); // products.queries builds exactly productQueries' keys
 ```
+
+**2. Read and write in a client component**, with the hooks or with native TanStack options
+(`products.queries` are ordinary `queryOptions` / `mutationOptions` objects):
 
 ```tsx
 "use client";
+import { useMutation, useQuery } from "@tanstack/react-query";
+
 function Products() {
-  const { items, pagination, isLoading } = useList(null, { organizationId: orgId });
-  const { create, update, remove, isCreating } = useActions();
-  // ...
+  const { items, isLoading } = products.useList({ limit: 20 });
+  const { update } = products.useActions();            // optimistic, rolls back on error
+  const detail = useQuery(products.queries.detail(id)); // the same cache entry useDetail uses
+  const save = useMutation(products.queries.update());
 }
 ```
+
+**3. Prefetch on the server** with the same option objects:
+
+```tsx
+import { HydrationBoundary, streamQueries } from "@classytic/arc-next/prefetch";
+import { productQueries } from "./products";
+
+export default function Page() {
+  return (
+    <HydrationBoundary state={streamQueries([productQueries.list({ limit: 20 }, { token })])}>
+      <Products />
+    </HydrationBoundary>
+  );
+}
+```
+
+The options also work with `useSuspenseQuery`, `queryClient.query(...)` and `queryClient.setQueryData(options.queryKey, ...)`.
+
+Optional, when you need them: presets matching what the backend mounts
+(`withBulk(withSoftDelete(createCrudApi(...)))`, [Presets](#presets--opt-in-methods)), optimistic
+custom mutations ([Custom Mutations](#custom-mutations)), query islands and streaming
+([SSR and streaming](#ssr-and-streaming-nextjs-app-router--server-components)), the edge cache
+([Edge cache](#edge-cache-for-public-pages-edge-cache)), realtime ([SSE](#sse--real-time),
+[WebSocket](#websocket--real-time--bidirectional)).
 
 ## Subpath Exports
 
@@ -85,12 +114,18 @@ function Products() {
 |---|:-:|---|
 | `/client` | yes | `configureClient`, `configureAuth`, `createClient`, `createAuthAwareClient`, `handleApiRequest`, `ArcApiError`, `isArcApiError`, `isAbortError`, `isArcErrorCode`, `isPreconditionFailed`, `KNOWN_ARC_ERROR_CODES`, `CLIENT_ERROR_CODES`, `getAuthMode`, `getAuthContext`, `getBaseUrl`, `createQueryString` |
 | `/api` | yes | `BaseApi`, `createCrudApi`, response types + type guards |
-| `/cache` | yes | `createQueryKeys`, `createCacheUtils`, `extractItem`, `extractItems`, `getItemId`, `updateListCache`, `normalizePagination`, `arcTag`, `QUERY_CONFIGS`, `DEFAULT_QUERY_CONFIG` — server-safe utilities for RSC prefetch + Server Component imports |
-| `/query` | client | `useApiQuery`, `useListQuery`, `useDetailQuery`, `useInfiniteListQuery` — React hooks. Re-exports the cache utilities for back-compat, but new code should import server-safe utils from `/cache` directly |
-| `/mutation` | client | `configureToast`, `useMutationWithTransition`, `useMutationWithOptimistic` |
+| `/cache` | yes | `createQueryKeys`, `createCacheUtils`, `invalidateForChange`, `resourceTags`, `arcTag`, `changeTags`, `extractItem`, `extractItems`, `getItemId`, `updateListCache`, `normalizePagination`, `QUERY_CONFIGS`, `DEFAULT_QUERY_CONFIG` |
+| `/query-options` | yes | `createEntityQueries`: the per-resource `queryOptions` / `infiniteQueryOptions` / `mutationOptions` factories every hook is built from, custom routes included (`route`, `routeMutation`) |
+| `/query` | client | `useApiQuery`, `useListQuery`, `useDetailQuery`, `useInfiniteListQuery`, `useCursorPager` |
+| `/query-island` | client | `createQueryIsland`: server-rendered React Query section that loads React Query only when it activates |
+| `/mutation` | client | `configureToast`, `useMutationWithTransition`, `useOptimisticMutation` |
 | `/hooks` | client | `createCrudHooks`, `configureNavigation` (also default export) |
-| `/query-client` | yes | `getQueryClient` (SSR-safe singleton) |
-| `/prefetch` | yes | `createCrudPrefetcher`, `dehydrate`, `HydrationBoundary` |
+| `/query-client` | yes | `getQueryClient` (browser singleton, new per server call), `makeQueryClient` (per request) |
+| `/prefetch` | yes | `streamQueries`, `prefetchQueries`, `dehydrate`, `HydrationBoundary` |
+| `/devtools` | client | `QueryDevtools`: TanStack devtools loaded only when `enabled` (optional peer) |
+| `/edge-cache` | server | `edgePageHeaders`, `reservedSegments`, `edgeRouteMatcher`, `createEdgePurger`, `edgeCacheControl` |
+| `/edge-cache/cloudflare` | server | `cloudflareEdge`, `cloudflareEdgeFromEnv`, `purgeEdgeHost`, `CLOUDFLARE_CDN_CACHE_CONTROL` |
+| `/react-native` | RN | `setupReactNative({ appState, netInfo })` |
 | `/server` | yes | `createRequestClient`, `forwardRequestHeaders` — call arc as the signed-in user from Server Components / Route Handlers / Server Actions |
 | `/events` | yes | `onArcChange`, `ArcChangeEvent` — every successful write, for server-cache invalidation |
 | `/auth-gate` | yes | `queryAuthEnabled`, `authGate` — the generated hooks' enable rule, for hand-written `useQuery` |
@@ -103,7 +138,7 @@ function Products() {
 | `/presets/tree` | yes | `withTree` — adds `getTree`, `getChildren` |
 | `/presets/search` | yes | `withSearchPreset` — adds `searchEngine`, `searchSimilar`, `embed` |
 
-`sideEffects: false`. No barrel — every file is its own entry point.
+`sideEffects: false`. No barrel: every subpath is one entry module (source grouped by domain under `src/<domain>/`).
 
 ## Core Hooks (from `createCrudHooks`)
 
@@ -112,29 +147,67 @@ const { items, pagination, isLoading, refetch } = useList(params, options);
 const { item, isLoading, isPlaceholderData } = useDetail(id, options);
 const { create, update, remove, isMutating } = useActions();
 const { items, hasNextPage, fetchNextPage } = useInfiniteList(params);
+const { items, page, hasPrev, hasNext, prev, next } = useCursorPager(params); // one keyset page at a time
 
 await create({ data, organizationId }, { onSuccess: (item) => navigate(...) });
 ```
 
 - All mutations are optimistic with automatic rollback on error.
-- Cache keys auto-scope by `organizationId` when present.
+- **Tenant vs filter.** The tenant (`x-organization-id`) is the configured org or the read's
+  `organizationId` option (`null` = no org header); it is resolved before the key is built and keyed
+  in the identity partition (see Cache & Keys). `params` are the query string: an `organizationId`
+  param is a filter, sent as-is, signed in or anonymous.
+- **`keepPrevious`**: `useList` keeps the previous params' rows while new ones load (default on,
+  `isPlaceholderData` flags it); `useInfiniteList` opts in with `{ keepPrevious: true }`.
+- **`useCursorPager(params)`**: Previous / Next over a keyset list. Previous is instant (pages are held),
+  Next past the last page fetches exactly one more, new params restart at page 1. Over a custom
+  `useInfiniteQuery`, use the standalone `useCursorPager(query, resetKey)` from `/query`.
 - **List → detail handoff:** when a parent `useList` has the entity in cache,
-  `useDetail` reads it via TanStack's `placeholderData` factory — instant
+  `useDetail` (same partition only) reads it via TanStack's `placeholderData` factory — instant
   preview, but the real detail GET still fires (rich payload swap, no
   cache pollution). Use `isPlaceholderData` to dim the preview while it
   resolves. See [CHANGELOG 0.7](./CHANGELOG.md#070) for why this replaced
   the old setQueryData-based prefill.
 - **Detail → list pseudo-normalization:** after a `useDetail` GET resolves,
-  arc-next shallow-merges the fresh fields into every list cache holding
-  this id. The list view stays in sync without a refetch. Direction is
+  arc-next shallow-merges the fresh fields into every list cache of the same
+  partition holding this id (never an anonymous or other-tenant list). The
+  list view stays in sync without a refetch. Direction is
   one-way (detail → list, never the reverse) — see
   [CHANGELOG → "pseudo-normalization"](./CHANGELOG.md#070) for the
   rationale. For true entity-level normalization (one copy per id, field-
   level invalidation), use Apollo Client or Relay; arc-next stays in the
   REST + React Query niche.
 
-`useList(token, params, options)` (legacy 3-arg form) still compiles —
-both signatures are kept stable across the 0.x line.
+Every read hook is a thin wrapper over `hooks.queries` (`createEntityQueries`): the same
+`{ queryKey, queryFn }` a Server Component streams, so its cache always hydrates the hook.
+
+```ts
+const { queries } = createCrudHooks<Product>({ api: productsApi, entityKey: "products", singular: "Product" });
+useQuery(queries.detail(id));                         // plain TanStack, data typed as Product
+useSuspenseQuery(queries.list({ limit: 20 }));        // streaming SSR
+useMutation(queries.update());                        // shares the CRUD write key
+qc.setQueryData(queries.detail(id).queryKey, next);   // typed through the key
+const pending = usePendingWrites();                   // in-flight writes (useMutationState)
+```
+
+Writes invalidate exactly what they can have changed (`invalidateForChange`): lists, counts and
+aggregations, plus the written record's own detail; a delete drops that detail. Realtime sync
+(`useResourceSync`) uses the same rule.
+
+### Anonymous, CDN-cacheable reads (`auth: "omit"`)
+
+arc's http-cache serves any credentialed request `private, no-store`. A signed-in visitor's
+read of a PUBLIC endpoint (a catalogue) can be the same request as a guest's:
+
+```ts
+const catalog = createCrudApi<Course>("courses", { readAuth: "omit" }); // every GET anonymous
+useList(params, { auth: "omit" });                                      // or per call
+```
+
+No Authorization, org header, API/internal key or cookie is sent (`credentials: "omit"`), a 401 never
+triggers auth refresh, and the cache entry is kept apart from signed-in reads. **Use it only when the
+endpoint answers the same for everyone**: never for drafts, owner-only fields or tenant rows.
+Never the default.
 
 ### `useApiQuery` — non-CRUD reads
 
@@ -176,15 +249,22 @@ const recent = await api.invokeRoute<OffsetPaginationResult<Todo>>({
 });
 ```
 
-The `useAction` hook (returned from `createCrudHooks`) wraps `api.dispatchAction()` with toast + invalidation. For custom GETs, compose `api.invokeRoute()` with `useApiQuery` — the response IS the data (no envelope since arc 2.13):
+The `useAction` hook (returned from `createCrudHooks`) wraps `api.dispatchAction()` with toast + invalidation. Custom routes get first-class option factories, keyed under `KEYS.routes()` (never hand-build their keys):
 
 ```ts
-const { data } = useApiQuery({
-  queryKey: ["todos", "stats"],
-  queryFn: ({ signal }) => api.invokeRoute({ path: "/stats", options: { signal } }),
-  freshness: "frequent",
-});
+// GET /iam/me with the token but NO org header
+const { data: me } = useQuery(iam.queries.route<Me>("/me", { organizationId: null, staleTime: 60_000 }));
+
+// POST /orders/:id/approve, typed body, scoped invalidation on success
+const approve = useMutation(orders.queries.routeMutation<Order, { note: string }>("/:id/approve", {
+  invalidates: (order) => ({ op: "update", id: order._id }),   // or a key list: [orders.KEYS.routes()]
+}));
+approve.mutate({ pathParams: { id }, data: { note } });
 ```
+
+`token` / `organizationId` on every api method, preset, hook and factory ctx follow one rule:
+omitted = the configured default, `null` = deliberately none, a string = exactly that.
+`api.invokeRoute({ path: "/me", organizationId: null })` sends the token and no org header.
 
 ## Presets — Opt-In Methods
 
@@ -290,7 +370,7 @@ loaded with a dynamic import on first use, so apps on the native `EventSource` n
 - **Server**: accept `Authorization` on the stream route, and with CORS allow the `Authorization`,
   `x-organization-id` and `Last-Event-ID` request headers (the request is preflighted).
 - **React Native**: its `fetch` does not stream response bodies, so keep injecting
-  `react-native-sse` there (see [React Native](#react-native)); without it, `streamAuth: 'header'`
+  `react-native-sse` there (see [Expo / React Native](#expo--react-native)); without it, `streamAuth: 'header'`
   throws rather than fall back to `?token=`.
 
 Use it directly anywhere you need an authenticated stream:
@@ -404,6 +484,20 @@ For non-React consumers, `uploadWithProgress({ url, formData, onProgress, signal
 
 > **Divergence from the fetch path:** `ClientConfig.retry`, `beforeRequest`, and `afterResponse` do **not** propagate to uploads. Re-trying multi-MB bodies is rarely wanted (re-encoding cost, duplicate-write risk) and bridging XHR progress into the fetch interceptor pipeline would conflict with the upload-progress contract. Trace/correlation headers, latency loggers, and other interceptor logic must be passed explicitly via the `headers` option (or the `headers` factory on `useUploadWithProgress`). Auth, error parsing, `Idempotency-Key`, `x-arc-scope`, and `Accept-Version` all DO carry over.
 
+## Request headers
+
+Headers merge case-insensitively (`X-Organization-Id` and `x-organization-id` are one header,
+never sent twice), in three layers, later wins:
+
+1. **Client defaults**: `defaultHeaders`, `internalApiKey`, `apiVersion`, the JSON `Content-Type`,
+   and the configured `getToken` / `getOrgId` (injected only when no header names them).
+2. **Per-call headers**: the api's `headers`, then the call's `headerOptions` (factory `ctx.headers`,
+   hook `request.headerOptions`).
+3. **Explicit per-call options**: `organizationId` (`null` removes a header tenant), `token`,
+   `idempotencyKey`, `elevated`.
+
+Cache keys resolve the tenant with the same order, so the key names what the server receives.
+
 ## Multi-Client
 
 Each `createClient` call is independent — its own `baseUrl`, auth, headers:
@@ -429,39 +523,68 @@ import { createAuthAwareClient } from "@classytic/arc-next/client";
 const api = createCrudApi("products", { client: createAuthAwareClient() });
 ```
 
-## SSR Prefetch (Next.js App Router / Server Components)
+## SSR and streaming (Next.js App Router / Server Components)
 
-`createCrudPrefetcher` plus `getQueryClient` give you the canonical TanStack Query × Next.js App Router pattern: per-request `QueryClient` on the server, prefetch on the route, hydrate into a `"use client"` child via `HydrationBoundary`.
+The option factories are the one source of keys, so what a Server Component seeds is exactly what
+the client hook reads. `./prefetch` does the per-request part in one call: a NEW `QueryClient` per
+request (never the browser singleton), the queries started, the state dehydrated.
 
 ```tsx
-// app/products/page.tsx — Server Component (no "use client")
+// app/courses/page.tsx (Server Component)
 import { headers } from "next/headers";
-import { createCrudPrefetcher, dehydrate, HydrationBoundary } from "@classytic/arc-next/prefetch";
-import { getQueryClient } from "@classytic/arc-next/query-client";
+import { HydrationBoundary, streamQueries } from "@classytic/arc-next/prefetch";
 import { forwardRequestHeaders } from "@classytic/arc-next/server";
-import { productsApi } from "@/api/products-api";
-import { ProductsList } from "./products-list"; // "use client"
+import { courseQueries } from "@/api/courses"; // createEntityQueries(coursesApi, "courses") or hooks.queries
 
-const prefetcher = createCrudPrefetcher(productsApi, "products");
-
-export default async function ProductsPage() {
-  const queryClient = getQueryClient();              // per-request on server
-  // The server's fetch has no browser cookies — forward the user's identity.
-  await prefetcher.prefetchList(queryClient, { limit: 20 }, {
-    headers: forwardRequestHeaders(await headers()),
-  });
-
+export default async function CoursesPage() {
+  const state = streamQueries([
+    courseQueries.list({ limit: 20 }, { auth: "omit" }),                       // public, CDN-cacheable
+    courseQueries.count({}, { headers: forwardRequestHeaders(await headers()) }), // as the signed-in user
+  ]);
   return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      <ProductsList />
+    <HydrationBoundary state={state}>
+      <Suspense fallback={<Shelf />}>
+        <CourseList /> {/* "use client": useSuspenseList({ limit: 20 }, { auth: "omit" }) */}
+      </Suspense>
     </HydrationBoundary>
   );
 }
 ```
 
-Methods: `prefetchList`, `prefetchDetail`, `prefetchBySlug`, `prefetchDeleted`, `prefetchTree`, `prefetchInfiniteList`.
+- **`streamQueries`** does not await: pending queries are dehydrated with their promises, and a
+  client `useSuspenseList` / `useSuspenseDetail` / `useSuspenseQuery` with the same key suspends on
+  the streamed promise, so the content still renders on the server as it resolves (with a plain
+  `useQuery` the data arrives on the client instead).
+- **`prefetchQueries`** awaits every query first: complete HTML, no Suspense boundary needed. A
+  failed query is left out and the client fetches it.
+- Infinite lists (`queries.infiniteList`) are seeded in the `{ pages, pageParams }` shape.
+- `makeQueryClient()` (`./query-client`) is the same per-request client for custom flows
+  (`queryClient.query(options)` / `infiniteQuery(options)`, then `dehydrate`).
 
-> `prefetchInfiniteList` seeds the `{ pages, pageParams }` cache shape `useInfiniteQuery` expects — a flat `prefetchQuery` won't match and the hook would re-fetch from scratch.
+#### Query islands: React Query off a public page's first-load JS
+
+The server renders the real content into the HTML from `prefetchQueries` / `streamQueries`; the
+browser keeps that HTML untouched, without downloading React Query, until the island activates
+(`when`: `"idle"` default, `"visible"`, `"interaction"`).
+
+```tsx
+// course-list.island.ts
+"use client";
+import { createQueryIsland } from "@classytic/arc-next/query-island";
+export const CourseListIsland = createQueryIsland(() => import("./course-list"));
+
+// app/courses/page.tsx (Server Component)
+const state = await prefetchQueries([courses.list({ limit: 20 }, { auth: "omit" })]);
+return <CourseListIsland state={state} props={{ limit: 20 }} when="visible" />;
+```
+
+Create islands in a `"use client"` file with a dynamic `import()` (that import is the split point).
+It only pays off when nothing else on the page imports React Query (a root-layout
+`QueryClientProvider` puts it back in first-load JS). Islands share the browser `getQueryClient()`,
+or the provider above them if there is one. A click before the island hydrates is dropped by React
+(links still navigate), so prefer `"visible"` or `"idle"` when the first click must count. On a
+client-side navigation the island loads at once behind `fallback`. The wrapper is a
+`display: contents` `<div>`, so it cannot sit directly inside a `<ul>` or a table.
 
 ### Calling arc directly on the server (`/server`)
 
@@ -478,46 +601,25 @@ const orders = await createCrudApi<Order>("orders", { client: arc }).getAll();
 ```
 
 It forwards `cookie`, `authorization`, `x-organization-id`, `accept-language` and the trace
-headers (`x-request-id`, `traceparent`, `tracestate`) — never hop-by-hop headers such as `host` or
+headers (`x-request-id`, `traceparent`, `tracestate`), never hop-by-hop headers such as `host` or
 `content-length`, which break the proxied call. Build it per request and never cache it: it
 carries one user's identity. `x-forwarded-for` is opt-in (`forward: [...FORWARDED_REQUEST_HEADERS,
 'x-forwarded-for']`) because arc should only believe it when its `trustProxy` names the Next
 server. Works with any `Headers`-like source (React Router loaders, Hono, plain `Request`).
 
-### Streaming with promise-pending dehydration (TanStack Query 5.40+)
+### Server caches: one tag rule, invalidated on the write
 
-`getQueryClient()` ships a default `dehydrate.shouldDehydrateQuery` that includes pending queries, so you can fire-and-forget prefetches inside Suspense boundaries:
+arc's http-cache tags cacheable responses `<resource>` and `<resource>:<id>` and purges them on
+writes. arc-next names tags by the SAME rule (`resourceTags`, pinned by tests), so the API's CDN and
+a Next host's data cache speak one vocabulary:
 
-```tsx
-export default function ProductsPage() {
-  const queryClient = getQueryClient();
-  // No await — prefetch streams to client when ready
-  prefetcher.prefetchList(queryClient, { limit: 20 });
-
-  return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      <Suspense fallback={<ListSkeleton />}>
-        <ProductsList />
-      </Suspense>
-    </HydrationBoundary>
-  );
-}
-```
-
-### Server-safe utilities
-
-Pure helpers (`createQueryKeys`, `extractItem`, `updateListCache`, etc.) live in `@classytic/arc-next/cache` — no `"use client"` directive, so they're safe to import from Server Components for custom prefetch flows. The matching React hooks live in `/query`.
-
-### Server caches: tag the read, invalidate on the write
-
-A page rendered from a server cache (ISR, `fetch` cache, `'use cache'`) goes stale when the data
-changes, unless the write tells the cache. arc-next gives the two halves one vocabulary:
-
-1. **Tag the read** with `arcTag` (`/cache`, server-safe): `arcTag('lessons')`,
-   `arcTag('lessons', id)`, or a scoped collection `arcTag('lessons', undefined, { by: 'course', id })`.
-2. **Invalidate on the write** with `onArcChange` (`/events`): `createCrudHooks` reports every
-   successful create, update, delete and restore, with the document before the write
-   (`previous`). For a delete that is the only record left of it, so you can still reach its parent.
+1. **Tag the read**: `arcTag('lessons')` is `"arc:lessons"`, `arcTag('lessons', id)` is
+   `"arc:lessons:<id>"` (the `arc:` prefix keeps them apart from the host's own Next tags; strip it
+   and it is arc's CDN tag), `arcTag('lessons', undefined, { by: 'course', id })` a scoped collection.
+   Pass them as `next: { tags }` (request option or factory `ctx`).
+2. **Invalidate on the write**: `onArcChange` (`/events`) reports every successful create, update,
+   delete and restore with the document before the write (`previous`); `changeTags(event)` lists
+   the tags it makes stale.
 
 ```ts
 // app/actions/revalidate.ts
@@ -525,34 +627,68 @@ changes, unless the write tells the cache. arc-next gives the two halves one voc
 import { revalidateTag } from 'next/cache';
 export async function revalidateArc(tags: string[]) { for (const t of tags) revalidateTag(t, 'max'); }
 
-// app/providers.tsx ('use client') — once, for the whole app
-onArcChange(({ entity, id, item, previous }) => {
-  const doc = (item ?? previous) as { courseId?: string } | null;
-  return revalidateArc([
-    arcTag(entity, id),
-    ...(doc?.courseId ? [arcTag(entity, undefined, { by: 'course', id: doc.courseId })] : []),
-  ]);
-});
+// app/providers.tsx ('use client'), once for the whole app
+onArcChange((event) => revalidateArc(changeTags(event)));
 ```
 
 A listener's failure is logged and never fails the write. Several instances behind a load balancer
-need a shared server cache (a Next.js `cacheHandler` backed by Redis or similar) so one
-instance's invalidation reaches the others; the events and tags are the same either way.
+need a shared server cache (a Next.js `cacheHandler` backed by Redis or similar).
+
+### Edge cache for public pages (`/edge-cache`)
+
+Keep pages that are the same for every visitor at the CDN, and empty the edge after an edit or a
+deploy. Only an EXPLICIT route list is cached; a dynamic first segment must exclude the app's
+reserved segments or `edgePageHeaders` throws, so `/:creator` can never match `/dashboard`.
+
+```ts
+// next.config.ts
+import path from "node:path";
+import { edgePageHeaders, reservedSegments } from "@classytic/arc-next/edge-cache";
+import { CLOUDFLARE_CDN_CACHE_CONTROL } from "@classytic/arc-next/edge-cache/cloudflare";
+
+async headers() {
+  return edgePageHeaders({
+    routes: ["/", "/courses/:path*", "/:creator", "/:creator/courses/:slug"],
+    policy: { maxAge: 3600, staleWhileRevalidate: 86_400 },
+    header: CLOUDFLARE_CDN_CACHE_CONTROL,       // default: the standard CDN-Cache-Control
+    reserved: await reservedSegments(path.join(process.cwd(), "app")),
+  });
+}
+
+// lib/edge.ts (server): coalesced purge after edits, after()-friendly, never throws
+export const edge = createEdgePurger({ provider: cloudflareEdgeFromEnv(), coalesceMs: 5000 });
+// in a server action, after revalidateTag(...)
+after(() => edge.purge({ hosts: [new URL(SITE_URL).hostname] }));
+
+```
+
+Once the new build is live, empty the edge for your host from CI (no script to write):
+
+```bash
+npx arc-next-edge purge --host example.com --env-file .env.production
+```
+
+It reads `CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_PURGE_TOKEN` from the environment; each `--env-file`
+(repeatable, parsed with Node's `util.parseEnv`, Node 20.12+) only fills keys that are unset, so a CI
+secret is never overridden by a file. The token is never printed; exit code 0 on success, 1 on
+failure or a usage error; `--host` can repeat. In code, the same purge is `purgeEdgeHost({ host })`.
+
+`edgeRouteMatcher(rules.map((r) => r.source))` answers "would the edge keep this URL?" for a host's
+own tests. Credentials (`CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_PURGE_TOKEN`: a token with only Zone >
+Cache Purge) stay on the server; without them the purger does nothing and the edge copy expires.
 
 ### Hand-written queries and seeded lists
 
 - **`queryAuthEnabled({ enabled })`** (`/auth-gate`) is the generated hooks' enable rule for a query
-  you write with `useQuery` directly. A per-user query then never fires for a signed-out visitor
-  (no 401, no auth refresh round trip). Pass `user: true` for an endpoint that answers for the
+  you write with `useQuery` directly. Pass `user: true` for an endpoint that answers for the
   signed-in user (`/mine`): a static `internalApiKey` identifies the app, not a person.
 - **`useList(params, { initialData, initialDataUpdatedAt })`** (and `useDetail`) seeds the cache
-  with the response a Server Component already fetched for exactly those params, so the client
-  does not fetch it again. `createCrudPrefetcher` + `HydrationBoundary` remains the route when the
-  server read goes through arc-next itself.
+  with the response a Server Component already fetched for exactly those params. `streamQueries`
+  + `HydrationBoundary` is the route when the server read goes through arc-next itself.
 
 ### Next.js 16 `cacheComponents` + `'use cache'`
 
-TanStack Query manages a client-side cache; data fetched through arc-next hooks should NOT be wrapped in a Server Component's `'use cache'` directive (which would bake the hook output into the static render). Use `'use cache'` for non-arc Server Component fetches (e.g., direct DB queries, third-party APIs). The two layers compose cleanly because they target different cache tiers.
+TanStack Query manages a client-side cache; data fetched through arc-next hooks should NOT be wrapped in a Server Component's `'use cache'` directive (which would bake the hook output into the static render). Use `'use cache'` for non-arc Server Component fetches. The two layers target different cache tiers.
 
 ## Request-Scoped Server Clients (0.12+)
 
@@ -580,17 +716,25 @@ export default async function OrdersPage() {
 
 `next: { tags, revalidate }` and `cache:` are typed pass-throughs to `fetch` — inert on non-Next runtimes, no `next` peer dependency.
 
-## Optimistic Updates — the guarantees (0.12+)
+## Guarantees
 
-`useActions()` mutations uphold, in order:
+Each line is pinned by the named test (`tests/` mirrors `src/`).
 
-1. **Cancel-before-write** — in-flight refetches for affected keys are cancelled before the snapshot, so a late response can't be captured as "previous" state.
-2. **Every affected cache** — detail (bare + org-scoped + parameterized), flat lists, **infinite lists** (per-page; a create inserts into the first page only), while aggregation caches are never optimistically mutated (refetch-only).
-3. **Exact rollback** — on failure every touched entry is restored to its snapshot; untouched entries are never rewritten.
-4. **Temp-ID reconciliation** — `create` inserts a `_optimistic` placeholder with a `temp-…` id, then swaps it in place for the server document on success (and seeds `KEYS.detail(realId)`), so the row never flickers and the real id is immediately navigable.
-5. **Per-record ordering** — sequential `update`/`remove`/`restore` calls to the same record are chained (call order = server order); different records stay parallel.
-6. **Last-standing invalidation** — rapid sequential writes trigger ONE settled refetch (from the last pending write), so an early write's refetch can never overwrite a later write's optimistic state.
-7. **Bulk partial success** — `bulkUpdate`/`bulkRemove` reporting zero changes skip invalidation entirely; `bulkCreate` seeds detail caches from the returned documents.
+| Guarantee | Proven by |
+|---|---|
+| **Cache partitioning.** Every resource key carries `{ auth, organizationId, scope }`: anonymous vs signed in, the tenant the request actually sends (resolved before the key: client `getOrgId`, `configureAuth`, a forwarded `x-organization-id`), and an explicit scope. Two tenants, two clients or an anonymous and a signed-in read never share an entry. | `tests/query/cache.test.tsx` "every key kind x every partition is a distinct entry"; `tests/query/query-options.test.ts` "identity partition: resolved before the key is built" |
+| **`auth` is the same everywhere.** Omitted, `"inherit"` and `"omit"` reach the wire, the key and the credentials mode identically from a hook, an option factory and a direct api call. | `tests/query/crud-reads.test.tsx` "auth: hooks, option factories and the transport agree" |
+| **Detail to list, list to detail.** A fresh detail merges only into lists of its own partition; a detail previews only a list row of its own partition; a list never writes a detail cache. | `tests/query/cache.test.tsx` "useDetail sync and placeholders stay inside the read's partition" |
+| **Optimistic writes.** Cancel before snapshot, the writer's partition only (its lists, infinite first page for creates, its detail variants), exact rollback, temp id swapped in place for the server doc, last-standing invalidation, bulk with zero changes skips invalidation. | `tests/query/crud-mutations.test.tsx` "optimistic guarantees" and "partition: a write touches only caches read as the same identity" |
+| **Ordering, idempotency, versions.** Writes to one record in one tenant run in call order, each sent as whoever submitted it (a tenant or session switch never re-targets or blocks a queued write); one `Idempotency-Key` per logical request survives retries; `update` sends `If-Match` from the version the writer last saw. | `tests/query/crud-mutations.test.tsx` "write queue: identity captured at submit, one queue per tenant", "write ordering", "optimistic concurrency (If-Match)"; `tests/client/request.test.ts` "idempotency keys" |
+| **Headers reach the server once.** Header names merge case-insensitively (defaults < per-call headers < explicit options) and the key's tenant is the one the server receives. | `tests/client/request-headers.node.test.ts` (a real `node:http` server) |
+| **Invalidation is one rule.** A local write and a realtime event invalidate the same caches (lists, counts, aggregations, the record's own detail) in every partition, each refetching as its own identity. | `tests/query/cache.test.tsx` "invalidateForChange (scoped, never the whole resource)"; `tests/realtime/resource-sync.test.tsx` "useResourceSync (WS source)", "(SSE source)" |
+| **Server requests never share state.** `makeQueryClient` / server `getQueryClient` are per call; `createRequestClient` carries only its own request's identity. | `tests/query/prefetch.ssr.test.ts` "per-request clients"; `tests/server/server.node.test.ts` "two requests never share identity" |
+| **Platform boundaries.** Server-safe subpaths never import client-only modules; React Native subpaths never reach DOM, Next or Node-only code; public pages at the edge never match an app route. | `npm run check:server-import`, `npm run check:rn-boundary`, `tests/platform/react-native.native.test.ts`, `tests/edge-cache/edge-cache.node.test.ts` |
+| **Retry.** `makeQueryClient({ retry })` means what TanStack means; a quota 429 never retries. | `tests/query/query-client.test.ts` "retry (TanStack retryer semantics, quota 429s excluded)" |
+
+Not keyed on purpose: the token. A user switch inside one tenant keeps the partition, so clear the
+client on sign-out (`queryClient.clear()`).
 
 ## Errors
 
@@ -847,17 +991,31 @@ Concurrent matched 403s share one handler call (one dialog, not N), kept apart f
 
 ## Cache & Keys
 
-```ts
-KEYS.detail(id);                        // ["products", "detail", id]
-KEYS.scopedDetail(id, orgId);           // tenant-scoped variant
+Every resource key carries an **identity partition** `P = { auth, organizationId, scope }` (always
+all three fields, `null` for none): who the read was sent as. The option factories resolve it
+before building the key from what the request will carry (the api client's `getOrgId`,
+`configureAuth`, a forwarded `x-organization-id` header, `readAuth`) and send exactly that tenant,
+so two tenants, two clients, or an anonymous and a signed-in read never share an entry. Detail →
+list sync, list placeholders, optimistic writes and their reconciliation stay inside one
+partition; invalidation still reaches every partition (each refetches as its own identity).
 
-// Writes/reads the raw doc — no `{ data: TDoc }` envelope (0.7+). Matches
-// what useDetail, prefetchDetail, and useNavigation all produce.
-cache.setDetail(qc, id, data);
-cache.getDetail(qc, id);                // TDoc | undefined
-cache.invalidateDetail(qc, id);         // matches all scoped variants
-cache.invalidateLists(qc);
+```ts
+const P = queries.partition();          // the partition a default read uses (ctx optional)
+KEYS.list(params, P);                   // ["products", "list", P, params]
+KEYS.lists(P);                          // exact prefix of that partition's lists
+KEYS.detail(id);                        // ["products", "detail", id]: prefix of every variant
+KEYS.detail(id, { ...P, params });      // ["products", "detail", id, P, params?]
+KEYS.count(params, P); KEYS.slug(slug, P); KEYS.aggregation(name, filter, P); KEYS.write();
+KEYS.routes(); KEYS.route("/stats", params, P); // custom-route reads
+
+// Detail caches hold the raw doc (no envelope), as useDetail and streamQueries write it.
+cache.setDetail(qc, id, doc, P);        // omitted P: the default partition (signed in, no tenant)
+cache.getDetail(qc, id, P);
+cache.invalidateDetail(qc, id);         // every variant of the record
+cache.invalidateForChange(qc, { op: "update", id }); // what one write makes stale
 ```
+
+What every key guarantees, and what is deliberately not keyed: [Guarantees](#guarantees).
 
 ## Custom Mutations
 
@@ -871,7 +1029,7 @@ const { mutateAsync: publish, isPending } = useMutationWithTransition({
 });
 ```
 
-`useMutationWithOptimistic` adds optimistic cache updates with rollback.
+`useOptimisticMutation` adds key-aware optimistic cache updates with rollback; for a CRUD write prefer `useMutation(hooks.queries.update())` (shares the resource's write key, so `usePendingWrites` sees it), and for a custom route `useMutation(hooks.queries.routeMutation(path, { invalidates }))`.
 
 ## Auth Modes
 
@@ -881,27 +1039,62 @@ const { mutateAsync: publish, isPending } = useMutationWithTransition({
 | `cookie` | Better Auth, session cookies | No token needed; `credentials: 'include'` automatic |
 | `header` | API keys (`x-api-key`, etc.) | Set `headerName` on `configureAuth` or `createClient` |
 
-## React Native
+### Social sign-in (`/auth-social`, `/google-one-tap`)
 
-Supported: `/client`, `/api`, `/query`, `/query-options`, `/hooks`, `/mutation`, `/sse`, `/auth-token`. `tests/runtime/react-native.test.tsx` runs them under React Native's globals (no `localStorage`, `BroadcastChannel`, `EventSource` or `crypto.randomUUID`; whatwg-fetch's `_=` cache-buster) as part of `npm test`.
+Client half of arc's `socialAuth()` plugin for bearer-token apps. The API never puts the session in a redirect URL: it lands the browser on your callback page with a one-time `#handoff=<code>`, and only the tab holding the matching verifier can exchange it.
 
 ```ts
-import "react-native-get-random-values"; // crypto.getRandomValues, for Idempotency-Key
-import RNEventSource from "react-native-sse";
-import { configureAuth, configureClient } from "@classytic/arc-next/client";
+// sign-in button
+import { startSocialSignIn } from "@classytic/arc-next/auth-social";
+await startSocialSignIn(authClient, { provider: "google", next: searchParams.get("next"), appOrigin: location.origin });
 
-configureClient({
-  baseUrl: API_URL,
-  eventSource: RNEventSource, // RN has no EventSource; pass one, no global polyfill
-  streamAuth: "header",       // token + org travel as headers, never in the stream URL
-});
+// app/auth/callback/page.tsx (client component, in an effect)
+const result = await completeSocialSignIn(authClient, tokens);
+if (result.ok) router.replace(result.next); else router.replace(`/sign-in?error=${encodeURIComponent(result.error.code)}`);
+
+// app/sign-in/page.tsx (Server Component)
+const providers = await fetchSocialProviders(AUTH_URL, { next: { revalidate: 300 } });
+const error = readSocialError(await searchParams); // intent "cancelled": show nothing
+```
+
+- `next` passes `safeNextPath`: only same-origin paths; `//host`, `/\host`, schemes and control characters become `/`.
+- `completeSocialSignIn` fails with intent `expired-retry` when the fragment is missing, the verifier is gone (another tab, older than 10 minutes, already used) or the server answers `HANDOFF_INVALID`.
+- `setLastAuthMethod("password")` after a password sign-in; social and One Tap record theirs. `getLastAuthMethod()` returns `null` on the server. Storage is injectable: `startSocialSignIn(..., { storage })`, `completeSocialSignIn(..., { storage, methodStorage })`, `setLastAuthMethod(method, storage)`, `loadLastAuthMethod(storage)` (async stores included).
+- `useGoogleOneTap({ clientId, enabled: !session, authClient, tokens, onSignedIn })` posts `{ idToken, nonce }` to `/one-tap/callback` (Better Auth's `oneTap()` plugin). CSP: allow `https://accounts.google.com` in `connect-src` and `frame-src`, `https://accounts.google.com/gsi/style` in `style-src`, and add `GOOGLE_ONE_TAP_POLICY` to `trustedTypesPolicies`.
+
+## Expo / React Native
+
+React Native-facing subpaths (checked by `npm run check:rn-boundary`: none reaches a DOM, Next or Node-only module) are `.`, `/client`, `/api`, `/cache`, `/query`, `/query-options`, `/query-client`, `/mutation`, `/hooks`, `/events`, `/auth-gate`, `/auth-token`, `/auth-social`, `/sse`, `/ws`, `/upload`, `/encryption`, `/field-encryption`, `/presets/*` and `/react-native`. Web or Next only: `/edge-cache*`, `/csp`, `/service-worker`, `/google-one-tap`, `/auth-proxy`, `/devtools`, `/server`. Tests: the `native` Vitest project loads them with no DOM globals at all; `tests/platform/react-native-globals.test.tsx` runs hooks under React Native's globals.
+
+```ts
+// App.tsx, once
+import "react-native-get-random-values";           // crypto.getRandomValues, for Idempotency-Key
+import { AppState } from "react-native";
+import NetInfo from "@react-native-community/netinfo";
+import RNEventSource from "react-native-sse";
+import * as SecureStore from "expo-secure-store";
+import { configureAuth, configureClient } from "@classytic/arc-next/client";
+import { createTokenStore } from "@classytic/arc-next/auth-token";
+import { setupReactNative } from "@classytic/arc-next/react-native";
+
+setupReactNative({ appState: AppState, netInfo: NetInfo }); // refetch on foreground, pause offline
+const tokens = createTokenStore(
+  { getItem: SecureStore.getItemAsync, setItem: SecureStore.setItemAsync, removeItem: SecureStore.deleteItemAsync },
+  "session",
+);
+await tokens.load();
+configureClient({ baseUrl: API_URL, eventSource: RNEventSource, streamAuth: "header" });
 configureAuth({ getToken: () => tokens.get(), getOrgId: () => orgId });
 ```
 
-- **SSE.** `eventSource` takes any `new (url, { withCredentials, headers? })` that delivers `open` / `message` / `error` and named frames through `addEventListener` and has `close()`. With `streamAuth: 'header'` the `Authorization` (or custom `headerName`) and `x-organization-id` headers go in `headers` (plus `Last-Event-ID` on a reconnect), the failure probe sends the same headers, and the URL carries neither. On React Native, `streamAuth: 'header'` without an injected `eventSource` throws instead of falling back to `?token=` (browsers get the built-in `FetchEventSource`, but RN's `fetch` cannot stream). Without `BroadcastChannel`, `useEventStream` holds its own connection (cross-tab sharing is a browser concern).
-- **Ids.** Idempotency keys come from `crypto.randomUUID` when present, otherwise `crypto.getRandomValues`. No `randomUUID` polyfill is needed. With neither, minting throws rather than fall back to `Math.random`.
-- **Caching.** The SDK sends `cache` only when you set it (per call, `BaseApiConfig.cache` or `ClientConfig.cache`). Do not set `no-store` / `no-cache` on React Native: whatwg-fetch turns those GETs into `?_=<timestamp>`, which arc's strict query validation rejects with 400.
-- **Not covered:** uploads (XHR progress events) and `/field-encryption` (needs Web Crypto `subtle`).
+- **Lifecycle and network.** `setupReactNative` points TanStack's `focusManager` at `AppState` and `onlineManager` at NetInfo (both injected; arc-next imports neither). `getQueryClient()` defaults queries to `networkMode: "offlineFirst"`: the first fetch always runs, retries pause offline; mutations pause offline and resume.
+- **Google sign-in.** On a device it is the ID-token flow, not the redirect handoff: `signInWithIdToken(authClient, tokens, { provider: "google", idToken, nonce, methodStorage })` (`/auth-social`) sends `signIn.social({ provider, idToken: { token, nonce } })`, stores the bearer token and the method, and maps refusals to UI intents. Never throws.
+- **Persistence (optional).** Survive restarts with TanStack's persister: `PersistQueryClientProvider` (`@tanstack/react-query-persist-client`) + `createAsyncStoragePersister({ storage: AsyncStorage })` (`@tanstack/query-async-storage-persister`). Persist reads only; do not persist anything `auth: "omit"` would not show to a guest unless the device is single-user.
+- **SSE.** RN's `fetch` cannot stream: inject `eventSource` (e.g. `react-native-sse`); with `streamAuth: 'header'` token and org travel as headers, never in the URL, and without an injected `eventSource` it throws instead of falling back to `?token=`. Without `BroadcastChannel`, `useEventStream` holds its own connection. WebSockets (`/ws`) work as is.
+- **fetch and credentials.** `ClientConfig.fetch` is injectable. RN has no cookie jar to rely on: use bearer mode; `credentials` is ignored there.
+- **Ids.** Idempotency keys come from `crypto.randomUUID` when present, otherwise `crypto.getRandomValues`. With neither, minting throws rather than fall back to `Math.random`.
+- **Caching.** Do not set `no-store` / `no-cache` on React Native: whatwg-fetch turns those GETs into `?_=<timestamp>`, which arc's strict query validation rejects with 400.
+- **Not covered:** upload progress (XHR) varies by RN version; `/field-encryption` needs Web Crypto `subtle`.
 
 ## Portal bootstrap and SDK core (Unreleased)
 
@@ -950,8 +1143,9 @@ Each peer floor is the lowest version the code needs, not the version used in de
 | Peer | Floor | Why this version |
 |---|---|---|
 | `react` | `19.0.0` | No React API newer than 19.0 is used. Works with React 19.2 (Expo SDK 55 / React Native 0.83). |
-| `@tanstack/react-query` | `5.52.1` | First 5.x release whose own peer range accepts React 19. |
-| `@classytic/repo-core` | `0.29.0` | First release exporting `ARC_ERROR_CODES`, `ARC_REASON_CODES` and `DUPLICATE_KEY_DETAIL_CODE` from `./errors`. |
+| `@tanstack/react-query` | `5.102.0` | `queryClient.query()` / `infiniteQuery()` (`./prefetch`), and `environmentManager` (5.91). Developed against 5.107. |
+| `@tanstack/react-query-devtools` (optional) | `5.102.0` | Only `./devtools` imports it, lazily. |
+| `@classytic/repo-core` | `0.38.0` | `./sync` stream frames (0.21) and the wire contract (`pagination`, `query-parser` `formatQuery`, `errors`, `repository`). |
 | `jose` (optional) | `4.8.1` | First release whose types resolve under `moduleResolution: NodeNext`. |
 
 The floors are tested, not asserted. `npm run check:peer-floors` copies the repo into a temp dir,
@@ -960,6 +1154,10 @@ floor), and runs `typecheck`, `typecheck:tests`, `test`, `build` and `check:fixt
 the npm registry (or a warm npm cache), so it is not part of `npm test` or `prepublishOnly`. CI runs
 it on every push (`peer-minimums` job); run it locally as a release step before `npm run release`.
 A floor moves up only when this check fails at the old floor, with the reason in the CHANGELOG.
+
+Developing this package needs Node `^22.22.2 || ^24.15.0 || >=26` (`engines`; the locked vitest,
+tsdown and jsdom need it, and `.npmrc` sets `engine-strict`). CI runs `npm run gate`, the same script
+`prepublishOnly` runs, on Node 22 and the latest LTS, after `npm run lint:query:install`.
 
 ## License
 
