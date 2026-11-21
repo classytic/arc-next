@@ -152,6 +152,27 @@ describe("createDownloader", () => {
     expect(error).toMatchObject({ code: "reports.forbidden", status: 403, message: "no" });
   });
 
+  it("a refusal carries the body correlationId, else the x-request-id header", async () => {
+    const fromBody = transportFor(() =>
+      Response.json(
+        { code: "reports.forbidden", message: "no", correlationId: "req-body" },
+        { status: 403, headers: { "x-request-id": "req-header" } },
+      ),
+    ).transport;
+    await expect(createDownloader(fromBody)({ path: "x" })).rejects.toMatchObject({
+      correlationId: "req-body",
+    });
+    const fromHeader = transportFor(
+      () => new Response("<html>", { status: 502, headers: { "x-request-id": "req-header" } }),
+    ).transport;
+    await expect(createDownloader(fromHeader)({ path: "x" })).rejects.toMatchObject({
+      correlationId: "req-header",
+    });
+    const none = transportFor(() => new Response("<html>", { status: 502 })).transport;
+    const error = await createDownloader(none)({ path: "x" }).catch((e: unknown) => e);
+    expect((error as SdkRequestError).correlationId).toBeUndefined();
+  });
+
   it("falls back to http.<status> when the error body is not JSON", async () => {
     const { transport } = transportFor(() => new Response("<html>", { status: 502 }));
     await expect(createDownloader(transport)({ path: "x" })).rejects.toMatchObject({
@@ -178,10 +199,9 @@ describe("createDownloader", () => {
         throw new TypeError("fetch failed");
       }) as unknown as typeof fetch,
     };
-    await expect(createDownloader(dropped)({ path: "x" })).rejects.toMatchObject({
-      code: "network",
-      status: 0,
-    });
+    const droppedError = await createDownloader(dropped)({ path: "x" }).catch((e: unknown) => e);
+    expect(droppedError).toMatchObject({ code: "network", status: 0 });
+    expect((droppedError as SdkRequestError).correlationId).toBeUndefined();
     const aborted: RawTransport = {
       ...dropped,
       fetch: (async () => {

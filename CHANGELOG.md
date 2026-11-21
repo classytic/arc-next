@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.22.1 (2026-11-21)
+
+- `createCrudHooks({ defaults: { invalidates } })`: extra query-key prefixes every create / update / delete
+  of the resource makes stale, beyond the change rule's set (lists, counts, aggregations, the record's
+  detail). For host reads kept under the resource's root with their own shape (a date-range view, a
+  per-station count): before, those stayed stale after a write until their staleTime ran out.
+  `invalidateForChange` takes them as an optional fourth argument. Additive; the default rule is unchanged.
+  Test: `tests/query/crud-invalidates.test.tsx`.
+- Error support reference: `ArcApiError.correlationId` (and `SdkRequestError.correlationId`) is the
+  error body's `correlationId` (arc sets it to the request id it logs), else the `x-request-id` response
+  header when the browser can read it, else `undefined` (network failure, abort, timeout). Set on the
+  fetch transport, `uploadWithProgress` and `/sdk/download` failures; `mapError(err)` returns it, and
+  the `configureMessages` resolver receives it on an error toast's context (`MessageErrorFields`).
+  Before, a failed call showed only its message and could not be matched to the server log line.
+  Show it as `Error ref: ${ref.slice(0, 8)}` next to the message. Additive; nothing else changes shape.
+  Tests: `tests/client/request.test.ts`, `tests/client/upload.test.tsx`, `tests/sdk/transport.node.test.ts`,
+  `tests/sdk/download.node.test.ts`, `tests/sdk/messages.node.test.ts`.
+
 ## 0.22.0 (2026-11-07)
 
 TanStack Query 5.107 modernization, one option factory per resource, streaming SSR, anonymous

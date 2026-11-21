@@ -179,6 +179,34 @@ describe("error code and details in the message context", () => {
     });
   });
 
+  it("an error toast carries the refused response's correlationId (body, else x-request-id)", async () => {
+    const m = registerCrudMessages("t-ref", "Upload");
+    const seen: MessageContext[] = [];
+    configureMessages((context) => {
+      seen.push(context);
+      return undefined;
+    });
+    const respond = (body: object, headers: Record<string, string>) =>
+      captureServerErrors((async () =>
+        Response.json(body, { status: 503, headers })) as unknown as typeof fetch)(
+        "http://api.test/uploads",
+      );
+    await respond(
+      { code: "arc.unavailable", message: "busy", correlationId: "req-body" },
+      {
+        "x-request-id": "req-header",
+      },
+    );
+    resolveToastText(`${m.createError}: busy`);
+    clearServerErrors();
+    await respond({ code: "arc.unavailable", message: "busy" }, { "x-request-id": "req-header" });
+    resolveToastText(`${m.createError}: busy`);
+    clearServerErrors();
+    await respond({ code: "arc.unavailable", message: "busy" }, {});
+    resolveToastText(`${m.createError}: busy`);
+    expect(seen.map((c) => c.correlationId)).toEqual(["req-body", "req-header", undefined]);
+  });
+
   it("success messages never receive a stale server error", () => {
     const m = registerCrudMessages("t-ok", "Thing");
     recordServerError({ status: 409, code: "x.y" });

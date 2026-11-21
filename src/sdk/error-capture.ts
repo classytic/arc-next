@@ -20,6 +20,8 @@ export interface CapturedServerError {
   code?: string;
   message?: string;
   details?: readonly ServerErrorDetail[];
+  /** Support reference: the body's `correlationId`, else the `x-request-id` header when readable. */
+  correlationId?: string;
   at: number;
 }
 
@@ -76,11 +78,15 @@ export function captureServerErrors(inner: typeof fetch): typeof fetch {
         const body = (await response.clone().json()) as Record<string, unknown> | null;
         if (body && typeof body === "object") {
           const details = asDetails(body.details);
+          const correlationId =
+            (typeof body.correlationId === "string" && body.correlationId) ||
+            response.headers.get("x-request-id");
           recordServerError({
             status: response.status,
             ...(typeof body.code === "string" ? { code: body.code } : {}),
             ...(typeof body.message === "string" ? { message: body.message } : {}),
             ...(details ? { details } : {}),
+            ...(correlationId ? { correlationId } : {}),
           });
         }
       } catch {

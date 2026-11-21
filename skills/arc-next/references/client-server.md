@@ -56,11 +56,13 @@ Auth headers cannot be overridden by `options.headers`. Mutating requests get an
 
 ```ts
 if (isAbortError(err)) return;
-if (isArcApiError(err)) { err.status; err.code; err.fieldErrors; err.endpoint; }
+if (isArcApiError(err)) { err.status; err.code; err.fieldErrors; err.endpoint; err.correlationId; }
 isQuotaExceeded(err); getQuotaDetails(err);    // "X of Y, resets <date>"; never auto-retry
 isTierRequiredError(err); getTierRequirement(err);
 isValidationError(err); isDuplicateKeyError(err); isPreconditionFailed(err); isOrgContextRequiredError(err);
 ```
+
+`err.correlationId` is the support reference: the body's `correlationId` (arc's logged request id), else the `x-request-id` header, else `undefined` (network failure: no response). Show `Error ref: ${ref.slice(0, 8)}` next to the message; for a retried write say the work is saved and will send automatically.
 
 `err.code` values come from `@classytic/repo-core/errors` (`KNOWN_ARC_ERROR_CODES` spreads it; `CLIENT_ERROR_CODES` are client-side only). Interceptors: `ClientConfig.beforeRequest`, `afterResponse`, `retry`.
 

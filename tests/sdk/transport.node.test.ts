@@ -113,6 +113,34 @@ describe("error mapping", () => {
     expect(mapError(error)).toMatchObject({ code: "role.in_use", status: 409, network: false });
   });
 
+  it("mapError returns the support reference: body correlationId, else x-request-id, else undefined", async () => {
+    const refusing = (body: unknown, headers: Record<string, string>) =>
+      createIsolatedClient({
+        baseUrl: "http://api.test",
+        getToken: () => "t",
+        fetch: (async () =>
+          Response.json(body, { status: 503, headers })) as unknown as typeof fetch,
+      }).client;
+    const fail = (client: ReturnType<typeof refusing>) =>
+      new BaseApi("uploads", { client }).create({ data: {} }).catch((e: unknown) => e);
+
+    const fromBody = await fail(
+      refusing(
+        { code: "arc.unavailable", message: "busy", status: 503, correlationId: "req-body" },
+        { "x-request-id": "req-header" },
+      ),
+    );
+    expect(mapError(fromBody).correlationId).toBe("req-body");
+    const fromHeader = await fail(
+      refusing({ code: "arc.unavailable", message: "busy" }, { "x-request-id": "req-header" }),
+    );
+    expect(mapError(fromHeader).correlationId).toBe("req-header");
+    const none = await fail(refusing({ code: "arc.unavailable", message: "busy" }, {}));
+    expect(mapError(none).correlationId).toBeUndefined();
+    expect(mapError(new TypeError("Failed to fetch")).correlationId).toBeUndefined();
+    expect(mapError(new SdkRequestError("m", "c", 500, "req-sdk")).correlationId).toBe("req-sdk");
+  });
+
   it("SdkRequestError, plain objects and TypeErrors", () => {
     const error = new SdkRequestError("Network error", "network", 0);
     expect(mapError(error)).toEqual({ code: "network", status: 0, network: true, fields: null });

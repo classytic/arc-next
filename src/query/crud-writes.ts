@@ -85,7 +85,8 @@ export function createCrudWrites<T, TCreate, TUpdate>(
   const invalidateSettled = (queryClient: QueryClient) => {
     const changes = settledChanges.splice(0);
     if (changes.length === 0) changes.push({ op: "create" });
-    for (const change of changes) void invalidateForChange(queryClient, KEYS, change);
+    for (const change of changes)
+      void invalidateForChange(queryClient, KEYS, change, config.invalidates);
   };
 
   /**

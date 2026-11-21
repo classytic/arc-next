@@ -750,11 +750,22 @@ catch (err) {
     err.status;       // 400
     err.code;         // 'arc.validation_error'
     err.fieldErrors;  // { email: "already taken" } | null
+    err.correlationId; // 'f3a9c2d1-...' | undefined (support reference)
   }
   if (isDuplicateKeyError(err)) showRetryUI();
   if (isArcErrorCode(err, 'ORG_CONTEXT_REQUIRED')) promptOrgSelector();
 }
 ```
+
+`err.correlationId` is the support reference for a failed call: the error body's `correlationId`
+(arc sets it to the request id it logs), else the `x-request-id` response header when the browser
+can read it, else `undefined` (a network failure, abort or timeout has no response). Uploads carry it
+the same way, `/sdk/download` failures as `SdkRequestError.correlationId`, `mapError(err)` returns
+it, and the `configureMessages` resolver receives it on an error toast's context.
+
+In the UI, show it next to the message as `Error ref: ${ref.slice(0, 8)}` so a user's report
+matches the server log line. For a write that is retried (paused offline, queued), say the work is
+saved and will send automatically instead of showing a failure.
 
 `fieldErrors` maps arc's `details: [{ path, code, message }]` to `{ [path]: message }` — body
 validation, missing multipart files and duplicate keys all arrive in that shape. Legacy shapes

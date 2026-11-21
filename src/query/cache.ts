@@ -583,8 +583,10 @@ export async function invalidateForChange(
   client: QueryClient,
   keys: QueryKeys,
   change: CacheChange,
+  /** The resource's `defaults.invalidates`: host reads under its root the rule cannot know. */
+  also: readonly QueryKey[] = [],
 ): Promise<void> {
-  const targets: QueryKey[] = [keys.lists(), keys.counts(), keys.aggregations()];
+  const targets: QueryKey[] = [keys.lists(), keys.counts(), keys.aggregations(), ...also];
   if (change.op === "restore") targets.push(keys.deleted().slice(0, 2));
   if (change.id && (change.op === "update" || change.op === "restore")) {
     targets.push(keys.detail(change.id), keys.slugs());

@@ -10,11 +10,14 @@ import { isArcApiError } from "../client/client.js";
 export class SdkRequestError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(message: string, code: string, status: number) {
+  /** Support reference: the body's `correlationId`, else the `x-request-id` header; `undefined` without a response. */
+  readonly correlationId: string | undefined;
+  constructor(message: string, code: string, status: number, correlationId?: string) {
     super(message);
     this.name = "SdkRequestError";
     this.code = code;
     this.status = status;
+    this.correlationId = correlationId || undefined;
   }
 }
 
@@ -75,6 +78,12 @@ export interface MappedError {
   network: boolean;
   /** Field-level detail arc-next extracted from a validation failure. */
   fields: Record<string, string> | null;
+  /**
+   * Support reference to show the user (`Error ref: ${correlationId.slice(0, 8)}`): the server's
+   * request id from the error body, else the `x-request-id` header. `undefined` when the request
+   * got no response (network failure) or the server sent none.
+   */
+  correlationId?: string;
 }
 
 export function mapError(error: unknown): MappedError {
@@ -83,5 +92,7 @@ export function mapError(error: unknown): MappedError {
     status: errorStatus(error),
     network: isNetworkFailure(error),
     fields: isArcApiError(error) ? error.fieldErrors : null,
+    correlationId:
+      error instanceof SdkRequestError || isArcApiError(error) ? error.correlationId : undefined,
   };
 }

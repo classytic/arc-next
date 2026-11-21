@@ -156,6 +156,14 @@ export interface CrudHooksConfig<T, TCreate = Partial<T>, TUpdate = Partial<T>> 
      * they keep the bearer token-gate. An explicit per-call `public` wins.
      */
     defaultPublic?: boolean;
+    /**
+     * Extra query keys every create / update / delete of this resource makes stale, beyond the
+     * change rule's own set (lists, counts, aggregations, the record's detail). For reads a host
+     * keeps under the resource's key root with its own shape (a date-range view, a per-station
+     * count, a custom route), which the change rule cannot know about. Each key is a prefix:
+     * `[entityKey, "range"]` refreshes every range query; `[entityKey]` refreshes the whole root.
+     */
+    invalidates?: readonly QueryKey[];
     messages?: {
       createSuccess?: string;
       createError?: string;

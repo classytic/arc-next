@@ -355,6 +355,8 @@ function uploadAttempt<TResult = unknown>(options: UploadWithProgressOptions): P
           json: body,
           endpoint: url,
           method,
+          // null when the server does not expose it to this origin (CORS).
+          correlationId: xhr.getResponseHeader("x-request-id"),
         }),
       );
     };

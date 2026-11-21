@@ -67,6 +67,8 @@ describe("upload", () => {
     sentBody: unknown = null;
     headers: Record<string, string> = {};
     aborted = false;
+    /** Headers the page may read (CORS-exposed); lowercase names. */
+    responseHeaders: Record<string, string> = {};
 
     // Listener slots.
     onload: ((this: MockXHR) => void) | null = null;
@@ -98,6 +100,10 @@ describe("upload", () => {
       this.readyState = 4;
     }
 
+    getResponseHeader(name: string): string | null {
+      return this.responseHeaders[name.toLowerCase()] ?? null;
+    }
+
     // Test helpers — drive the XHR lifecycle from outside.
 
     emitProgress(loaded: number, total: number, lengthComputable = true): void {
@@ -109,7 +115,9 @@ describe("upload", () => {
       statusText?: string;
       body?: string | object | Blob;
       contentType?: string;
+      headers?: Record<string, string>;
     }): void {
+      this.responseHeaders = opts.headers ?? {};
       this.status = opts.status;
       this.statusText = opts.statusText ?? "";
       if (opts.body instanceof Blob) {
@@ -280,6 +288,39 @@ describe("upload", () => {
           expect.fail("expected ArcApiError");
         }
       }
+    });
+
+    it("an error carries the body's correlationId as its support reference", async () => {
+      const promise = uploadWithProgress({ url: "/upload", formData: makeFormData() });
+      MockXHR.latest().emitLoad({
+        status: 503,
+        body: {
+          code: "arc.unavailable",
+          message: "Busy",
+          status: 503,
+          correlationId: "req-body-1",
+        },
+        headers: { "x-request-id": "req-header-1" },
+      });
+      await expect(promise).rejects.toMatchObject({ correlationId: "req-body-1" });
+    });
+
+    it("an error without a body correlationId falls back to the x-request-id header", async () => {
+      const promise = uploadWithProgress({ url: "/upload", formData: makeFormData() });
+      MockXHR.latest().emitLoad({
+        status: 502,
+        body: "<html>CDN error</html>",
+        headers: { "x-request-id": "req-header-2" },
+      });
+      await expect(promise).rejects.toMatchObject({ correlationId: "req-header-2" });
+    });
+
+    it("an error with neither (header not exposed) has no correlationId", async () => {
+      const promise = uploadWithProgress({ url: "/upload", formData: makeFormData() });
+      MockXHR.latest().emitLoad({ status: 500, body: { code: "arc.internal", message: "x" } });
+      const error = await promise.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ArcApiError);
+      expect((error as ArcApiError).correlationId).toBeUndefined();
     });
 
     it("network failure throws Error (not ArcApiError)", async () => {
@@ -851,6 +892,9 @@ describe("auth refresh", () => {
     }
     abort(): void {
       /* no-op for these tests */
+    }
+    getResponseHeader(name: string): string | null {
+      return this.responseHeaders.get(name.toLowerCase()) ?? null;
     }
 
     emitLoad(opts: { status: number; body?: unknown; statusText?: string }): void {

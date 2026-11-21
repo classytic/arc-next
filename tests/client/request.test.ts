@@ -239,6 +239,52 @@ describe("request", () => {
       await expect(handleApiRequest("GET", "/missing")).rejects.toThrow("Not found");
     });
 
+    describe("error correlationId (support reference)", () => {
+      const refuse = (body: string, headers: Record<string, string> = {}) =>
+        fetchMock.mockResolvedValue(
+          new Response(body, { status: 503, statusText: "Service Unavailable", headers }),
+        );
+
+      it("reads the error body's correlationId first", async () => {
+        refuse(
+          JSON.stringify({
+            code: "arc.unavailable",
+            message: "Server busy",
+            status: 503,
+            correlationId: "req-body-1",
+          }),
+          { "Content-Type": "application/json", "x-request-id": "req-header-1" },
+        );
+        await expect(handleApiRequest("POST", "/uploads")).rejects.toMatchObject({
+          name: "ArcApiError",
+          correlationId: "req-body-1",
+        });
+      });
+
+      it("falls back to the x-request-id response header", async () => {
+        refuse("<html>Bad gateway</html>", { "x-request-id": "req-header-2" });
+        await expect(handleApiRequest("POST", "/uploads")).rejects.toMatchObject({
+          correlationId: "req-header-2",
+        });
+      });
+
+      it("is undefined when neither is present", async () => {
+        refuse(JSON.stringify({ code: "arc.unavailable", message: "Server busy" }), {
+          "Content-Type": "application/json",
+        });
+        const error = await handleApiRequest("POST", "/uploads").catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ArcApiError);
+        expect((error as ArcApiError).correlationId).toBeUndefined();
+      });
+
+      it("a network failure (no response) carries none", async () => {
+        fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+        const error = await handleApiRequest("GET", "/x").catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(TypeError);
+        expect((error as { correlationId?: unknown }).correlationId).toBeUndefined();
+      });
+    });
+
     it("sends internalApiKey when configured", async () => {
       configureClient({ baseUrl: "http://api.test", internalApiKey: "secret-key" });
 

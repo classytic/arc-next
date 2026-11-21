@@ -72,6 +72,11 @@ export interface ArcApiErrorOptions {
   method: HttpMethod;
   /** Parsed `Retry-After` response header in ms (429/503 pacing), if present. */
   retryAfterMs?: number | null;
+  /**
+   * The `x-request-id` response header, when the browser can read it. Used only
+   * when the body carries no `correlationId` (see {@link ArcApiError.correlationId}).
+   */
+  correlationId?: string | null;
 }
 
 /**
@@ -101,6 +106,8 @@ export class ArcApiError extends Error {
    * come back exactly when the server says capacity returns.
    */
   readonly retryAfterMs: number | null;
+  /** Support reference: body `correlationId` (arc's logged request id), else the `x-request-id` header. */
+  readonly correlationId: string | undefined;
 
   constructor(message: string, options: ArcApiErrorOptions) {
     super(message);
@@ -111,6 +118,8 @@ export class ArcApiError extends Error {
     this.endpoint = options.endpoint;
     this.method = options.method;
     this.retryAfterMs = options.retryAfterMs ?? null;
+    const id = (options.json as Partial<ErrorContract> | null)?.correlationId;
+    this.correlationId = (typeof id === "string" && id) || options.correlationId || undefined;
   }
 
   /**
@@ -2121,6 +2130,7 @@ async function executeAttempt<T = unknown>(
         endpoint,
         method,
         retryAfterMs: parseRetryAfterMs(response.headers.get("Retry-After")),
+        correlationId: response.headers.get("x-request-id"),
       });
     }
 

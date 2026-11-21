@@ -95,11 +95,14 @@ export function createDownloader(
       const body = (await response.json().catch(() => null)) as {
         code?: string;
         message?: string;
+        correlationId?: string;
       } | null;
       throw new SdkRequestError(
         body?.message ?? `Download failed (${response.status})`,
         body?.code ?? `http.${response.status}`,
         response.status,
+        (typeof body?.correlationId === "string" && body.correlationId) ||
+          (response.headers.get("x-request-id") ?? undefined),
       );
     }
     return {

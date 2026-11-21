@@ -29,6 +29,8 @@ export interface MessageErrorFields {
   code?: string;
   /** The server's field-level `details`, when any. */
   details?: readonly ServerErrorDetail[];
+  /** Support reference (request id) of the refused response, when any: show `Error ref: ${correlationId.slice(0, 8)}`. */
+  correlationId?: string;
 }
 
 export type MessageContext =
@@ -203,6 +205,7 @@ export function resolveToastText(message: string): string {
     ...(detail ? { detail } : {}),
     ...(server?.code ? { code: server.code } : {}),
     ...(server?.details ? { details: server.details } : {}),
+    ...(server?.correlationId ? { correlationId: server.correlationId } : {}),
   } as MessageContext;
   // A host translation owns the whole line (it receives `detail`); the English default appends it.
   const translated = resolver?.(context);
